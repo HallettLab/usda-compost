@@ -40,6 +40,31 @@ for(i in pheno_files){
   # photo key
   temp_photokey <- read_excel(i, sheet = 2, na = na_vals, trim_ws = T)  
   print(paste("Compiling", unique(temp_pheno$date)[1], "phenology data and photo key"))
+  pct_cols <- c("pct_green", "pct_brown", "pct_bare")
+  
+  # clean up pheno dat
+  # change Ts to 0.01 and adjust pct cover of green (or if "<" noted)
+  temp_pheno[pct_cols] <- sapply(temp_pheno[pct_cols], function(x) ifelse(trimws(x)=="T", 0.01,x))
+  # check 1: look for < > and adjust based on sum of other cols
+  flag1 <- sapply(temp_pheno[pct_cols],function(x) grepl("<|>",x))
+  for(f in which(flag1)){
+    adjust_pos <- grep("<|>", temp_pheno[f,pct_cols])
+    stopifnot(length(adjust_pos)==1) # need to add code if there is more than 1 col that has greater/less than
+    temp_pheno[f, pct_cols[adjust_pos]] <- 100-(sum(as.numeric(temp_pheno[f,pct_cols[-adjust_pos]])))
+  }
+  # make sure all pct cols converted to numeric
+  temp_pheno <- mutate_at(temp_pheno, vars(pct_green:pct_bare), as.numeric)
+  # check 2: flag rows that sum to +100
+  flag2 <- apply(temp_pheno[c("pct_green", "pct_brown", "pct_bare")],1,function(x) sum(as.numeric(x)) > 100)
+  for(f in which(flag2)){
+    # logic check sum over 100 due to T value
+    if(!0.01 %in% temp_pheno[f, pct_cols]){
+      stop(paste0("Pct phenology cover for ", temp_pheno$plot[f], temp_pheno$subplot[f], " exceeds 100 and not due to trace value. Review datasheet and data entry"))
+    }
+    # subtract from pct green
+    temp_pheno$pct_green[f] <- with(temp_pheno, 100-(sum(pct_brown[f]+pct_bare[f]))) 
+  }  
+  
   # join both datasets
   temp_dat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot"))
   # concatenate plot and subplot so plot values match treatment key plot values
