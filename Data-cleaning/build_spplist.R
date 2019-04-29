@@ -36,9 +36,11 @@ na_vals <- c(" ", "", NA, "NA")
 datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/" #ctw's path
 #datpath <- "~/Dropbox/USDA-compost/Data/" # should work for LMH and AS
 
-# read in data
+# list files in entered data folder
 vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = T, pattern = "_Cover_", ignore.case = T)
 
+
+# -- COMPILE SPP LIST -----
 # loop through cover data to read in, transpose, and append to master cover dataset
 # initiate master data frame
 spplist_master <- data.frame()
@@ -104,6 +106,7 @@ for(i in vegfiles){
 }
 
 
+# -- APPEND USDA PLANTS DATA -----
 # specify vars desired from usda plants database (there are 134)
 usda_plantvars <- c("Symbol","Accepted_Symbol_x","Scientific_Name_x","Common_Name","State_and_Province",
                     "Category","Family","Family_Common_Name","Duration","Growth_Habit","Native_Status")
@@ -155,6 +158,8 @@ for(p in spplist_master$species[spplist_master$unknown == 0]){
   spplist_master[spplist_master$species == p,usda_plantvars] <- as.data.frame(temp_df)
 }
 
+
+# -- FINISHING -----
 # manual edits: fill in info for unknowns
 # unknown Avena sp.
 spplist_master[grepl("Avena sp",spplist_master$species), c("genus", "code4", "code6")] <- c("Avena", "AVSPP", "AVESPP")
@@ -194,5 +199,6 @@ spplist_master$fxnl_grp[spplist_master$Family == "Fabaceae"] <- "N-fixer"
 spplist_master$nativity[grepl("L48 .I.",spplist_master$Native_Status)] <- "Exotic"
 spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Native"
 
-# write out
+
+# -- WRITE OUT -----
 write.csv(spplist_master, paste0(datpath, "Compost_SppList.csv"), row.names = F)
