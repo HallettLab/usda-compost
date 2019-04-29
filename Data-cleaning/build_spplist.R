@@ -46,9 +46,10 @@ vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = 
 spplist_master <- data.frame()
 # loop iterates through each cover dataset and adds new spp to master spp set
 for(i in vegfiles){
-  print(paste("Adding new species from", vegdat$V2[2], "composition survey to master species list"))
   # read in dataset
-  vegdat <- read.csv(vegfiles, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
+  vegdat <- read.csv(i, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
+  print(paste("Adding new species from", vegdat$V2[2], "composition survey to master species list"))
+  
   # id where litter depth and cover data start
   litpos <- grep("depth", vegdat[,1], ignore.case = T)
   # remove any species rows that don't have any entries for abundance value
@@ -184,7 +185,7 @@ for(i in which(is.na(spplist_master$genus))){
     # increase num2 by 1 for next unknown species
     num2 <- num2+1
   }
-  spplist_master[i, c("code4", "code6", "Growth_Habit")] <- c(paste0("UNKFO",num), paste0("UNKFO",num), "Forb/herb")
+  spplist_master[i, c("code4", "code6", "Growth_Habit")] <- c(paste0("UNKF",num), paste0("UNKFRB",num), "Forb/herb")
   # assign asteraceae info if an unknown aster
   if(grepl(" aster ", spplist_master$species[i])){
     spplist_master[i, c("Category", "Family", "Family_Common_Name")] <- c("Dicot", "Asteraceae", "Aster family")
