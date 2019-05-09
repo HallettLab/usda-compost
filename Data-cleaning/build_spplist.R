@@ -96,7 +96,7 @@ for(i in vegfiles){
     print(paste(length(unique(spplist$species)), "new species added:"))
     print(spplist$species)
   }else{
-    newspp <- !spplist$species %in% spplist_master$species
+    newspp <- spplist$species[!spplist$species %in% spplist_master$species]
     print(paste(length(newspp), "new species added:"))
     print(newspp)
   }
