@@ -124,7 +124,7 @@ for(i in datfiles){
                source = paste(logger, port, sep = "_")) %>%
         ggplot(aes(date_time, vwc, group = source, col = as.factor(block))) +
         geom_line(alpha = 0.5) +
-        ggtitle("Treatment check: soil moisture (VWC), nutrient x drought treatment, colored by block") +
+        ggtitle("Treatment check: soil moisture (VWC), by nutrient x drought treatment, colored by block") +
         scale_color_discrete(name = "block") +
         facet_wrap(~full_trt)
       
@@ -140,9 +140,9 @@ write.csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedDa
           row.names = F)
 
 # write out preliminary plots if desired
-ggsave(filename = paste(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bylogger.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bylogger.pdf"),
        plot = logger_plot,
        width = 8, height = 8)
-ggsave(filename = paste(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bytreatment.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bytreatment.pdf"),
        plot = trt_plot,
        width = 8, height = 8)
