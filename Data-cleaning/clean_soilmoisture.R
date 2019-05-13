@@ -20,6 +20,8 @@ rm(list=ls())
 # load libraries needed
 library(readxl) # for reading in soil moisture datasets
 library(dplyr)
+library(tidyr)
+library(lubridate)
 library(ggplot2)
 options(stringsAsFactors = F)
 theme_set(theme_bw())
@@ -51,13 +53,15 @@ for(i in datfiles){
               "soil moisture data!"))
   # read in i dataset
   tempdat <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T,
-                        skip = 2, 
-                        col_types = c("date", rep("numeric", 5)))
+                        skip = 2,
+                        col_types = c("date", rep("text", 5))) #read moisture as text to avoid warnings
   # grab original colnames
   tempdat_names <- names(read_excel(i, sheet = 1))
   # reset port colnames (col 2: ncol)
   colnames(tempdat)[2:ncol(tempdat)] <- tempdat_names[2:length(tempdat_names)]
   colnames(tempdat) <- casefold(colnames(tempdat))
+  # convert soil moisture cols to numeric
+  tempdat[,2:ncol(tempdat)] <- sapply(tempdat[,2:ncol(tempdat)], as.double)
   print("Here is the summary of the dataset:")
   print(summary(tempdat))
   
@@ -71,7 +75,21 @@ for(i in datfiles){
   #gather port data
   tempdat2 <- gather(tempdat, port, vwc, `port 1`:`port 5`) %>%
     # strip "port" from port to match with logger key
-    mutate(port = as.numeric(gsub("port ", "", port))) %>%
+    mutate(port = as.numeric(gsub("port ", "", port)),
+           # compute day of year
+           doy = yday(date_time),
+           waterYear = ifelse(month(date_time) %in% 10:12,
+                              year(date_time)+1, year(date_time))) %>%
+    # compute water year day of year
+    ungroup() %>%
+    group_by(waterYear) %>%
+    mutate(dowy = ifelse(month(date_time)<10, doy+92, NA),
+           maxdoy = max(doy)) %>% #create temporary col to store max day of year
+    # ungroup to calculate dowy for Oct-Dec depending on leap year/non leap year total days
+    ungroup() %>%
+    mutate(dowy = ifelse(is.na(dowy) & maxdoy == 366, doy-274, 
+                         ifelse(is.na(dowy) & maxdoy == 365, doy-273, 
+                                dowy))) %>%
     # join logger key
     left_join(loggerkey, by = c("logger", "port")) %>%
     # unite plot and subplot so joins with treatment key
@@ -79,21 +97,39 @@ for(i in datfiles){
     left_join(trtkey, by = "plot") %>%
     # clarify trt is the composition plot treatment
     rename(comp_trt = trt) %>%
-    dplyr::select(logger, plot, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, vwc)
-  
+    # reorder cols, remove maxdoy column
+    dplyr::select(logger, port, plot, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, vwc, doy:dowy)
+    
     # compile with master soil moisture data frame
-    soilmoisture_all <- rbind(soilmoisture_all, tempdat2)
+    soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
+      distinct()
     
     if(i == datfiles[length(datfiles)]){
       #clean up
       rm(tempdat, tempdat2)
-      print("All done! Here is a plot of the compiled data:")
-      prelim_plot <- soilmoisture_all %>%
-        mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_")) %>%
-        ggplot(aes(date_time, vwc, col = full_trt)) +
-           geom_point(alpha = 0.5) +
-           facet_wrap(~logger)
-      print(prelim_plot)
+      print("All done! Here are 2 plots of the compiled data. Toggle back arrow to see both.")
+      logger_plot <- soilmoisture_all %>%
+        filter(!is.na(vwc)) %>%
+        mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
+               source = paste(logger, port, sep = "_")) %>%
+        ggplot(aes(date_time, vwc, col = as.factor(port))) +
+        geom_line(alpha = 0.5) +
+        ggtitle("QA check: soil moisture (VWC), by logger, colored by port") +
+        scale_color_discrete(name = "port") +
+        facet_wrap(~logger)
+      
+     trt_plot <- soilmoisture_all %>%
+        filter(!is.na(vwc)) %>%
+        mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
+               source = paste(logger, port, sep = "_")) %>%
+        ggplot(aes(date_time, vwc, group = source, col = as.factor(block))) +
+        geom_line(alpha = 0.5) +
+        ggtitle("Treatment check: soil moisture (VWC), nutrient x drought treatment, colored by block") +
+        scale_color_discrete(name = "block") +
+        facet_wrap(~full_trt)
+      
+      print(logger_plot)
+      print(trt_plot)
       print("Review compiled dataset and if all looks good, write out to Compost Dropbox SoilMoisture_CleanedData folder.")
     }
 }
@@ -102,3 +138,11 @@ for(i in datfiles){
 # -- FINISHING -----
 write.csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"),
           row.names = F)
+
+# write out preliminary plots if desired
+ggsave(filename = paste(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bylogger.pdf"),
+       plot = logger_plot,
+       width = 8, height = 8)
+ggsave(filename = paste(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bytreatment.pdf"),
+       plot = trt_plot,
+       width = 8, height = 8)
