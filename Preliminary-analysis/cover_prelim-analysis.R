@@ -1,5 +1,11 @@
 library(tidyverse)
 
+# set path to compost data (dependent on user)
+#datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Cover/" #ctw's path
+datpath <- "~/Dropbox/USDA-compost/Data/Cover/" # should work for LMH and AS
+
+cover_master_wide <- read_csv(paste0(datpath,"Cover_CleanedData/Compost_Cover_WideClean.csv"))
+
 dat <- cover_master_wide %>%
   tbl_df() %>%
   mutate(site = "high", 
