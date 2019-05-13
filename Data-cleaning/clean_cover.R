@@ -18,6 +18,14 @@
 # re-run whenever unknowns are identified and changed in the entered cover dataset
 
 
+# *** IMPORTANT TO DO BEFORE RUNNING THIS SCRIPT*** ##
+# -- >> Run build_spplist.R before running the clean_cover script! << ---
+# If new species have been entered, or to be sure, re-create the Compost species list via build_spplist.R
+# Species list data appends to the compiled cover data, so important the species list dataset is complete before running this script
+
+
+
+
 # -- SETUP -----
 # clear environment
 rm(list=ls())
