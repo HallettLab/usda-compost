@@ -162,25 +162,29 @@ for(p in spplist_master$species[spplist_master$unknown == 0]){
 
 # -- FINISHING -----
 # manual edits: fill in info for unknowns
-# unknown Avena sp.
-spplist_master[grepl("Avena sp",spplist_master$species), c("genus", "code4", "code6")] <- c("Avena", "AVSPP", "AVESPP")
-spplist_master[grepl("Avena sp",spplist_master$species), 
-               which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "AVBA" & !is.na(spplist_master$code4), 
+# unknown Annual grass spp. (AVBA, CYEC, or GAPH)
+spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")] <- c("UNGR", "UNGSPP")
+# copy descriptive info from TACA since most general and applies
+spplist_master[grepl("Annual grass",spplist_master$species), 
+               which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "TACA" & !is.na(spplist_master$code4), 
                                                                                                    which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
 # unknown Trifolium 
-for(i in which(grepl("Trif.*[0-9]", spplist_master$species))){
+for(i in which(grepl("Trif.*[0-9]|Trifolium spp.", spplist_master$species))){
   num <- gsub("[^0-9]","", spplist_master$species[i])
   spplist_master[i, c("genus", "code4", "code6")] <- c("Trifolium", paste0("TRI",num), paste0("TRISP",num))
   # match descriptive info with TRHI (most generic)
   spplist_master[i, which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "TRHI" & !is.na(spplist_master$code4), 
                                                                                                         which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
 }
+# fix code 4 and 6 if only 1 unknown trifolium entry for multiple spp
+spplist_master[grepl("Tri.* spp.",spplist_master$species), c("code4", "code6")] <- c("TRSP", "TRSPP")
+
 # name remaining forbs as unk forb #
-num2 <- 5 #last number assigned for unknowns is 4
-for(i in which(is.na(spplist_master$genus))){
-  num <- gsub("[^0-9]","", spplist_master$species[i])
+num2 <- 3 #last number assigned for unknowns is 2
+for(i in which(is.na(spplist_master$Native_Status))){
+  num <- regmatches(spplist_master$species[i], regexpr("[0-9]+", spplist_master$species[i]))
   # if no number already assigned, use num2 count
-  if(nchar(num)==0){
+  if(length(num)==0){
     num <- num2
     # increase num2 by 1 for next unknown species
     num2 <- num2+1
@@ -192,6 +196,7 @@ for(i in which(is.na(spplist_master$genus))){
   }
 }
 
+
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
 spplist_master$fxnl_grp[grepl("Forb", spplist_master$Growth_Habit, ignore.case = T)] <- "Forb"
@@ -200,6 +205,8 @@ spplist_master$fxnl_grp[spplist_master$Family == "Fabaceae"] <- "N-fixer"
 spplist_master$nativity[grepl("L48 .I.",spplist_master$Native_Status)] <- "Exotic"
 spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Native"
 
+# order alphabetically by species
+spplist_master <- spplist_master[order(spplist_master$species),]
 
 # -- WRITE OUT -----
 write.csv(spplist_master, paste0(datpath, "Compost_SppList.csv"), row.names = F)
