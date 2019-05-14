@@ -196,7 +196,9 @@ for(i in which(is.na(spplist_master$Native_Status))){
   }
 }
 
-
+# manual edit to Agoseris sp.
+spplist_master[spplist_master$species == "Agoseris sp.", c("Category", "Family", "Family_Common_Name")] <- c("Dicot", "Asteraceae", "Aster family")
+  
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
 spplist_master$fxnl_grp[grepl("Forb", spplist_master$Growth_Habit, ignore.case = T)] <- "Forb"
@@ -204,6 +206,11 @@ spplist_master$fxnl_grp[spplist_master$Family == "Fabaceae"] <- "N-fixer"
 
 spplist_master$nativity[grepl("L48 .I.",spplist_master$Native_Status)] <- "Exotic"
 spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Native"
+
+# manual edit to Agoseris sp. (all are native)
+spplist_master$nativity[spplist_master$species == "Agoseris sp."] <- "Native"
+# manual edits to forb germinates (were either Lythrum or Anagallis, both non-native) and hairy/smooth asters (either hypochaeris or leontodon -- both non-native)
+spplist_master$nativity[is.na(spplist_master$nativity) & grepl("aster|germinates", spplist_master$species, ignore.case = T)] <- "Exotic"
 
 # order alphabetically by species
 spplist_master <- spplist_master[order(spplist_master$species),]
