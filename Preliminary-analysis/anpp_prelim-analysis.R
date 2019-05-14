@@ -24,6 +24,8 @@ dat2 <- dat %>%
   group_by(plot, subplot, block, treatment, site) %>%
   summarize(dry_wgt_g = sum(dry_wgt_g))
 
+ggplot(dat2, aes(x=treatment, y = dry_wgt_g)) + geom_boxplot() + facet_wrap(~subplot)
+
 ggplot(dat2, aes(x=treatment, y = dry_wgt_g)) + geom_boxplot() + facet_grid(~site)
 
 ggplot(dat2, aes(x=subplot, y = dry_wgt_g)) + geom_boxplot() + facet_grid(~site)
