@@ -26,6 +26,8 @@ dat2 <- dat %>%
 
 ggplot(dat2, aes(x=treatment, y = dry_wgt_g)) + geom_boxplot() + facet_wrap(~subplot)
 
+ggplot(dat2, aes(x=treatment, y = dry_wgt_g, fill = subplot)) + geom_boxplot() 
+
 ggplot(dat2, aes(x=treatment, y = dry_wgt_g)) + geom_boxplot() + facet_grid(~site)
 
 ggplot(dat2, aes(x=subplot, y = dry_wgt_g)) + geom_boxplot() + facet_grid(~site)
