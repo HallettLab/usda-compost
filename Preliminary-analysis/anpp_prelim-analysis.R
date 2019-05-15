@@ -42,3 +42,38 @@ ggplot(dat3, aes(x=treatment, y = FG)) + geom_boxplot() + facet_grid(~site)
 
 
 ggplot(dat3, aes(x=subplot, y = FG)) + geom_boxplot() + facet_grid(~site)
+
+# for bar graphs 
+# visualization of total biomass
+dat4 <- dat %>%
+  group_by(subplot, treatment) %>%
+  summarize(mean_dry_wgt_g = mean(dry_wgt_g), sedry=sd(dry_wgt_g)/sqrt(length(dry_wgt_g)))
+
+ggplot(data=dat4, aes(x=treatment, y=mean_dry_wgt_g, fill=treatment))+
+  theme_bw()+
+  theme(strip.background = element_blank(), 
+        text = element_text(size = 20), 
+        strip.text.x = element_text(size = 13, face = "italic"), strip.text.y = element_text(size = 13),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())+ 
+  facet_wrap(~subplot)+
+  geom_bar(stat="identity")+
+  scale_fill_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Amendment"), labels=c("Compost", "Fertilizer", "None")) +
+  geom_errorbar(aes(ymin=mean_dry_wgt_g-sedry, ymax=mean_dry_wgt_g+sedry))+
+  labs(x="Amendment", y="Total forage (grams of dry weight)") 
+
+#bar graph visualization of forb and grass biomass
+dat5 <- dat %>%
+  group_by(treatment, fxnl_grp, site) %>%
+  summarize(mean_dry_wgt_g = mean(dry_wgt_g), sedry=sd(dry_wgt_g)/sqrt(length(dry_wgt_g)))
+
+ggplot(data=dat5, aes(x=treatment, y=mean_dry_wgt_g, fill=fxnl_grp))+
+  theme_bw()+
+  labs(x="Amendment", y="Total forage (grams of dry weight)") +
+  theme(strip.background = element_blank(), 
+        text = element_text(size = 20), 
+        strip.text.x = element_text(size = 13, face = "italic"), strip.text.y = element_text(size = 13),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())+ 
+  facet_wrap(~site)+
+  geom_bar(stat="identity", position="dodge")+
+  scale_fill_manual(values = c("darkgoldenrod1",  "darkolivegreen"), guide = guide_legend(title = "Functional \n Group"), labels=c("Forb", "Grass")) +
+  geom_errorbar(aes(ymin=mean_dry_wgt_g-sedry, ymax=mean_dry_wgt_g+sedry), position=position_dodge(width=0.9))
