@@ -1,5 +1,6 @@
 library(lubridate)
 library(tidyverse)
+library(ggplot2)
 
 setwd("~/Dropbox/USDA-compost/Data")
 dat<-read.csv("SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv")
