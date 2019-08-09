@@ -3,7 +3,7 @@ library(ggplot2) #for plots
 library(nlme)#for mixed effect models to test effects of treatments
 library(lsmeans)#post hoc test for significance between treatments
 
-# Import csv file, call it data
+# Import csv file, call it data. Import soil moisture data, call it moisture.data
 setwd("C:/Users/Owner/Desktop")
 data<-read.csv("compost.fungi.csv",header=T)
 str(data)
@@ -13,6 +13,13 @@ levels(data$fungi)#check levels of fungi
 data$block <- as.factor(data$block)
 data$root <- as.factor(data$root)
 data$rep <- as.factor(data$rep)
+
+moisture.data <- read.csv("moisture.csv", header=T)
+str(moisture.data)
+moisture.data$block <- as.factor(moisture.data$block)
+levels(moisture.data$block)
+levels(moisture.data$ppt_trt)
+levels(moisture.data$nut_trt)
 
 #colonization of amf by ppt, nut,root, and block
 colonization <- data %>% group_by(block, ppt_trt, nut_trt, root, fungi) %>% filter(count != "NA") %>%
@@ -53,3 +60,30 @@ contrast(m1.ppt, "pairwise")
 #new graph!
 ggplot(subset(colonization, fungi=="amf"), aes(x=nut_trt, y=percent, fill=ppt_trt))+
   geom_boxplot()
+
+#formating moisture.data. Calculating soil moisture
+moisture.data$dry_wt <- moisture.data$dry_soil_tin - moisture.data$tin_wt
+moisture.data$water_wt <- moisture.data$wet_soil - moisture.data$dry_wt
+moisture.data$percent_moisture <- (moisture.data$water_wt / moisture.data$wet_soil) * 100
+
+#mean, sd, and se of soil moisture data
+moisture.stat <- moisture.data %>% group_by(ppt_trt, nut_trt) %>%
+  summarize(mean=mean(percent_moisture), se=sd(percent_moisture)/length(percent_moisture))
+
+
+
+#add soil moisture to colonization data
+col.moist.plot <- full_join(colonization, moisture.data)
+
+#plotting moisture and AMF colonization. whoops! didn't work, or don't really know how to code?
+ggplot(subset(col.moist.plot,fungi=="amf"), aes(y=percent,x=percent_moisture))+
+  geom_line()
+
+ggplot(moisture.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
+  geom_bar(stat="identity", position="dodge") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
+
+
+ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
+  geom_bar(stat="identity", position="dodge") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
