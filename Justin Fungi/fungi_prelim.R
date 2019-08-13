@@ -76,13 +76,19 @@ moisture.stat <- moisture.data %>% group_by(ppt_trt, nut_trt) %>%
   summarize(mean=mean(percent_moisture), se=sd(percent_moisture)/sqrt(length(percent_moisture)))
 
 #add soil moisture to colonization data
-#AS: nice job!
+#AS: nice job joining these!! but I think I would use the average values (all 5 roots averaged per block)
+#AS: I added col.plot.2 to average colonization, leaving block in 
+#AS: Then I joined moisture to the averaged colonization data in col.moist.plot2
 col.moist.plot <- full_join(colonization, moisture.data)
+col.plot.2 <- colonization %>% group_by(block, ppt_trt, nut_trt, fungi) %>%
+  summarize(mean=mean(percent), stdev= sd(percent), se=sd(percent)/sqrt(length(percent)))
+col.moist.plot2 <- full_join(col.plot.2, moisture.data)
 
 #plotting moisture and AMF colonization. whoops! didn't work, or don't really know how to code?
 #AS: I changed this to a scatterplot (geom_point) and added a linear regression by nutrient treatment (geom_smooth)
-#AS: I also added some code to make a more customized, prettier plot - use this as a template for making pretty plots for the poster
-ggplot(subset(col.moist.plot,fungi=="amf"), aes(y=percent,x=percent_moisture, color=nut_trt))+
+#AS: I also added some code to make a more customized, prettier plot 
+#AS: feel free to use this as a template for adjusting other plots/making pretty plots for the poster
+ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
   ylab("AMF (% colonization)")+ #change y-axis label
@@ -91,6 +97,7 @@ ggplot(subset(col.moist.plot,fungi=="amf"), aes(y=percent,x=percent_moisture, co
   scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
+#colors() will give you a list of colors, or google r colors
 
 ggplot(moisture.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
   geom_bar(stat="identity", position="dodge") +
