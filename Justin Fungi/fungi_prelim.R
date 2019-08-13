@@ -5,7 +5,9 @@ library(lsmeans)#post hoc test for significance between treatments
 
 # Import csv file, call it data. Import soil moisture data, call it moisture.data
 setwd("C:/Users/Owner/Desktop")
-data<-read.csv("compost.fungi.csv",header=T)
+data<-read.csv("compost.fungi.csv",header=T) %>%
+  mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) #orders factors
 str(data)
 levels(data$ppt_trt)#check levels of precipitation treatment factor
 levels(data$nut_trt)#check levels of nutrient treatment factor
@@ -14,12 +16,25 @@ data$block <- as.factor(data$block)
 data$root <- as.factor(data$root)
 data$rep <- as.factor(data$rep)
 
-moisture.data <- read.csv("moisture.csv", header=T)
+#import soil moisture data
+moisture.data <- read.csv("moisture.csv", header=T) %>%
+  mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n")))
 str(moisture.data)
 moisture.data$block <- as.factor(moisture.data$block)
 levels(moisture.data$block)
 levels(moisture.data$ppt_trt)
 levels(moisture.data$nut_trt)
+
+#import root biomass data (belowground net primary productivity, BNPP)
+BNPP <- read.csv("BNPP.csv", header=T) %>%
+  mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n")))
+str(BNPP)
+BNPP$block <- as.factor(BNPP$block)
+levels(BNPP$block)
+levels(BNPP$ppt_trt)
+levels(BNPP$nut_trt)
 
 #colonization of amf by ppt, nut,root, and block
 colonization <- data %>% group_by(block, ppt_trt, nut_trt, root, fungi) %>% filter(count != "NA") %>%
@@ -84,6 +99,9 @@ col.plot.2 <- colonization %>% group_by(block, ppt_trt, nut_trt, fungi) %>%
   summarize(mean=mean(percent), stdev= sd(percent), se=sd(percent)/sqrt(length(percent)))
 col.moist.plot2 <- full_join(col.plot.2, moisture.data)
 
+#add BNPP data to colonization and moisture data
+col.moist.plot2<-merge(col.moist.plot2, BNPP)
+
 #plotting moisture and AMF colonization. whoops! didn't work, or don't really know how to code?
 #AS: I changed this to a scatterplot (geom_point) and added a linear regression by nutrient treatment (geom_smooth)
 #AS: I also added some code to make a more customized, prettier plot 
@@ -97,12 +115,48 @@ ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, colo
   scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
-#colors() will give you a list of colors, or google r colors
+#colors() will give you a list of colors, or google "r colors"
 
 ggplot(moisture.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
   geom_bar(stat="identity", position="dodge") +
-  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
+  ylab("Soil Moisture (%)")+ #change y-axis label
+  xlab("Amendment Treatment") #change x-axis label
 
 ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   geom_bar(stat="identity", position="dodge") +
-  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
+  ylab("Soil Moisture (%)")+ #change y-axis label
+  xlab("Amendment Treatment") #change x-axis label
+
+
+##Plot AMF colonization vs. root biomass
+ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
+  geom_point()+ #plots points for scatterplot
+  geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
+  ylab("AMF (% colonization)")+ #change y-axis label
+  xlab("Root Biomass (g))")+ #change x-axis label
+  theme_classic() + #a nicer theme without gray background
+  scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                     guide = guide_legend(title = "Amendment"), #change legend title
+                     labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
+#colors() will give you a list of colors, or google "r colors"
+
+##Plot root biomass vs. soil moisture
+ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=BNPP,x=percent_moisture, color=nut_trt))+
+  geom_point()+ #plots points for scatterplot
+  geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
+  ylab("Root Biomass (g)")+ #change y-axis label
+  xlab("Soil Moisture(%))")+ #change x-axis label
+  theme_classic() + #a nicer theme without gray background
+  scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                     guide = guide_legend(title = "Amendment"), #change legend title
+                     labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
+
+#boxplot to show root biomass by treatments (root biomass is highest in compost/wet)
+ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
+  geom_boxplot() +
+  ylab("Root biomass (g)")+ #change y-axis label
+  xlab("Precipitation Treatment") #change x-axis label
+
+
