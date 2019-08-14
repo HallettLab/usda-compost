@@ -133,6 +133,7 @@ ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
 ##Plot AMF colonization vs. root biomass
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
+  facet_wrap(~nut_trt)+
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
   ylab("AMF (% colonization)")+ #change y-axis label
   xlab("Root Biomass (g))")+ #change x-axis label
