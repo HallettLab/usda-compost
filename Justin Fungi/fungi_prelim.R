@@ -161,3 +161,12 @@ ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
   xlab("Precipitation Treatment") #change x-axis label
 
 
+#ANOVA for nut_trt*percent_moisture on percent colonization
+#I'm not entirely sure that I did this analysis correctly
+amf.moist <- col.moist.plot2 %>% filter(fungi=="amf")
+options(contrasts = c("contr.treatment", "contr.poly"))
+m2 = lm ( mean ~ nut_trt + percent_moisture + nut_trt:percent_moisture,
+              data = amf.moist)
+summary(m2)
+anova(m2)
+
