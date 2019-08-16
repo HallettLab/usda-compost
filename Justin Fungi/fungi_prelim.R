@@ -145,7 +145,7 @@ ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   ylab("Soil Moisture (%)")+ #change y-axis label
   xlab("Amendment Treatment") #change x-axis label
 
-##AS: FOR POSTER!!
+##AS: I THINK THIS ONE FOR POSTER!!
 ##Plot AMF colonization vs. root biomass
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
