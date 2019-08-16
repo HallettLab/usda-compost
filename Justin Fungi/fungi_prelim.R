@@ -79,6 +79,18 @@ contrast(m1.ppt, "pairwise")
 ggplot(subset(colonization, fungi=="amf"), aes(x=nut_trt, y=percent, fill=ppt_trt))+
   geom_boxplot()
 
+#JD: description - bar plot of only AMF colonization by nut and ppt reatments.
+ggplot(subset(col.plot.1, fungi=="amf"), aes(x=nut_trt, y=mean, fill=ppt_trt)) +
+  geom_bar(stat = "identity", position="dodge") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9)) +
+  ylab("AMF % root colonization")+
+  xlab("soil amendment")+
+  ggtitle("Percent AMF colonization Across Soil and Precipitation Treatments")+
+  scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
+  scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                    guide = guide_legend(title = "Amendment"), #change legend title
+                    labels=c("Drought", "Ambient", "High")) #change labels in the legend
+
 #formating moisture.data. Calculating soil moisture
 #AS: I changed the formula to calculate % water out of DRY soil 
 moisture.data$dry_wt <- moisture.data$dry_soil_tin - moisture.data$tin_wt
