@@ -7,9 +7,8 @@ library(lsmeans)#post hoc test for significance between treatments
 setwd("C:/Users/Owner/Desktop")
 data<-read.csv("compost.fungi.csv",header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
-  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) %>% #orders factors
-  mutate(site = "moderate_graze", 
-         site = ifelse(block == 1 | block == 2, "heavy_graze", site))#added a new factor to describe grazing history
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) #orders factors
+  
 str(data)
 levels(data$ppt_trt)#check levels of precipitation treatment factor
 levels(data$nut_trt)#check levels of nutrient treatment factor
@@ -22,8 +21,7 @@ data$rep <- as.factor(data$rep)
 moisture.data <- read.csv("moisture.csv", header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
   mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) %>%
-  mutate(site = "moderate_graze", 
-         site = ifelse(block == 1 | block == 2, "heavy_graze", site)) 
+  
 str(moisture.data)
 moisture.data$block <- as.factor(moisture.data$block)
 levels(moisture.data$block)
@@ -33,9 +31,8 @@ levels(moisture.data$nut_trt)
 #import root biomass data (belowground net primary productivity, BNPP)
 BNPP <- read.csv("BNPP.csv", header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
-  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) %>%
-  mutate(site = "moderate_graze", 
-         site = ifelse(block == 1 | block == 2, "heavy_graze", site))
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) 
+  
 str(BNPP)
 BNPP$block <- as.factor(BNPP$block)
 levels(BNPP$block)
@@ -43,24 +40,24 @@ levels(BNPP$ppt_trt)
 levels(BNPP$nut_trt)
 
 #colonization of amf by ppt, nut,root, and block
-colonization <- data %>% group_by(block, ppt_trt, nut_trt, root, fungi, site) %>% filter(count != "NA") %>%
+colonization <- data %>% group_by(block, ppt_trt, nut_trt, root, fungi) %>% filter(count != "NA") %>%
   summarize(percent=sum(count)/length(count))
 
 #mean and standard deviation
-col.plot.1 <- colonization %>% group_by(ppt_trt, nut_trt, fungi, site) %>%
+col.plot.1 <- colonization %>% group_by(ppt_trt, nut_trt, fungi) %>%
   summarize(mean=mean(percent), stdev= sd(percent), se=sd(percent)/sqrt(length(percent)))
 
 #make a graph! 
 #AS: description - bar plot with error bars of mean colonization by nut and ppt treatment, colored by fungi
 ggplot(col.plot.1, aes(x=ppt_trt, y=mean, fill=fungi)) +
-  facet_wrap(~site*nut_trt) +
+  facet_wrap(~nut_trt) +
   geom_bar(stat = "identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
 
 #Another graph!
 #AS: description - bar plot with error bars of mean colonization by ppt and fungi, colored by nut trt
 ggplot(col.plot.1, aes(x=ppt_trt, y=mean, fill=nut_trt)) +
-  facet_wrap(~site*fungi) +
+  facet_wrap(~fungi) +
   geom_bar(stat = "identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))
 
@@ -79,33 +76,6 @@ contrast(m1.lsm, "pairwise")
 #AS: this is a post-hoc test to show differences in ppt treatment only
 m1.ppt <- lsmeans(m1, ~ppt_trt)
 contrast(m1.ppt, "pairwise")
-
-##NOW TEST SEPARATELY BY GRAZING HISTORY
-###HEAVILY GRAZED SITES
-m2 <- lme(percent ~ nut_trt*ppt_trt, random=~1|block, subset(col.amf, site=="heavy_graze"), na.action=na.exclude)
-summary(m2)
-anova(m2)
-
-#AS: this is a post-hoc test to show differences between treatments (interaction term)
-m2.lsm <- lsmeans(m2, ~nut_trt*ppt_trt)
-contrast(m2.lsm, "pairwise")
-
-#AS: this is a post-hoc test to show differences in ppt treatment only
-m2.ppt <- lsmeans(m2, ~ppt_trt)
-contrast(m2.ppt, "pairwise")
-
-##MODERATELY GRAZED SITES
-m3 <- lme(percent ~ nut_trt*ppt_trt, random=~1|block, subset(col.amf, site=="moderate_graze"), na.action=na.exclude)
-summary(m3)
-anova(m3)
-
-#AS: this is a post-hoc test to show differences between treatments (interaction term)
-m3.lsm <- lsmeans(m3, ~nut_trt*ppt_trt)
-contrast(m1.lsm, "pairwise")
-
-#AS: this is a post-hoc test to show differences in ppt treatment only
-m3.ppt <- lsmeans(m3, ~ppt_trt)
-contrast(m3.ppt, "pairwise")
 
 #new graph! 
 #AS: description - boxplot of only AMF colonization by nut and ppt treatments
@@ -154,6 +124,7 @@ col.moist.plot2<-merge(col.moist.plot2, BNPP)
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
+  facet_wrap(~nut_trt)+ #creates 3 panels
   ylab("AMF (% colonization)")+ #change y-axis label
   xlab("Soil Moisture (% g/g)")+ #change x-axis label
   theme_classic() + #a nicer theme without gray background
@@ -174,7 +145,7 @@ ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   ylab("Soil Moisture (%)")+ #change y-axis label
   xlab("Amendment Treatment") #change x-axis label
 
-
+##AS: FOR POSTER!!
 ##Plot AMF colonization vs. root biomass
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
@@ -209,6 +180,7 @@ ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
 
 #ANOVA for nut_trt*percent_moisture on percent colonization
 #I'm not entirely sure that I did this analysis correctly
+#AS: This is correct for a linear model, no significant effects though :(
 amf.moist <- col.moist.plot2 %>% filter(fungi=="amf")
 options(contrasts = c("contr.treatment", "contr.poly"))
 m2 = lm ( mean ~ nut_trt + percent_moisture + nut_trt:percent_moisture,
@@ -216,3 +188,25 @@ m2 = lm ( mean ~ nut_trt + percent_moisture + nut_trt:percent_moisture,
 summary(m2)
 anova(m2)
 
+##AS: test if nut*root biomass affect AMF colonization in the COMPOST treatment
+m3 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="c"))
+summary(m3)
+anova(m3) #yes, this is significant!
+#we can conclude that AMF significantly declines with increasing root biomass
+#under the compost treatment only (see below for FERT and NO amendments, which are
+#not significant. 
+#linear equation is AMF(%) = 0.96 - 0.75(BNPP)
+#R2=0.33 (translates as 33% of variation in AMF colonization is explained by BNPP under compost)
+
+##AS: test if nut*root biomass affect AMF colonization in the FERT treatment
+m4 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="f"))
+summary(m4)
+anova(m4) #not significant!
+
+##AS: test if nut*root biomass affect AMF colonization in the NO AMEND treatment
+m5 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="n"))
+summary(m5)
+anova(m5) #not significant!
