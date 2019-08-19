@@ -8,6 +8,7 @@ setwd("C:/Users/Owner/Desktop")
 data<-read.csv("compost.fungi.csv",header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
   mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) #orders factors
+  
 str(data)
 levels(data$ppt_trt)#check levels of precipitation treatment factor
 levels(data$nut_trt)#check levels of nutrient treatment factor
@@ -19,7 +20,8 @@ data$rep <- as.factor(data$rep)
 #import soil moisture data
 moisture.data <- read.csv("moisture.csv", header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
-  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n")))
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) %>%
+  
 str(moisture.data)
 moisture.data$block <- as.factor(moisture.data$block)
 levels(moisture.data$block)
@@ -29,7 +31,8 @@ levels(moisture.data$nut_trt)
 #import root biomass data (belowground net primary productivity, BNPP)
 BNPP <- read.csv("BNPP.csv", header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
-  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n")))
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) 
+  
 str(BNPP)
 BNPP$block <- as.factor(BNPP$block)
 levels(BNPP$block)
@@ -121,6 +124,7 @@ col.moist.plot2<-merge(col.moist.plot2, BNPP)
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
+  facet_wrap(~nut_trt)+ #creates 3 panels
   ylab("AMF (% colonization)")+ #change y-axis label
   xlab("Soil Moisture (% g/g)")+ #change x-axis label
   theme_classic() + #a nicer theme without gray background
@@ -141,7 +145,7 @@ ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   ylab("Soil Moisture (%)")+ #change y-axis label
   xlab("Amendment Treatment") #change x-axis label
 
-
+##AS: I THINK THIS ONE FOR POSTER!!
 ##Plot AMF colonization vs. root biomass
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
@@ -159,6 +163,7 @@ ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=BNPP,x=percent_moisture, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
+  facet_wrap(~nut_trt)+
   ylab("Root Biomass (g)")+ #change y-axis label
   xlab("Soil Moisture(%))")+ #change x-axis label
   theme_classic() + #a nicer theme without gray background
@@ -186,6 +191,7 @@ ggplot(col.moist.plot2,aes(x=nut_trt, y=BNPP, fill=ppt_trt))+
 
 #ANOVA for nut_trt*percent_moisture on percent colonization
 #I'm not entirely sure that I did this analysis correctly
+#AS: This is correct for a linear model, no significant effects though :(
 amf.moist <- col.moist.plot2 %>% filter(fungi=="amf")
 options(contrasts = c("contr.treatment", "contr.poly"))
 m2 = lm ( mean ~ nut_trt + percent_moisture + nut_trt:percent_moisture,
@@ -193,3 +199,25 @@ m2 = lm ( mean ~ nut_trt + percent_moisture + nut_trt:percent_moisture,
 summary(m2)
 anova(m2)
 
+##AS: test if nut*root biomass affect AMF colonization in the COMPOST treatment
+m3 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="c"))
+summary(m3)
+anova(m3) #yes, this is significant!
+#we can conclude that AMF significantly declines with increasing root biomass
+#under the compost treatment only (see below for FERT and NO amendments, which are
+#not significant. 
+#linear equation is AMF(%) = 0.96 - 0.75(BNPP)
+#R2=0.33 (translates as 33% of variation in AMF colonization is explained by BNPP under compost)
+
+##AS: test if nut*root biomass affect AMF colonization in the FERT treatment
+m4 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="f"))
+summary(m4)
+anova(m4) #not significant!
+
+##AS: test if nut*root biomass affect AMF colonization in the NO AMEND treatment
+m5 <- lm(mean ~  BNPP, 
+         data = subset(amf.moist, nut_trt=="n"))
+summary(m5)
+anova(m5) #not significant!
