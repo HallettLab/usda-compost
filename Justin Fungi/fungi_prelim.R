@@ -172,6 +172,17 @@ ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
   ylab("Root biomass (g)")+ #change y-axis label
   xlab("Precipitation Treatment") #change x-axis label
 
+#JD - Boxplot to show root biomass by treatment (precipitation fill and soil amendment x)
+ggplot(col.moist.plot2,aes(x=nut_trt, y=BNPP, fill=ppt_trt))+
+  geom_boxplot() +
+  ylab("Root biomass (g)")+ #change y-axis label
+  xlab("Soil Amendment")+ #change x-axis label
+  ggtitle("Root Biomass (g) and Precipitation Treatments")+
+  scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
+  scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                    guide = guide_legend(title = "Amendment"), #change legend title
+                    labels=c("Drought", "Ambient", "High")) #change labels in the legend
+
 
 #ANOVA for nut_trt*percent_moisture on percent colonization
 #I'm not entirely sure that I did this analysis correctly
