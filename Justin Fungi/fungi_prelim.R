@@ -114,6 +114,10 @@ col.plot.2 <- colonization %>% group_by(block, ppt_trt, nut_trt, fungi) %>%
   summarize(mean=mean(percent), stdev= sd(percent), se=sd(percent)/sqrt(length(percent)))
 col.moist.plot2 <- full_join(col.plot.2, moisture.data)
 
+#JD BNPP mean, sd, se
+BNPP.stat <- BNPP %>% group_by(nut_trt, ppt_trt)%>%
+  summarize(mean=mean(BNPP), stdev= sd(BNPP), se=sd(BNPP)/sqrt(length(BNPP)))
+
 #add BNPP data to colonization and moisture data
 col.moist.plot2<-merge(col.moist.plot2, BNPP)
 
@@ -139,11 +143,17 @@ ggplot(moisture.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
   ylab("Soil Moisture (%)")+ #change y-axis label
   xlab("Amendment Treatment") #change x-axis label
 
+##JD - barplot showing soil moisture against all treatments
 ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   geom_bar(stat="identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
   ylab("Soil Moisture (%)")+ #change y-axis label
-  xlab("Amendment Treatment") #change x-axis label
+  xlab("Amendment Treatment")+#change x-axis label
+  scale_x_discrete(labels=c("Drought", "Ambient","High Precipitation")) +
+  ggtitle ("Percent Soil Moisture Against Nutrient and Precipitation Treatments")+
+  scale_fill_manual(values = c("green3", "orange", "skyblue3"),
+                     guide = guide_legend(title = "Amendment"), #change legend title
+                     labels=c("Compost", "Fertilizer", "None")) 
 
 ##AS: I THINK THIS ONE FOR POSTER!!
 ##Plot AMF colonization vs. root biomass
@@ -153,8 +163,9 @@ ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
   ylab("AMF (% colonization)")+ #change y-axis label
   xlab("Root Biomass (g))")+ #change x-axis label
+  ggtitle("Percent AMF Colonization Against Root Biomass Across Nutrient Treatments")+
   theme_classic() + #a nicer theme without gray background
-  scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+  scale_color_manual(values = c("green3", "orange", "skyblue3"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
 #colors() will give you a list of colors, or google "r colors"
@@ -177,12 +188,13 @@ ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
   ylab("Root biomass (g)")+ #change y-axis label
   xlab("Precipitation Treatment") #change x-axis label
 
-#JD - Boxplot to show root biomass by treatment (precipitation fill and soil amendment x)
-ggplot(col.moist.plot2,aes(x=nut_trt, y=BNPP, fill=ppt_trt))+
-  geom_boxplot() +
+#JD - Barplot to show root biomass by treatment (precipitation fill and soil amendment x)
+ggplot(BNPP.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
+  geom_bar(stat="identity", position="dodge") +
   ylab("Root biomass (g)")+ #change y-axis label
   xlab("Soil Amendment")+ #change x-axis label
-  ggtitle("Root Biomass (g) and Precipitation Treatments")+
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
+  ggtitle("Root Biomass Across Nutrient and Precipitation Treatments")+
   scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
   scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                     guide = guide_legend(title = "Amendment"), #change legend title
@@ -221,3 +233,4 @@ m5 <- lm(mean ~  BNPP,
          data = subset(amf.moist, nut_trt=="n"))
 summary(m5)
 anova(m5) #not significant!
+
