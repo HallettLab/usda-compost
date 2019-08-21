@@ -20,7 +20,7 @@ data$rep <- as.factor(data$rep)
 #import soil moisture data
 moisture.data <- read.csv("moisture.csv", header=T) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(d="d", xc="xc", w="w"))) %>% #orders factors
-  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) %>%
+  mutate(nut_trt=ordered(nut_trt, levels = c(c="c", f="f", n="n"))) 
   
 str(moisture.data)
 moisture.data$block <- as.factor(moisture.data$block)
@@ -86,12 +86,14 @@ ggplot(subset(colonization, fungi=="amf"), aes(x=nut_trt, y=percent, fill=ppt_tr
 ggplot(subset(col.plot.1, fungi=="amf"), aes(x=nut_trt, y=mean, fill=ppt_trt)) +
   geom_bar(stat = "identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9)) +
-  ylab("AMF % root colonization")+
-  xlab("soil amendment")+
-  ggtitle("Percent AMF colonization Across Soil and Precipitation Treatments")+
+  ylab("AMF (% root colonization)")+
+  xlab("")+
+  ylim(0, 1.1)+
+  theme(legend.position=c(0.85,0.9),legend.title=element_text(size=14), legend.text=element_text(size=12), axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"))+
+  ggtitle("AMF colonization across nutrient and precipitation treatments")+
   scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
   scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
-                    guide = guide_legend(title = "Amendment"), #change legend title
+                    guide = guide_legend(title = "Precipitation"), #change legend title
                     labels=c("Drought", "Ambient", "High")) #change labels in the legend
 
 #formating moisture.data. Calculating soil moisture
@@ -125,14 +127,19 @@ col.moist.plot2<-merge(col.moist.plot2, BNPP)
 #AS: I changed this to a scatterplot (geom_point) and added a linear regression by nutrient treatment (geom_smooth)
 #AS: I also added some code to make a more customized, prettier plot 
 #AS: feel free to use this as a template for adjusting other plots/making pretty plots for the poster
+col.moist.plot2<-col.moist.plot2 %>% mutate(nut_trt=ifelse(nut_trt=="c", "Compost", 
+                                                            ifelse(nut_trt=="f", "Fertilizer", 
+                                                                   ifelse(nut_trt=="n", "No Amendment", nut_trt))))
 ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, color=nut_trt))+
   geom_point()+ #plots points for scatterplot
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
   facet_wrap(~nut_trt)+ #creates 3 panels
-  ylab("AMF (% colonization)")+ #change y-axis label
+  ylab("AMF (% root colonization)")+ #change y-axis label
   xlab("Soil Moisture (% g/g)")+ #change x-axis label
-  theme_classic() + #a nicer theme without gray background
-  scale_color_manual(values = c("indianred4",  "dodgerblue1", "darkgoldenrod"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+  theme_classic() +#a nicer theme without gray background
+  theme(legend.position="none", axis.text=element_text(size=12))+
+  ggtitle("AMF colonization by soil moisture")+
+  scale_color_manual(values = c("green3", "orange", "skyblue3"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
 #colors() will give you a list of colors, or google "r colors"
@@ -148,11 +155,12 @@ ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
   geom_bar(stat="identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
   ylab("Soil Moisture (%)")+ #change y-axis label
-  xlab("Amendment Treatment")+#change x-axis label
-  scale_x_discrete(labels=c("Drought", "Ambient","High Precipitation")) +
-  ggtitle ("Percent Soil Moisture Against Nutrient and Precipitation Treatments")+
+  xlab("Precipitation Treatment")+#change x-axis label
+  scale_x_discrete(labels=c("Drought", "Ambient","High")) +
+  theme(legend.position=c(0.2,0.8), legend.title=element_text(size=14), legend.text=element_text(size=12), axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"))+
+  ggtitle ("Soil moisture across nutrient and precipitation treatments")+
   scale_fill_manual(values = c("green3", "orange", "skyblue3"),
-                     guide = guide_legend(title = "Amendment"), #change legend title
+                     guide = guide_legend(title = "Nutrient Treatment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) 
 
 ##AS: I THINK THIS ONE FOR POSTER!!
@@ -162,9 +170,10 @@ ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=BNPP, color=nut_trt))+
   facet_wrap(~nut_trt)+
   geom_smooth(method="lm", se=F)+ #adds linear regression to the plot
   ylab("AMF (% colonization)")+ #change y-axis label
-  xlab("Root Biomass (g))")+ #change x-axis label
-  ggtitle("Percent AMF Colonization Against Root Biomass Across Nutrient Treatments")+
+  xlab("Root Biomass (g)")+ #change x-axis label
+  ggtitle("Regression of AMF colonization on root biomass")+
   theme_classic() + #a nicer theme without gray background
+  theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))+
   scale_color_manual(values = c("green3", "orange", "skyblue3"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
@@ -192,12 +201,13 @@ ggplot(col.moist.plot2,aes(x=ppt_trt, y=BNPP, fill=nut_trt))+
 ggplot(BNPP.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
   geom_bar(stat="identity", position="dodge") +
   ylab("Root biomass (g)")+ #change y-axis label
-  xlab("Soil Amendment")+ #change x-axis label
+  xlab("")+ #change x-axis label
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
-  ggtitle("Root Biomass Across Nutrient and Precipitation Treatments")+
+  ggtitle("Root biomass across nutrient and precipitation treatments")+
   scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
+  theme(legend.position=c(0.8,0.8), legend.title=element_text(size=14), legend.text=element_text(size=12), axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"))+
   scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
-                    guide = guide_legend(title = "Amendment"), #change legend title
+                    guide = guide_legend(title = "Precipitation Treatment"), #change legend title
                     labels=c("Drought", "Ambient", "High")) #change labels in the legend
 
 
