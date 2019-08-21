@@ -143,12 +143,21 @@ ggplot(subset(col.moist.plot2,fungi=="amf"), aes(y=mean,x=percent_moisture, colo
                      guide = guide_legend(title = "Amendment"), #change legend title
                      labels=c("Compost", "Fertilizer", "None")) #change labels in the legend
 #colors() will give you a list of colors, or google "r colors"
-
+moisture.stat<-moisture.stat%>%mutate(nut_trt=ifelse(nut_trt=="c", "Compost", 
+                                                     ifelse(nut_trt=="f", "Fertilizer", 
+                                                            ifelse(nut_trt=="n", "No Amendment", nut_trt))))
 ggplot(moisture.stat,aes(x=nut_trt, y=mean, fill=ppt_trt))+
   geom_bar(stat="identity", position="dodge") +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), position=position_dodge(0.9))+
   ylab("Soil Moisture (%)")+ #change y-axis label
-  xlab("Amendment Treatment") #change x-axis label
+  xlab("")+ #change x-axis label
+  theme(legend.position=c(0.1,0.9),legend.title=element_text(size=14), legend.text=element_text(size=12), axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"))+
+  ggtitle("Soil moisture across nutrient and precipitation treatments")+
+  scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
+  scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                    guide = guide_legend(title = "Precipitation"), #change legend title
+                    labels=c("Drought", "Ambient", "High")) #change labels in the legend
+
 
 ##JD - barplot showing soil moisture against all treatments
 ggplot(moisture.stat,aes(x=ppt_trt, y=mean, fill=nut_trt))+
