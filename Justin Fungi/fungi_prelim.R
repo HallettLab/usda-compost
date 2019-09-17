@@ -2,6 +2,7 @@ library(tidyverse)
 library(ggplot2) #for plots
 library(nlme)#for mixed effect models to test effects of treatments
 library(lsmeans)#post hoc test for significance between treatments
+library(vegan)
 
 # Import csv file, call it data. Import soil moisture data, call it moisture.data
 setwd("C:/Users/Owner/Desktop")
@@ -38,6 +39,60 @@ BNPP$block <- as.factor(BNPP$block)
 levels(BNPP$block)
 levels(BNPP$ppt_trt)
 levels(BNPP$nut_trt)
+
+#import plant composition data
+plant.data <- read.csv("Compost_Cover_LongClean.csv", header=T)
+levels(plant.data$ppt_trt) <- c("D"="d","W"="w","XC"="xc")#Change factors to lower case
+levels(plant.data$nut_trt) <- c("C"="c", "F"="f", "N"="n")
+
+str(plant.data)
+plant.data$block <- as.factor(plant.data$block)
+levels(plant.data$block)
+levels(plant.data$ppt_trt)
+levels(plant.data$nut_trt)
+levels(plant.data$fxnl_grp)
+levels(plant.data$Duration)
+levels(plant.data$nativity)
+levels(plant.data$date)
+
+#percent grass/forb
+plant1 <- plant.data%>%
+  dplyr::select(block, nut_trt, ppt_trt, pct_grass, pct_forb, pct_bare, pct_litter, litter_depth_cm)%>%
+  group_by(block, ppt_trt, nut_trt)%>%
+  summarise(pct.grass=max(pct_grass), pct.forb = max(pct_forb), pct.bare = max(pct_bare), pct.litter=max(pct_litter),litter.depth.cm=max(litter_depth_cm))
+
+plant2 <- merge(amf.moist, plant1)
+
+#species data/ diversity
+plant3 <- plant.data%>%
+  dplyr::select(block, ppt_trt, nut_trt, species, pct_cover, date)%>%
+  filter(date!="2019-04-19", date!="2019-04-20")%>%
+  spread(species, pct_cover)
+
+cover <- plant3%>%
+  dplyr::select(5:56)
+
+cover[is.na(cover)] <- 0
+
+plant2$diversity <- diversity(cover)
+
+#functional group
+plant4 <- plant.data%>%
+  dplyr::select(block, ppt_trt, nut_trt, fxnl_grp, pct_cover, date)%>%
+  filter(date!="2019-04-19", date!="2019-04-20")
+
+plant4 <- plant4%>%  
+  group_by(block, nut_trt, ppt_trt, fxnl_grp)%>%
+  summarise(percent=sum(pct_cover))%>%
+  spread(fxnl_grp, percent)
+
+plant4 <- merge(plant4, plant2)
+
+plant4 <- plant4%>%
+  select(-pct.grass, -pct.forb)
+
+#Add plant composition data to colonization by plot
+all.data <- merge(plant.data, amf.moist)
 
 #colonization of amf by ppt, nut,root, and block
 colonization <- data %>% group_by(block, ppt_trt, nut_trt, root, fungi) %>% filter(count != "NA") %>%
@@ -253,3 +308,9 @@ m5 <- lm(mean ~  BNPP,
 summary(m5)
 anova(m5) #not significant!
 
+#AMF colonization against:
+#functional group (fxnl_grp)
+#percent cover of forbs/ grass (pct_forb, pct grass)
+#percent cover of each species
+#plot composition?
+#nativity
