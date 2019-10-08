@@ -122,6 +122,13 @@ cover[is.na(cover)] <- 0
 
 plant2$diversity <- diversity(cover)
 
+#Evenness diversity
+plant2$evenness <- diversity/log(specnumber(cover))
+
+#richness
+plant2$richness <- specnumber(cover)
+
+
 #functional group
 plant4 <- plant.data%>%
   dplyr::select(block, ppt_trt, nut_trt, fxnl_grp, pct_cover, date)%>%
@@ -143,6 +150,7 @@ colnames(plant4)[colnames(plant4) == "N-fixer"] <- "nfixer"
 #PLANT FiGURES
 #
 #
+#diversity*nutrient
 
 #PLANT COMPOSITION STATS
 #
@@ -172,6 +180,9 @@ p4 = lme ( mean ~ nfixer, random=~1|block, plant4, na.action=na.exclude)
 summary(p4)
 anova(p4)
 
+#ANOVA for AMF and evenness
+#ANOVA for AMF richness
+
 #ANOVA for forb and treatment
 #significance for diversity X nut_trt, but not combined treatments
 m1 = lm (diversity ~ ppt_trt + nut_trt + ppt_trt:nut_trt,
@@ -199,3 +210,8 @@ m4 = lm (Grass ~ ppt_trt + nut_trt + ppt_trt:nut_trt,
          data = plant4)
 summary(m4)
 anova(m4)
+
+#across treatments
+q1 = lme ( mean ~ diversity*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
+summary(q1)
+anova(q1)
