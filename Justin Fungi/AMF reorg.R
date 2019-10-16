@@ -128,7 +128,7 @@ plant2$richness <- specnumber(cover)
 #Evenness diversity
 #
 #Needs Debugging
-plant2$evenness <- diversity/log(specnumber(cover))
+plant2$evenness <- plant2$diversity/log(specnumber(cover))
 
 #functional group
 plant4 <- plant.data%>%
@@ -215,18 +215,25 @@ anova(q1)
 
 #Richness and AMF
 #Significant intercept with ppt_trt
-q2 = lme ( mean ~ richness*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
+q2 = lme ( richness ~ mean*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
 summary(q2)
 anova(q2)
 
-q3 = lme ( mean ~ evenness*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
+#difference in richness with colonization
+lq2 <- lsmeans(q2, ~mean*ppt_trt)
+contrast(lq2, "pairwise")
+
+#evenness
+q3 = lme ( evenness ~ mean*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
 summary(q3)
 anova(q3)
 
-#PLANT FiGURES
+
+#FiGURES
 #
 #
-#diversity*nutrient
+
+#diversity*amf
 ggplot(subset(plant4,fungi=="amf"), aes(y=diversity,x=mean))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
@@ -237,6 +244,7 @@ ggplot(subset(plant4,fungi=="amf"), aes(y=diversity,x=mean))+
   theme_classic() + 
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
 
+#nfixer*amf
 ggplot(subset(plant4,fungi=="amf"), aes(y=mean,x=nfixer))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
@@ -246,6 +254,7 @@ ggplot(subset(plant4,fungi=="amf"), aes(y=mean,x=nfixer))+
   theme_classic() + 
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
 
+#richness*amf
 ggplot(subset(plant4,fungi=="amf"), aes(y=richness,x=mean))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
@@ -255,3 +264,26 @@ ggplot(subset(plant4,fungi=="amf"), aes(y=richness,x=mean))+
   ggtitle("AMF vs. richness")+
   theme_classic() + 
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
+
+#diversity*nutrients
+ggplot(plant4,aes(x=nut_trt, y=diversity))+
+  geom_bar(stat="identity", position="dodge") +
+  ylab("diversity")+
+  xlab("")+
+  ggtitle("")+
+  scale_x_discrete(labels=c("Compost", "Fertilizer","No Amendment")) +
+  theme(legend.position=c(0.8,0.8), legend.title=element_text(size=14), legend.text=element_text(size=12), axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"))+
+  scale_fill_manual(values = c("indianred1",  "lightgoldenrod2", "skyblue2"), #changes colors of points (use scale_fill_manual for boxplots and bar plots)
+                    guide = guide_legend(title = "Precipitation Treatment"), #change legend title
+                    labels=c("Drought", "Ambient", "High")) #change labels in the legend
+
+#evenness*amf
+ggplot(subset(plant4,fungi=="amf"), aes(y=evenness,x=mean))+
+  geom_point()+ 
+  geom_smooth(method="lm", se=F)+ 
+  ylab("evenness")+ 
+  xlab("AMF colonization (% root)")+ 
+  ggtitle("AMF vs. evenness")+
+  theme_classic() + 
+  theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
+
