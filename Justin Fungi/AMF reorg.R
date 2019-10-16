@@ -122,12 +122,13 @@ cover[is.na(cover)] <- 0
 
 plant2$diversity <- diversity(cover)
 
-#Evenness diversity
-plant2$evenness <- diversity/log(specnumber(cover))
-
 #richness
 plant2$richness <- specnumber(cover)
 
+#Evenness diversity
+#
+#Needs Debugging
+plant2$evenness <- diversity/log(specnumber(cover))
 
 #functional group
 plant4 <- plant.data%>%
@@ -147,10 +148,6 @@ plant4 <- plant4%>%
 str(plant4)
 colnames(plant4)[colnames(plant4) == "N-fixer"] <- "nfixer"
 
-#PLANT FiGURES
-#
-#
-#diversity*nutrient
 
 #PLANT COMPOSITION STATS
 #
@@ -163,7 +160,7 @@ summary(p1)
 anova(p1)
 
 #ANOVA for AMF and Forb
-#noi significance
+#no significance
 p2 = lme ( mean ~ Forb, random=~1|block, plant4, na.action=na.exclude)
 summary(p2)
 anova(p2)
@@ -215,3 +212,46 @@ anova(m4)
 q1 = lme ( mean ~ diversity*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
 summary(q1)
 anova(q1)
+
+#Richness and AMF
+#Significant intercept with ppt_trt
+q2 = lme ( mean ~ richness*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
+summary(q2)
+anova(q2)
+
+q3 = lme ( mean ~ evenness*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
+summary(q3)
+anova(q3)
+
+#PLANT FiGURES
+#
+#
+#diversity*nutrient
+ggplot(subset(plant4,fungi=="amf"), aes(y=diversity,x=mean))+
+  geom_point()+ 
+  geom_smooth(method="lm", se=F)+ 
+  facet_wrap(~nut_trt)+
+  ylab("diversity")+ 
+  xlab("AMF colonization (% root)")+ 
+  ggtitle("AMF vs. diversity")+
+  theme_classic() + 
+  theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
+
+ggplot(subset(plant4,fungi=="amf"), aes(y=mean,x=nfixer))+
+  geom_point()+ 
+  geom_smooth(method="lm", se=F)+ 
+  ylab("AMF colonization")+ 
+  xlab("nitrogen fixers")+ 
+  ggtitle("AMF vs. nfixer")+
+  theme_classic() + 
+  theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
+
+ggplot(subset(plant4,fungi=="amf"), aes(y=richness,x=mean))+
+  geom_point()+ 
+  geom_smooth(method="lm", se=F)+ 
+  facet_wrap(~ppt_trt)+
+  xlab("AMF colonization")+ 
+  ylab("richness")+ 
+  ggtitle("AMF vs. richness")+
+  theme_classic() + 
+  theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
