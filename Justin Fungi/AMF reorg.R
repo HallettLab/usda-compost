@@ -233,8 +233,16 @@ anova(q3)
 #
 #
 
+#new data set for plots specifically
+plot_data <- plant4
+plot_data<- plot_data %>% mutate(nut_trt=ifelse(nut_trt=="c", "Compost", 
+                                                           ifelse(nut_trt=="f", "Fertilizer", 
+                                                                  ifelse(nut_trt=="n", "No Amendment", nut_trt))))
+plot_data<- plot_data %>% mutate(ppt_trt=ifelse(ppt_trt=="d", "Drought", 
+                                                ifelse(ppt_trt=="xc", "Ambient", 
+                                                       ifelse(ppt_trt=="w", "Wet", ppt_trt))))
 #diversity*amf
-ggplot(subset(plant4,fungi=="amf"), aes(y=diversity,x=mean))+
+ggplot(subset(plot_data,fungi=="amf"), aes(y=diversity,x=mean))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
   facet_wrap(~nut_trt)+
@@ -245,7 +253,7 @@ ggplot(subset(plant4,fungi=="amf"), aes(y=diversity,x=mean))+
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
 
 #nfixer*amf
-ggplot(subset(plant4,fungi=="amf"), aes(y=mean,x=nfixer))+
+ggplot(subset(plot_data,fungi=="amf"), aes(y=mean,x=nfixer))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
   ylab("AMF colonization")+ 
@@ -255,22 +263,22 @@ ggplot(subset(plant4,fungi=="amf"), aes(y=mean,x=nfixer))+
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
 
 #richness*amf
-ggplot(subset(plant4,fungi=="amf"), aes(y=richness,x=mean, color=ppt_trt))+
+ggplot(subset(plot_data,fungi=="amf"), aes(y=richness,x=mean, color=ppt_trt))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
   facet_wrap(~ppt_trt)+
   xlab("AMF colonization")+ 
   ylab("richness")+ 
-  ggtitle("Regression of Plot Richness with AMF Colonization Across Precipitation Treatments")+
+  ggtitle("Regression of Plot Richness with AMF Colonization")+
   theme_classic()+
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))+
-  scale_color_manual(values = c("indianred1","skyblue2","lightgoldenrod2" ), 
+  scale_color_manual(values = c("lightgoldenrod2", "indianred1","skyblue2" ), 
                      guide = guide_legend(title = "Precipitation Treatment"),
                      labels=c("Drought", "Ambient", "High"))
 
 
 #diversity*nutrients
-ggplot(plant4,aes(x=nut_trt, y=diversity))+
+ggplot(plot_data,aes(x=nut_trt, y=diversity))+
   geom_bar(stat="identity", position="dodge") +
   ylab("diversity")+
   xlab("")+
@@ -280,7 +288,7 @@ ggplot(plant4,aes(x=nut_trt, y=diversity))+
 
 
 #evenness*amf
-ggplot(subset(plant4,fungi=="amf"), aes(y=evenness,x=mean))+
+ggplot(subset(plot_data,fungi=="amf"), aes(y=evenness,x=mean))+
   geom_point()+ 
   geom_smooth(method="lm", se=F)+ 
   ylab("evenness")+ 
