@@ -154,10 +154,24 @@ colnames(plant4)[colnames(plant4) == "N-fixer"] <- "nfixer"
 #
 
 #ANOVA  for AMF and diversity
-#no significance
+#significant relationship between AMF colonization and diversity (AMF decline with increasing diversity)
 p1 = lme ( mean ~ diversity, random=~1|block, plant4, na.action=na.exclude)
 summary(p1)
 anova(p1)
+
+ggplot(plant4, aes(x=diversity, y=mean))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#ANOVA  for AMF and richness
+#significant relationship between AMF colonization and diversity (AMF decline with increasing diversity)
+p1a = lme ( mean ~ richness, random=~1|block, plant4, na.action=na.exclude)
+summary(p1a)
+anova(p1a)
+
+ggplot(plant4, aes(x=richness, y=mean))+
+  geom_point()+
+  geom_smooth(method="lm")
 
 #ANOVA for AMF and Forb
 #no significance
@@ -172,10 +186,14 @@ summary(p3)
 anova(p3)
 
 #ANOVA for AMF and N-fixer
-#no significance
+#significant effects of nfixers on AMF, where AMF declines with increasing Nfixer cover
 p4 = lme ( mean ~ nfixer, random=~1|block, plant4, na.action=na.exclude)
 summary(p4)
 anova(p4)
+
+ggplot(plant4, aes(x=nfixer, y=mean))+
+  geom_point()+
+  geom_smooth(method="lm")
 
 #ANOVA for AMF and evenness
 #ANOVA for AMF richness
