@@ -120,9 +120,25 @@ ggplot(col.plot.1, aes(x=ppt_trt, y=mean, fill=nut_trt)) +
 #AS: in this model, nutrient and ppt treatment are fixed effects, block is a random effect
 col.amf <- colonization %>% filter(fungi=="amf")
 col.amf <- as.data.frame(col.amf)
+col.amf$z<-scale(col.amf$percent) #try converting amf percent to z scores
 m1 <- lme(percent ~ nut_trt*ppt_trt, random=~1|block,col.amf, na.action=na.exclude)
 summary(m1)
 anova(m1)
+shapiro.test(residuals(m1)) #shapiro test for normality, normal if p>0.05, these data are not normally distributed
+
+#histogram of nut_trt 
+ggplot(data=col.amf, aes(x=percent, group=nut_trt, color=nut_trt))+
+  geom_density()
+  #geom_vline(aes(xintercept = grp.mean, group=nut_trt), linetype = "dashed", size = 0.6)
+
+#histogram of ppt_trt 
+ggplot(data=col.amf, aes(x=percent, group=ppt_trt, color=ppt_trt))+
+  geom_density()
+
+#histogram of all data, play around with transformations
+#note closest to normal was asin transformation (also tried log, log(x+1), sqrt, asin(x^0.5))
+ggplot(data=col.amf, aes(x=percent))+
+  geom_density()
 
 #AS: this is a post-hoc test to show differences between treatments (interaction term)
 m1.lsm <- lsmeans(m1, ~nut_trt*ppt_trt)
@@ -134,8 +150,18 @@ contrast(m1.ppt, "pairwise")
 
 #new graph! 
 #AS: description - boxplot of only AMF colonization by nut and ppt treatments
-ggplot(subset(colonization, fungi=="amf"), aes(x=nut_trt, y=percent, fill=ppt_trt))+
+ggplot(subset(colonization, fungi=="amf"), aes(x=ppt_trt, y=percent, fill=nut_trt))+
   geom_boxplot()
+
+#scatterplot of moisture vs AMF
+ggplot(plant4, aes(x=percent_moisture, y=mean, color=ppt_trt, shape=nut_trt))+
+  geom_point()+
+  geom_smooth(method="lm", aes(group=1))
+
+#scatterplot of moisture vs root biomass
+ggplot(plant4, aes(x=percent_moisture, y=BNPP, color=ppt_trt, shape=nut_trt))+
+  geom_point()+
+  geom_smooth(method="lm", aes(group=1))
 
 #JD: description - bar plot of only AMF colonization by nut and ppt reatments.
 ggplot(subset(col.plot.1, fungi=="amf"), aes(x=nut_trt, y=mean, fill=ppt_trt)) +
