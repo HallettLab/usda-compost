@@ -133,7 +133,12 @@ plant2$evenness <- plant2$diversity/log(specnumber(cover))
 #functional group
 plant4 <- plant.data%>%
   dplyr::select(block, ppt_trt, nut_trt, fxnl_grp, pct_cover, date)%>%
-  filter(date!="2019-04-19", date!="2019-04-20")
+  filter(date!="2019-04-19", date!="2019-04-20")%>%
+  mutate(ppt_trt=ordered(ppt_trt, levels=c("d","xc","w")))%>%
+  mutate(nut_trt=ordered(nut_trt, levels=c("n","f","c")))
+  
+levels(plant4$ppt_trt)
+levels(plant4$nut_trt)
 
 plant4 <- plant4%>%  
   group_by(block, nut_trt, ppt_trt, fxnl_grp)%>%
@@ -253,12 +258,20 @@ anova(q3)
 
 #new data set for plots specifically
 plot_data <- plant4
+
 plot_data<- plot_data %>% mutate(nut_trt=ifelse(nut_trt=="c", "Compost", 
                                                            ifelse(nut_trt=="f", "Fertilizer", 
                                                                   ifelse(nut_trt=="n", "No Amendment", nut_trt))))
 plot_data<- plot_data %>% mutate(ppt_trt=ifelse(ppt_trt=="d", "Drought", 
                                                 ifelse(ppt_trt=="xc", "Ambient", 
                                                        ifelse(ppt_trt=="w", "Wet", ppt_trt))))
+plot_data <- plot_data%>%
+  mutate(ppt_trt=ordered(ppt_trt, levels=c("Drought","Ambient","Wet")))%>%
+  mutate(nut_trt=ordered(nut_trt, levels=c("No Amendment","Fertilizer","Compost")))
+  
+str(plot_data)
+levels(plot_data$ppt_trt)
+levels(plot_data$nut_trt)
 #diversity*amf
 ggplot(subset(plot_data,fungi=="amf"), aes(y=diversity,x=mean))+
   geom_point()+ 
@@ -290,7 +303,7 @@ ggplot(subset(plot_data,fungi=="amf"), aes(y=richness,x=mean, color=ppt_trt))+
   ggtitle("Regression of Plot Richness with AMF Colonization")+
   theme_classic()+
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))+
-  scale_color_manual(values = c("lightgoldenrod2", "indianred1","skyblue2" ), 
+  scale_color_manual(values = c( "indianred1","lightgoldenrod2","skyblue2" ), 
                      guide = guide_legend(title = "Precipitation Treatment"),
                      labels=c("Drought", "Ambient", "High"))
 
@@ -318,7 +331,13 @@ ggplot(subset(plot_data,fungi=="amf"), aes(y=evenness,x=mean))+
 #Boxplot of amf colonization across nut and ppt treatments.
 ggplot(plot_data, aes(x=nut_trt, y=mean, fill=ppt_trt))+
   geom_boxplot()+
-  scale_fill_manual(values = c( "lightgoldenrod2","indianred1","skyblue2" ), 
+  scale_fill_manual(values = c( "indianred1","lightgoldenrod2","skyblue2" ), 
                      guide = guide_legend(title = "Precipitation Treatment"),
-                     labels=c("Ambient", "Drought", "Wet"))
+                     labels=c("Drought","Ambient", "Wet"))
 
+#Boxplot of BNPP across nut and ppt treatments.
+ggplot(plot_data, aes(x=nut_trt, y=BNPP, fill=ppt_trt))+
+  geom_boxplot()+
+  scale_fill_manual(values = c( "indianred1","lightgoldenrod2","skyblue2" ), 
+                    guide = guide_legend(title = "Precipitation Treatment"),
+                    labels=c( "Drought", "Ambient","Wet"))
