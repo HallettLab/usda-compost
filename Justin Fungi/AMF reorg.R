@@ -315,3 +315,10 @@ ggplot(subset(plot_data,fungi=="amf"), aes(y=evenness,x=mean))+
   theme_classic() + 
   theme(legend.position="none", axis.text=element_text(size=16), axis.title=element_text(size=16), plot.title = element_text(size = 18, face = "bold"), strip.text.x = element_text(size = 16))
 
+#Boxplot of amf colonization across nut and ppt treatments.
+ggplot(plot_data, aes(x=nut_trt, y=mean, fill=ppt_trt))+
+  geom_boxplot()+
+  scale_fill_manual(values = c( "lightgoldenrod2","indianred1","skyblue2" ), 
+                     guide = guide_legend(title = "Precipitation Treatment"),
+                     labels=c("Ambient", "Drought", "Wet"))
+
