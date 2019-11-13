@@ -172,6 +172,11 @@ shapiro.test(plant4$norm_mean)
 #variance of normalized data
 var(plant4$norm_mean)
 
+#variance of AMF colonization within and between treatments
+bartlett.test(norm_mean ~ ppt_trt, plant4)
+
+bartlett.test(norm_mean ~ nut_trt, plant4)
+
 
 
 
