@@ -153,6 +153,32 @@ plant4 <- plant4%>%
 str(plant4)
 colnames(plant4)[colnames(plant4) == "N-fixer"] <- "nfixer"
 
+#calculations for Variance
+var(plant4$mean)
+
+#histogram of all data, looking for normality
+ggplot(data=plant4, aes(x=mean))+
+  geom_density()
+
+#transformation of data using asin(sqrt(mean))
+#This works! Data is normal! p=0.1031
+ggplot(data=plant4, aes(x=asin(sqrt(mean))))+
+  geom_density()
+
+plant4$norm_mean <- asin(sqrt(plant4$mean))
+
+shapiro.test(plant4$norm_mean)
+
+#variance of normalized data
+var(plant4$norm_mean)
+
+
+
+
+
+
+
+
 
 #PLANT COMPOSITION STATS
 #
@@ -250,6 +276,14 @@ contrast(lq2, "pairwise")
 q3 = lme ( evenness ~ mean*nut_trt*ppt_trt, random=~1|block, plant4, na.action=na.exclude)
 summary(q3)
 anova(q3)
+
+
+
+
+
+
+
+
 
 
 #FiGURES
