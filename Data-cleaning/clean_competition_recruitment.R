@@ -183,3 +183,20 @@ filter(phytos, !is.na(stems) & background != "Control") %>%
   #scale_color_viridis_d() +
   scale_color_manual(values = plant_cols, name = "Competitor") +
   facet_wrap(~phyto, scales = "free")
+
+
+# how many 0s in comp density and in phytos per species?
+filter(phytos, stems == 0) %>%
+  group_by(phyto) %>%
+  summarise(n_zeros = length(stems),
+            # crunch effective non-recruitment rate (how many 0s at any plot [ignore 3 TPS -- just is there anything there])
+            effect_nonrec_rate = (n_zeros/(35*6))*100) %>% # 35 comp plots * 6 subplots where seeded per comp plot
+  # sort
+  arrange(desc(n_zeros)) 
+# > AVBA has most -- 33% of subplots have no AVBA phytos
+# > 20% subplots have no ERBO *at phytos* but ERBO is often present in background
+# others are generally there in background as well
+
+# how many 0s in comp dens?
+nrow(subset(mean_density, mean_density_halfm2 == 0)) # no zeros in comp density
+
