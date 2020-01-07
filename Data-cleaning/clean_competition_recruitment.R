@@ -224,6 +224,20 @@ filter(phytos, stems == 0) %>%
 # > 20% subplots have no ERBO *at phytos* but ERBO is often present in background
 # others are generally there in background as well
 
+# where didn't AVBA come in?
+subset(phytos, stems == 0 & phyto == "AVBA") %>%
+  # group_by(nut_trt, ppt_trt, background, phyto, stems) %>%
+  # summarise(nobs = length(block)) %>%
+  # ungroup() %>%
+  ggplot(aes(block, fill = ppt_trt)) +
+  geom_bar(col = "grey10") +
+  labs(x = "Block", title = "# competition subplots where no AVBA phytos recruited",
+       subtitle = "54 subplots per block for B1-3, B4 has 48 subplots") +
+  scale_fill_manual(values = ppt_cols) #+
+  #facet_grid(nut_trt~phyto)
+# > definitely a recruitment-fail effect by hill position.. recruits better as move uphill-ish (b2 level with b1)
+
+
 # how many 0s in comp dens?
 nrow(subset(mean_density, mean_density_halfm2 == 0)) # no zeros in comp density
 
