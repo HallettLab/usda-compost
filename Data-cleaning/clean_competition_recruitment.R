@@ -23,9 +23,18 @@ dats <- list.files(datpath, full.names = T)
 phytos <- read.csv(dats[grep("phyto", dats, ignore.case = T)])
 comp <- read.csv(dats[grep("competitor", dats)])
 
+# read in J. Larson dry seed mass to screen for overcounts in density (more likely spp present in background seed bank so density enhanced)
+seed_mass <- read.csv("Data-cleaning/Larson_CA_dryseedmass.csv")
+# read brad traits for HOMU seed mass
+brad_traits <- read.csv("~/Dropbox/Cali\ Trait\ Data/Brad_Trait\ screening/Greenhouse_TraitScreening_10_SpeciesData.csv", skip = 11)
+
+
 #quick check
 glimpse(phytos)
 glimpse(comp)
+glimpse(seed_mass); sort(unique(seed_mass$species)) # has AVFA instead of AVBA but close enough for quick check
+glimpse(brad_traits)
+# note > CTW not sure if JL's dat include seed attachments or is for pure seed only.. guessing AS weighed w/ seed attachments on
 
 
 # specify plotting cols
@@ -34,7 +43,8 @@ plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOM
                 ERBO  = "red", TRHI = "orchid")
 
 
-# -- PREP COMPETITOR DENSITY ---
+
+# -- PREP LOOKUP TABLES ----
 # make lookup table for subsample frame to scale to meter-square
 scale_lt <- data.frame(subsample_cm = c("5x5", "10x10", "25x25", "50x50"),
                        area_cm2 = c(5*5, 10*10, 25*25, 50*50)) %>%
@@ -43,6 +53,21 @@ scale_lt <- data.frame(subsample_cm = c("5x5", "10x10", "25x25", "50x50"),
          # full meter scale factor
          scale_m2 = (100*100)/area_cm2)
 
+seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>%
+  group_by(species) %>%
+  summarise(Seed = mean(perseedwt)) %>%
+  ungroup() %>%
+  rename("ID" = "species") %>%
+  rbind(brad_traits[brad_traits$ID == "HORMUR", c("ID", "Seed")]) %>%
+  mutate(ID = casefold(ID, upper = T),
+         ID = paste0(substr(ID, 1,2), substr(ID, 4,5)),
+         # scale to half meter density -- seeded at 8g per m2 (2g per half m2)
+         max_density_halfm2 = 2/Seed)  
+# review
+seed_lt # HOMU wgt is definitely without the seed attachment
+  
+
+# -- PREP COMPETITOR DENSITY ---
 # tidy and standardize to density per m2
 ## want to gather all subsample rep counts (up to 4 per subplot) and remove NAs
 comp_tidy <- select(comp, block:plot4) %>%
@@ -185,6 +210,8 @@ filter(phytos, !is.na(stems) & background != "Control") %>%
   facet_wrap(~phyto, scales = "free")
 
 
+# -- DATA/EXP QC -----
+# 1) screen 0s for re-seeding
 # how many 0s in comp density and in phytos per species?
 filter(phytos, stems == 0) %>%
   group_by(phyto) %>%
@@ -200,3 +227,14 @@ filter(phytos, stems == 0) %>%
 # how many 0s in comp dens?
 nrow(subset(mean_density, mean_density_halfm2 == 0)) # no zeros in comp density
 
+# 2) look for high counts in density
+density_check <- dplyr::select(mean_density, block:mean_density_halfm2) %>%
+  left_join(dplyr::select(seed_lt, -Seed), by = c("background" = "ID")) %>%
+  # infill AVBA with AVFA dat
+  mutate(max_density_halfm2 = ifelse(background == "AVBA", seed_lt$max_density_halfm2[seed_lt$ID == "AVFA"], max_density_halfm2)) %>%
+  filter(mean_density_halfm2 > max_density_halfm2)
+# review
+View(arrange(density_check, background, block, nut_trt))
+# > AVBA weighs less than AVFA so 70s and 80s numbers may be fine.. but also B3 and B4 have a lot of background AVBA. e.g. 132 count is an AVBA-invaded plot
+# > ERBO also abundant in background for blocks 1-3
+# > TRHI high in background in lower blocks.. and is high in fertilized plot in B4, but not by much..
