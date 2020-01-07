@@ -156,7 +156,8 @@ ggplot(phytos, aes(phyto, stems)) +
        title = "Phyto recruitment trend by nutrient (x panel) and ppt (y panel) trts",
        subtitle = "Average of all blocks (2 and 4) and subplots pooled (n=14 per phyto") +
   coord_flip() +
-  facet_grid(ppt_trt~nut_trt)
+  facet_grid(ppt_trt~nut_trt) + 
+  geom_hline(yintercept = 1, color = "grey")
 
 
 # does phyto recruitment correlate with density (i.e. if AVBA phytos didn't recruit in XC drought, is AVBA comp density low there too?)
