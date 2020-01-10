@@ -103,11 +103,12 @@ phytos <- mutate(phytos, nut_trt = recode(nut_trt, "N" = "XC"))
 group_by(comp_tidy, nut_trt, ppt_trt, background) %>%
   summarise(se_density = sd(density_m2)/sqrt(length(density_m2)),
             density_m2 = mean(density_m2)) %>%
-  ggplot(aes(nut_trt, density_m2)) +
-  geom_errorbar(aes(ymax = density_m2 + se_density, ymin = density_m2 - se_density), width = 0.2) +
-  geom_point() +
+  ggplot(aes(nut_trt, density_m2, col = background)) +
+  geom_errorbar(aes(ymax = density_m2 + se_density, ymin = density_m2 - se_density), width = 0.2, position = position_dodge(width = 0.5)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  scale_color_manual(values = plant_cols) +
   ggtitle("Mean competitor density +- 1SE") +
-  facet_grid(background~ppt_trt, scales = "free_y")
+  facet_grid(.~ppt_trt, scales = "free_y") # can also facet by background, trying alltog with colors to compare more directly
 
 # plot data points
 ggplot(mean_density, aes(nut_trt, mean_density_1m2)) +
@@ -121,9 +122,10 @@ ggplot(comp_tidy, aes(nut_trt,density_half, col = ppt_trt)) +
   #geom_violin() +
   geom_jitter(alpha = 0.6, width = 0.1) +
   scale_color_manual(values = ppt_cols) +
-  ggtitle("Variability in 50x50cm competitor density by subsample size") +
+  labs(y = "Competitor density (0.5 m^2)", x = "Nutrient treatment", title = "Variability in 50x50cm competitor density by subsample size",
+       subtitle = "QA?: Density greater the smaller the sampling frame used, but use small frame when plot looks hi dens") +
   facet_grid(background~subsample_cm, scales = "free_y")
-
+# > thought/Q: I wonder how much greater density in 10x10 is results of using smaller frame, applying that to whole 50x50cm area vs. density numbers really are that much greater..
 
 
 # -- VIEW PHYTOMETERS ----
@@ -154,7 +156,7 @@ ggplot(phytos, aes(phyto, stems)) +
   stat_summary() +
   labs(y = "Mean phyto recruits +- 1SE",
        title = "Phyto recruitment trend by nutrient (x panel) and ppt (y panel) trts",
-       subtitle = "Average of all blocks (2 and 4) and subplots pooled (n=14 per phyto") +
+       subtitle = "Average of all blocks and subplots pooled") +
   coord_flip() +
   facet_grid(ppt_trt~nut_trt) + 
   geom_hline(yintercept = 1, color = "grey")
@@ -167,11 +169,11 @@ filter(phytos, !is.na(stems)) %>%
             mean_stems = mean(stems)) %>%
   ungroup() %>%
   left_join(dplyr::select(mean_density, block:ppt_trt, background, mean_density_halfm2, mean_density_1m2), by = c("block", "nut_trt", "ppt_trt", "phyto" = "background")) %>%
-  ggplot(aes(mean_density_halfm2, mean_stems)) +
+  ggplot(aes(mean_density_halfm2, mean_stems, col = ppt_trt)) +
   geom_errorbar(aes(ymax = mean_stems + se_stems, ymin = mean_stems - se_stems), width = 0.2) +
   ## > not enough comp surveys yet for std errors
   #geom_errorbarh(aes(xmax = mean_density_halfm2 + se_density, xmin = mean_density_halfm2 + se_density), width = 0.2) +
-  geom_point(aes(col = ppt_trt)) +
+  geom_point() +
   #geom_smooth(method = "lm", se =F, col = "black") +
   scale_color_manual(values = ppt_cols) +
   labs(y = "Species mean phyto recruitment", x = "Species mean 50x50cm density", 
