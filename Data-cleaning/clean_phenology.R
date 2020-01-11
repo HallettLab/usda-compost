@@ -9,7 +9,7 @@
 # write out to compost dropbox: Phenology/Phenology_EnteredData
 
 # modification jan 2020:
-# below main code that compiles growing season pheno, code added to read in and clean/compile winter 2020 phenology (format different than main phenology)
+# below main loop that compiles growing season phenology, code added to read in and clean/compile winter 2020 phenology (format different than main phenology)
 
 
 
@@ -41,7 +41,7 @@ trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_
 #initiate df for all phenology data
 pheno_master <- data.frame()
 
-# 1/10/2020: changing main code to exclude winter 2020 pheno file for now 
+# 1/10/2020: changing main loop to exclude winter 2020 pheno file for now 
 for(i in pheno_files[!grepl("202001", pheno_files)]){
   # phenology dat
   temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T)  
@@ -101,42 +101,42 @@ write.csv(pheno_master, paste0(datpath, "Phenology/Phenology_CleanedData/Compost
 
 
 # -- WINTER 2020 PHENOLOGY ----
-# 1/10/2020: for now, code to clean jan 2020 is in its own section as that phenology has veg heights
+# 1/10/2020: for now, code to clean jan 2020 is in its own section as jan 2020 survey has phenology, veg and litter heights, and time spent on each row
+# note: if phenology excel file is open while running code, read_excel line will throw error because pheno_files will contain working copy temp version and actual file (i.e. 2 files)
 jan20dat <- read_excel(pheno_files[grepl("202001", pheno_files)], sheet = 1)
 jan20foto <- read_excel(pheno_files[grepl("202001", pheno_files)], sheet = 2)
 
-# compile comp plot pheno with mean veg height, mean litter height, and photo info, with notes
-jan20dat_clean <- dplyr::select(jan20dat,Plot:Notes) %>%
-  gather(met, val, vht_1:lht_4) %>%
-  mutate(rep = parse_number(met),
-         met = ifelse(grepl("^v", met), "veg", "litter")) %>%
-  rename_all(casefold) %>%
-  grouped_df(names(.)[grep("pl|pct|not|met", names(.))]) %>%
-  summarise(mean = mean(val),
-            se = sd(val)/length(sqrt(val))) %>%
-  ungroup() %>%
+glimpse(jan20dat) # fix time
+glimpse(jan20foto)
+names(pheno_master) # <-- these are the cols that should be in final + height cols
+
+# clean dat should have block and trts in their own cols, veg and litter heights, notes, and photo info -- keep wide format
+# convert T(race) to 0.01
+jan20_times <- dplyr::select(jan20dat, start_time, stop_time, date, plot) %>%
   left_join(trtkey) %>%
-  mutate(pct_bare = ifelse(pct_bare == "T", "0.01", pct_bare),
-                           pct_bare = parse_number(pct_bare))
+  group_by(block, nut_trt) %>%
+  mutate(start = unique(start_time[!is.na(start_time)]),
+         stop = unique(stop_time[!is.na(stop_time)])) %>%
+  ungroup() %>%
+  dplyr::select(block, nut_trt, start, stop) %>%
+  distinct() %>%
+  mutate(duration_min = stop - start)
 
-ggplot(jan20dat_clean, aes(ppt_trt, mean, col = met)) +
-  geom_errorbar(aes(ymax = mean + se, min = mean - se), position = position_dodge(width = 0.3), width = 0.2) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  labs(y = "Mean height (cm)") +
-  scale_color_manual(values = c(veg = "green", litter = "brown")) +
-  theme_bw() +
-  facet_grid(block ~ nut_trt)
+ggplot(jan20_times, aes(nut_trt, duration_min, col = as.factor(block))) +
+  geom_jitter(width = 0.1) +
+  labs(y = "Minutes", x = "Nutrient treatment", title = "Time to survey phenology per nutrient row (3 plots per row)",
+       subtitle = "Generally takes longer as move uphill to grass-dominated blocks, but all compost comparable") +
+  scale_color_discrete(name = "Block")
 
-distinct(dplyr::select(jan20dat_clean, plot:pct_bare, block:ppt_trt)) %>%
-           gather(met, val, pct_litter:pct_bare) %>%
-  ggplot( aes(ppt_trt, val, col = met)) +
-  #geom_errorbar(aes(ymax = mean + se, min = mean - se), position = position_dodge(width = 0.3), width = 0.2) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  labs(y = "Percent") +
-  scale_color_manual(values = c(pct_litter = "darkgoldenrod1", pct_green = "green", pct_bare = "brown", pct_brown = "pink")) +
-  theme_bw() +
-  facet_grid(block ~ nut_trt)
+jan20dat_clean <- dplyr::select(jan20dat, date:notes) %>%
+  left_join(trtkey) %>%
+  left_join(dplyr::select(jan20foto, -c(page_order, order))) %>%
+  mutate(yr = as.numeric(substr(date, 1, 4))) %>%
+  # reorder cols
+  dplyr::select(page, line, recorder, date, yr, plot, block:ppt_trt, pct_litter:notes, photo_subplot:photo_notes) %>%
+  # convert trace to 0.01
+  mutate_at(grep("pct", names(.)), function(x) gsub("T", "0.01", x))
 
-
-
+# write out
+write_csv(jan20dat_clean, paste0(datpath, "Phenology/Phenology_CleanedData/Compost_PhenologyJan2020_Clean.csv"))
 
