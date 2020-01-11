@@ -8,6 +8,9 @@
 # merge both and append to master phenology dataset
 # write out to compost dropbox: Phenology/Phenology_EnteredData
 
+# modification jan 2020:
+# below main code that compiles growing season pheno, code added to read in and clean/compile winter 2020 phenology (format different than main phenology)
+
 
 
 # -- SETUP -----
@@ -19,10 +22,14 @@ library(readxl)
 options(stringsAsFactors = F)
 na_vals <- c("" , " ", "NA", NA)
 
-# set path to compost data (main level)
-# dependent on user, comment out path(s) that aren't pertinent to you
-datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/" #ctw's path
-#datpath <- "~/Dropbox/USDA-compost/Data/" # should work for LMH and AS
+# specify dropbox pathway (varies by user -- ctw can tweak this later)
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
+  ## CTW
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/"
+}else{
+  ## probs LMH and AS? (fix if not -- rproj is two levels down in github repo)
+  datpath <- "~/Dropbox/USDA-compost/Data/"
+}
 
 # list files in entered data folder
 pheno_files <- list.files(paste0(datpath, "Phenology/Phenology_EnteredData/"), full.names = T, pattern = "_Phenology_.*[.]xl", ignore.case = T)
@@ -34,7 +41,8 @@ trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_
 #initiate df for all phenology data
 pheno_master <- data.frame()
 
-for(i in pheno_files){
+# 1/10/2020: changing main code to exclude winter 2020 pheno file for now 
+for(i in pheno_files[!grepl("202001", pheno_files)]){
   # phenology dat
   temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T)  
   # photo key
@@ -89,4 +97,46 @@ for(i in pheno_files){
 # -- FINISHING -----
 # write out
 write.csv(pheno_master, paste0(datpath, "Phenology/Phenology_CleanedData/Compost_Phenology_Clean.csv"), row.names = F)
+
+
+
+# -- WINTER 2020 PHENOLOGY ----
+# 1/10/2020: for now, code to clean jan 2020 is in its own section as that phenology has veg heights
+jan20dat <- read_excel(pheno_files[grepl("202001", pheno_files)], sheet = 1)
+jan20foto <- read_excel(pheno_files[grepl("202001", pheno_files)], sheet = 2)
+
+# compile comp plot pheno with mean veg height, mean litter height, and photo info, with notes
+jan20dat_clean <- dplyr::select(jan20dat,Plot:Notes) %>%
+  gather(met, val, vht_1:lht_4) %>%
+  mutate(rep = parse_number(met),
+         met = ifelse(grepl("^v", met), "veg", "litter")) %>%
+  rename_all(casefold) %>%
+  grouped_df(names(.)[grep("pl|pct|not|met", names(.))]) %>%
+  summarise(mean = mean(val),
+            se = sd(val)/length(sqrt(val))) %>%
+  ungroup() %>%
+  left_join(trtkey) %>%
+  mutate(pct_bare = ifelse(pct_bare == "T", "0.01", pct_bare),
+                           pct_bare = parse_number(pct_bare))
+
+ggplot(jan20dat_clean, aes(ppt_trt, mean, col = met)) +
+  geom_errorbar(aes(ymax = mean + se, min = mean - se), position = position_dodge(width = 0.3), width = 0.2) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  labs(y = "Mean height (cm)") +
+  scale_color_manual(values = c(veg = "green", litter = "brown")) +
+  theme_bw() +
+  facet_grid(block ~ nut_trt)
+
+distinct(dplyr::select(jan20dat_clean, plot:pct_bare, block:ppt_trt)) %>%
+           gather(met, val, pct_litter:pct_bare) %>%
+  ggplot( aes(ppt_trt, val, col = met)) +
+  #geom_errorbar(aes(ymax = mean + se, min = mean - se), position = position_dodge(width = 0.3), width = 0.2) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  labs(y = "Percent") +
+  scale_color_manual(values = c(pct_litter = "darkgoldenrod1", pct_green = "green", pct_bare = "brown", pct_brown = "pink")) +
+  theme_bw() +
+  facet_grid(block ~ nut_trt)
+
+
+
 
