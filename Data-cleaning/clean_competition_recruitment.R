@@ -3,10 +3,16 @@
 # notes: 
 # 1/5/20: quick code so LMH and AS can preview data during CTW jan survey trip (1/2 - 1/6/2020), decide if need to do more in field while here
 # CTW will clean up and expand code later
+# 1/21/20: none of the code after density lookup table will work (updated data entry, need to now update code.. will get to it later this week)
+
 
 
 # -- SETUP ----
+rm(list = ls()) # clean enviro
+# libraries needed
 library(tidyverse)
+# change default settings
+na_vals <- c("", " ", NA, "NA")
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 
@@ -19,10 +25,14 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_En
   datpath <- "~/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
 }
 
+# read in raw data
 dats <- list.files(datpath, full.names = T)
-phytos <- read.csv(dats[grep("phyto", dats, ignore.case = T)])
-comp <- read.csv(dats[grep("competitor", dats)])
+phytos <- read.csv(dats[grep("phyto", dats, ignore.case = T)], na.strings = na_vals)
+comp <- read.csv(dats[grep("competitor", dats)], na.strings = na_vals)
+photokey <- read.csv(dats[grep("photo", dats)], na.strings = na_vals)
 
+# load seed mass data to crunch qty seeded
+# > reading in others dats for now (do we have our own measurements?)
 # read in J. Larson dry seed mass to screen for overcounts in density (more likely spp present in background seed bank so density enhanced)
 seed_mass <- read.csv("Data-cleaning/Larson_CA_dryseedmass.csv")
 # read brad traits for HOMU seed mass
@@ -34,13 +44,14 @@ glimpse(phytos)
 glimpse(comp)
 glimpse(seed_mass); sort(unique(seed_mass$species)) # has AVFA instead of AVBA but close enough for quick check
 glimpse(brad_traits)
-# note > CTW not sure if JL's dat include seed attachments or is for pure seed only.. guessing AS weighed w/ seed attachments on
+# note > CTW not sure if JL's dat include seed attachments or is for pure seed only.. repo wiki says AS weighed out seeds w/out attachments
 
 
 # specify plotting cols
 ppt_cols <- c(D = "brown", W = "dodgerblue", XC = "seagreen")
 plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOMU = "blue", 
                 ERBO  = "red", TRHI = "orchid")
+
 
 
 
@@ -66,6 +77,7 @@ seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>%
 # review
 seed_lt # HOMU wgt is definitely without the seed attachment
   
+
 
 # -- PREP COMPETITOR DENSITY ---
 # tidy and standardize to density per m2
