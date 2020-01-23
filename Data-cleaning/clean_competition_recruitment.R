@@ -5,6 +5,11 @@
 # CTW will clean up and expand code later
 # 1/21/20: none of the code after density lookup table will work (updated data entry, need to now update code.. will get to it later this week)
 
+# Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
+# "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
+# > Question (1/22/20).. but CTW saw awns in ground in field during Jan 2020 trip.. when AS returns, confirm raw seed only weighed out and seeded, adjust max density possible in code accordingly
+# > For now coding following what's written on GitHub wiki
+
 
 
 # -- SETUP ----
@@ -50,7 +55,7 @@ glimpse(brad_traits)
 # specify plotting cols
 ppt_cols <- c(D = "brown", W = "dodgerblue", XC = "seagreen")
 plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOMU = "blue", 
-                ERBO  = "red", TRHI = "orchid")
+                ERBO  = "red", TRHI = "orchid", Control = "grey40")
 
 
 
@@ -64,25 +69,57 @@ scale_lt <- data.frame(subsample_cm = c("5x5", "10x10", "25x25", "50x50"),
          # full meter scale factor
          scale_m2 = (100*100)/area_cm2)
 
-seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>%
+# join seed mass data to LUT to project max density possible per species
+# > note: here is where to adjust based on whether seeds weighed out with or without awns/husks/attachments (looking at you ERBO)
+seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>% #start with Julie's seed weights
   group_by(species) %>%
   summarise(Seed = mean(perseedwt)) %>%
   ungroup() %>%
   rename("ID" = "species") %>%
-  rbind(brad_traits[brad_traits$ID == "HORMUR", c("ID", "Seed")]) %>%
+  # add jl for source
+  mutate(source = "JL") %>%
+  # append brad's seed mass data (BB has HOMU, JL does not. BB overlaps with JL on other spp we used)
+  rbind(cbind(brad_traits[grepl("avef|erob|lolm|taec|trih|hormu", brad_traits$ID, ignore.case = T), c("ID", "Seed")], source = "BB")) %>%
   mutate(ID = casefold(ID, upper = T),
          ID = paste0(substr(ID, 1,2), substr(ID, 4,5)),
          # scale to half meter density -- seeded at 8g per m2 (2g per half m2)
          max_density_halfm2 = 2/Seed)  
 # review
 seed_lt # HOMU wgt is definitely without the seed attachment
-  
+
+# how do the two sources of info compare in seed weights?
+ggplot(seed_lt, aes(ID, Seed, col = source)) +
+  geom_point()  # all close but AVFA and ERBO..
+# what does that mean for density?
+ggplot(seed_lt, aes(ID, max_density_halfm2, col = source)) +
+  geom_point() #hm..
+# > Brad's allows more individuals per subplot (JL and BB agree for TRHI tho)
+# press on with data prep, look at how affects recruitemnt rates further down in code..
+
 
 
 # -- PREP COMPETITOR DENSITY ---
 # tidy and standardize to density per m2
 ## want to gather all subsample rep counts (up to 4 per subplot) and remove NAs
-comp_tidy <- select(comp, block:plot4) %>%
+## also have cols for QA resamples (either re-sampled subplot to confirm high densities, or subsampled control background)
+## also have photo info to join..
+## CTW also kept track of time start/stop per plot (to know, but also to help estimate how long this might take in spring)
+##.. ultimately what's needed for analysis is tidy (long) format data table.. maybe add col for whether resample/QC sample then gather and project densities
+## also maybe build other species table separately, then can add back in if needed
+
+# start with add col to indicate qc samples
+comp <- comp %>%
+  #sort by date -- earlier first
+  arrange(survey_date) %>%
+  grouped_df(names(.)[(grep("block", names(.))):((grep("backgr", names(.))))]) %>%
+  # number survey event
+  mutate(survey_event = seq(1, length(survey_date),1)) %>%
+  ungroup()
+
+# compile experiment as designed (no extra spp, no background spp in control plot), only first samples (no resamples for QC)
+# i.e. survey_event  == 1
+comp_tidy <- filter(comp, survey_event == 1) %>%
+  select(block:plot4) %>%
   # recode None in nut_trt to XC (to not confuse C with control)
   mutate(nut_trt = recode(nut_trt, "N" = "XC")) %>%
   gather(met, val, stems1:plot4) %>%
@@ -94,10 +131,60 @@ comp_tidy <- select(comp, block:plot4) %>%
   mutate(stems = as.numeric(stems)) %>%
   left_join(scale_lt) %>%
   mutate(density_half = stems*scale_half,
-         density_m2 = stems * scale_m2) # keep tidy df separate to look at density patchiness within plots 
+         density_m2 = stems * scale_m2) %>% # keep tidy df separate to look at density patchiness within plots 
+  # check for any subsamples of different size within same subplot
+  group_by(block, nut_trt, ppt_trt, subplot, background) %>%
+  mutate(frame_check = length(unique(subsample_cm))>1) %>%
+  ungroup()
 
+# compile data for re-sampled plots and control background
+comp_resample <- filter(comp, survey_event == 2) %>%
+  select(block:plot4) %>%
+  # recode None in nut_trt to XC (to not confuse C with control)
+  mutate(nut_trt = recode(nut_trt, "N" = "XC")) %>%
+  gather(met, val, stems1:plot4) %>%
+  mutate(rep = parse_number(met),
+         met = gsub("[1-4]", "", met)) %>%
+  spread(met, val) %>%
+  filter(!is.na(stems)) %>%
+  rename(subsample_cm = plot) %>%
+  mutate(stems = as.numeric(stems)) %>%
+  left_join(scale_lt) %>%
+  mutate(density_half = stems*scale_half,
+         density_m2 = stems * scale_m2) %>% # keep tidy df separate to look at density patchiness within plots 
+  # check for any subsamples of different size within same subplot
+  group_by(block, nut_trt, ppt_trt, subplot, background) %>%
+  mutate(frame_check = length(unique(subsample_cm))>1) %>%
+  ungroup()
+
+# compile data on extra spp sampled to qualify seeded recruitment (e.g. background ERBO density in control plot)
+comp_extra <- filter(comp, !is.na(nonseed_spp1)) %>%
+  # drop background competitor cols -- only interested in the extras
+  select(-(c("time_start", "time_stop", names(.)[grep("^stems1", names(.))]: names(.)[grep("pict", names(.))]))) %>%
+  gather(met,val, nonseed_spp1:nonseed_plot5) %>%
+  filter(!is.na(val)) %>%
+  #parse number
+  mutate(rep = str_extract(met, "[:digit:]"),
+         met = gsub("[0-9]", "", met)) %>%
+  spread(met, val) %>%
+  # rearrange cols a little
+  dplyr::select(1:survey_event, nonseed_spp, rep:ncol(.)) %>%
+  # reconvert stem count to numberic
+  mutate(nonseed_stems = as.numeric(nonseed_stems)) %>%
+  # join scale LUT to project densities
+  left_join(scale_lt, by = c("nonseed_plot" = "subsample_cm")) %>%
+  mutate(density_half = nonseed_stems*scale_half,
+         density_m2 = nonseed_stems * scale_m2) %>% # keep tidy df separate to look at density patchiness within plots 
+  # check for any subsamples of different size within same subplot
+  group_by(block, nut_trt, ppt_trt, subplot, background, survey_event, nonseed_spp) %>%
+  mutate(frame_check = length(unique(nonseed_plot))>1) %>%
+  ungroup()
+  
 # calculate average density
-mean_density <- group_by(comp_tidy, block, nut_trt, ppt_trt, subplot, background) %>%
+# first remove any multi-frame size subsample (frame_check == T), defer to larger frame sample (there's only one case and it's 50x50 vs 25x25cm)
+mean_density <- comp_tidy %>%
+  filter(!(frame_check & subsample_cm == "25x25")) %>%
+  group_by(block, nut_trt, ppt_trt, subplot, background) %>%
   summarise(mean_density_halfm2 = mean(density_half), # if took 4 reps at 25x25cm will average to correct 50x50cm tally 
             mean_density_1m2 = mean(density_m2),
             nobs = length(rep)) %>% # check
@@ -235,7 +322,7 @@ filter(phytos, stems == 0) %>%
             effect_nonrec_rate = (n_zeros/(35*6))*100) %>% # 35 comp plots * 6 subplots where seeded per comp plot
   # sort
   arrange(desc(n_zeros)) 
-# > AVBA has most -- 33% of subplots have no AVBA phytos
+# > AVBA has most -- 31% of subplots have no AVBA phytos
 # > 20% subplots have no ERBO *at phytos* but ERBO is often present in background
 # others are generally there in background as well
 
@@ -258,12 +345,67 @@ nrow(subset(mean_density, mean_density_halfm2 == 0)) # no zeros in comp density
 
 # 2) look for high counts in density
 density_check <- dplyr::select(mean_density, block:mean_density_halfm2) %>%
-  left_join(dplyr::select(seed_lt, -Seed), by = c("background" = "ID")) %>%
-  # infill AVBA with AVFA dat
-  mutate(max_density_halfm2 = ifelse(background == "AVBA", seed_lt$max_density_halfm2[seed_lt$ID == "AVFA"], max_density_halfm2)) %>%
+  # create alt ID to join both BB and JL's projections for AVFA to AVBA
+  mutate(ID = ifelse(background == "AVBA", "AVFA", background)) %>%
+  left_join(dplyr::select(seed_lt, -Seed)) %>%
   filter(mean_density_halfm2 > max_density_halfm2)
+
 # review
 View(arrange(density_check, background, block, nut_trt))
 # > AVBA weighs less than AVFA so 70s and 80s numbers may be fine.. but also B3 and B4 have a lot of background AVBA. e.g. 132 count is an AVBA-invaded plot
 # > ERBO also abundant in background for blocks 1-3
 # > TRHI high in background in lower blocks.. and is high in fertilized plot in B4, but not by much..
+
+
+# 3) (after Jan 2020 trip) compare re-samples and QC samples to high counts identified above
+# i.e. use comp_extra and comp_resample
+rbind(cbind(comp_resample, survey_event = 2), cbind(comp_tidy, survey_event = 1)) %>%
+  group_by(block, nut_trt, ppt_trt, subplot, background) %>%
+  filter(length(unique(survey_event))>1) %>%
+  #ungroup() %>%
+  group_by(survey_event, subsample_cm, add = T) %>%
+  summarise(mean_density_halfm2 = mean(density_half),
+            se_halfm2 = sd(density_half)/sqrt(length(density_half))) %>%
+  ungroup() %>%
+  mutate(plotid = paste0(block, nut_trt, ppt_trt, subplot, background)) %>%
+  left_join(seed_lt[seed_lt$source == "JL", c("ID", "max_density_halfm2")], by = c("background" = "ID")) %>%
+  rename(JL_max = max_density_halfm2) %>%
+  left_join(seed_lt[seed_lt$source == "BB", c("ID", "max_density_halfm2")], by = c("background" = "ID")) %>%
+  ggplot(aes(as.factor(survey_event), mean_density_halfm2, group= plotid)) +
+  geom_line(col = "grey50", position = position_dodge(width = 0.2), lty = 2) +
+  geom_errorbar(aes(ymax = mean_density_halfm2 + se_halfm2, ymin = mean_density_halfm2 - se_halfm2), position = position_dodge(width = 0.2),  width = 0.1) +
+  geom_point(aes(col = subsample_cm), size = 2, position = position_dodge(width = 0.2)) +
+  #scale_color_manual(values = plant_cols)
+  facet_wrap(~background, scales = "free_y") +
+  labs(title = "Data QA: Competitor densities resurveyed for high values",
+       subtitle = "Lesson: Don't use 10x10cm frames? Too noisy?",
+       x = "Survey event",
+       # I tried to plot JL and BB max densities within the panels but code didn't want to behave, so adding it as long string in caption
+       caption = paste0("Max densities possible: ERBO, ", round(seed_lt$max_density_halfm2[seed_lt$source == "JL" & seed_lt$ID == "ERBO"], 0), "(JL), ", round(seed_lt$max_density_halfm2[seed_lt$source == "BB" & seed_lt$ID == "ERBO"],0), "(BB); TRHI: ", round(seed_lt$max_density_halfm2[seed_lt$source == "JL" & seed_lt$ID == "TRHI"], 0), "(JL), ", round(seed_lt$max_density_halfm2[seed_lt$source == "BB"& seed_lt$ID == "TRHI"],0), "(BB)")) +
+  theme(plot.caption = element_text(hjust = 0))
+
+
+# plot competitor densities vs. background species densities (comp_extra)
+# a) visualize comp_extra as is
+ggplot(comp_extra, aes(background, density_half, col = ppt_trt, shape = as.factor(block))) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = ppt_cols) +
+  facet_wrap(~nonseed_spp, scales = "free_x")
+
+# b) Look at background mean densities vs. seeded competitor mean densities
+group_by(comp_extra, block, nut_trt, ppt_trt, background, nonseed_spp) %>%
+  summarise(mean_density_halfm2_nonseed = mean(density_half)) %>%
+  ungroup() %>%
+  mutate(nut_trt = recode(nut_trt, N= "XC")) %>%
+  rename(subplot_background = background,
+         background = nonseed_spp) %>%
+  left_join(mean_density) %>%
+  unite(grp, block, nut_trt, ppt_trt, sep = "", remove = T) %>%
+  ggplot(aes(grp, mean_density_halfm2_nonseed)) +
+  geom_point(aes(col = subplot_background), pch = 8) +
+  geom_point(aes(grp, mean_density_halfm2)) +
+  scale_color_manual(name = "Subplot\nsampled", values = plant_cols) +
+  labs(y = "Mean density, half m^2", x = "Plot (block-nut-ppt)",
+       title = "Seeded competitor density vs. background (unseeded) density",
+       subtitle = "Black = seeded species (ours), colored = unseeded species (true background)") +
+  facet_grid(.~background, scales = "free_x", space = "free_x")
