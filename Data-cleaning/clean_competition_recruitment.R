@@ -22,16 +22,16 @@ options(stringsAsFactors = F)
 theme_set(theme_bw())
 
 # specify dropbox pathway (varies by user -- ctw can tweak this later)
-if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData")){
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
   ## CTW
-  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
 }else{
   ## probs LMH and AS? (fix if not -- rproj is two levels down in github repo)
-  datpath <- "~/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
+  datpath <- "~/Dropbox/USDA-compost/Data/Competition/"
 }
 
 # read in raw data
-dats <- list.files(datpath, full.names = T)
+dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
 phytos <- read.csv(dats[grep("phyto", dats, ignore.case = T)], na.strings = na_vals)
 comp <- read.csv(dats[grep("competitor", dats)], na.strings = na_vals)
 photokey <- read.csv(dats[grep("photo", dats)], na.strings = na_vals)
@@ -189,6 +189,9 @@ mean_density <- comp_tidy %>%
             mean_density_1m2 = mean(density_m2),
             nobs = length(rep)) %>% # check
   ungroup()
+
+# write out mean_density for ctw ebio grant proposal (temporary file until we troubleshoot seed masses/flagging)
+write_csv(x = mean_density, path = paste0(datpath, "Competition_CleanedData/competitor_meandensity_jan2020.csv"))
 
 
 # -- PREP PHYTOS ----
@@ -409,3 +412,4 @@ group_by(comp_extra, block, nut_trt, ppt_trt, background, nonseed_spp) %>%
        title = "Seeded competitor density vs. background (unseeded) density",
        subtitle = "Black = seeded species (ours), colored = unseeded species (true background)") +
   facet_grid(.~background, scales = "free_x", space = "free_x")
+
