@@ -10,6 +10,8 @@
 
 # modification jan 2020:
 # below main loop that compiles growing season phenology, code added to read in and clean/compile winter 2020 phenology (format different than main phenology)
+# modification for spring 2020:
+# prep excel data sent by dustin before appending to 2019 data
 
 
 
@@ -32,7 +34,7 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
 }
 
 # list files in entered data folder
-pheno_files <- list.files(paste0(datpath, "Phenology/Phenology_EnteredData/"), full.names = T, pattern = "_Phenology_.*[.]xl", ignore.case = T)
+pheno_files <- list.files(paste0(datpath, "Phenology/Phenology_EnteredData"), full.names = T, pattern = "_Phenology_.*[.]xl", ignore.case = T)
 # read in treatment key
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_vals, strip.white = T)
 
@@ -41,8 +43,8 @@ trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_
 #initiate df for all phenology data
 pheno_master <- data.frame()
 
-# 1/10/2020: changing main loop to exclude winter 2020 pheno file for now 
-for(i in pheno_files[!grepl("202001", pheno_files)]){
+# june 2020: changing this loop to prep 2019 only since winter 2020 and spring 2020 pheno files structured differently
+for(i in pheno_files[grepl("2019", pheno_files)]){
   # phenology dat
   temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T)  
   # photo key
@@ -67,25 +69,27 @@ for(i in pheno_files[!grepl("202001", pheno_files)]){
   for(f in which(flag2)){
     # logic check sum over 100 due to T value
     if(!0.01 %in% temp_pheno[f, pct_cols]){
-      stop(paste0("Pct phenology cover for ", temp_pheno$plot[f], temp_pheno$subplot[f], " exceeds 100 and not due to trace value. Review datasheet and data entry"))
+      stop(paste0("Pct phenology cover for ", temp_pheno$plot[f], temp_pheno$subplot[f], " exceeds 100 and not due to trace value. Review datasheet and data entry."))
     }
     # subtract from pct green
     temp_pheno$pct_green[f] <- with(temp_pheno, 100-(sum(pct_brown[f]+pct_bare[f]))) 
   }  
   
-  # join both datasets
-  temp_dat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot"))
+  # join both datasets, correct name
+  tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot"))
   # concatenate plot and subplot so plot values match treatment key plot values
-  temp_dat$plot <- with(temp_dat, ifelse(!is.na(subplot), paste0(plot, subplot), plot))
+  tempdat$plot <- with(tempdat, ifelse(!is.na(subplot), paste0(plot, subplot), plot))
+  # rename "plot" col so pairs correctly with trtkey
+  names(tempdat)[names(tempdat) == "plot"] <- "fulltrt"
   # join treatment data
-  temp_dat <- left_join(temp_dat, trtkey, by = "plot")
+  tempdat <- left_join(tempdat, trtkey)
   # add year
-  temp_dat$yr <- substr(as.character(temp_dat$date),1,4) %>% as.numeric()
+  tempdat$yr <- substr(as.character(tempdat$date),1,4) %>% as.numeric()
   # reorder cols
-  temp_dat <- dplyr::select(temp_dat, page:date, yr, plot, block:ppt_trt,pct_green:photo_notes)
+  tempdat <- dplyr::select(tempdat, page:date, yr, plot, fulltrt, block:ppt_trt,pct_green:photo_notes)
   
   # rbind to master phenology df
-  pheno_master <- rbind(pheno_master, temp_dat)
+  pheno_master <- rbind(pheno_master, tempdat)
   
   # if end of loop, print done
   if(i == pheno_files[length(pheno_files)]){
@@ -93,6 +97,33 @@ for(i in pheno_files[!grepl("202001", pheno_files)]){
   }
 }
 
+
+# write loop for spring 2020 data
+# pull names in spring 2020 excel sheet
+sp2020 <- excel_sheets(pheno_files[grep("Spring2020", pheno_files)])
+for(i in sp2020[sp2020 != "Master"]){
+  tempdat <- read_excel(pheno_files[grep("Spring2020", pheno_files)], sheet = i, na = na_vals)
+  tempinfo <- names(tempdat)[grep("[:alpha:]", names(tempdat))]
+  # remove any cols that are all NA
+  tempdat <- tempdat[,!sapply(tempdat, function(x) all(is.na(x)))]
+  tempdat <- data.frame(tempdat)
+  
+  # id row with correct headers
+  startrow <- grep("^Plot", tempdat[[names(tempdat)[1]]])
+  # rename cols
+  names(tempdat) <- tempdat[startrow, ]
+  tempdat$recorder <- trimws(gsub("^R[[:alpha:]]+ *: *", "", tempinfo[grep("Recorder", tempinfo, ignore.case = T)]))
+  tempdat$date <- as.Date(i, format = "%m-%d-%y")
+}
+
+(?<=":")
+startrow <- grep("^Plot", tempdat[[names(tempdat)[1]]])
+tempcols <- tempdat[startrow,]
+
+test <- tempinfo[grep("Recorder", tempinfo, ignore.case = T)]
+
+str_extract(test, "(?<=:)")
+gsub("^R[[:alpha:]]+ *: *", "", test, perl = T)
 
 # -- FINISHING -----
 # write out
