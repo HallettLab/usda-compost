@@ -93,6 +93,8 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   
   # if end of loop, print done
   if(i == pheno_files[length(pheno_files)]){
+    # make df data frame
+    pheno_master <- data.frame(pheno_master)
     print("Master phenology dataset compiled! Inspect and if all looks good write out and proceed to analysis! (w00t w00t!)")
   }
 }
@@ -112,18 +114,72 @@ for(i in sp2020[sp2020 != "Master"]){
   startrow <- grep("^Plot", tempdat[[names(tempdat)[1]]])
   # rename cols
   names(tempdat) <- tempdat[startrow, ]
+  # start dat where data actually start
+  tempdat <- tempdat[(startrow+1):nrow(tempdat),]
+  # remove any rows that are all NA
+  tempdat <- tempdat[!apply(tempdat, 1, function(x) all(is.na(x))),]
   tempdat$recorder <- trimws(gsub("^R[[:alpha:]]+ *: *", "", tempinfo[grep("Recorder", tempinfo, ignore.case = T)]))
   tempdat$date <- as.Date(i, format = "%m-%d-%y")
+  # standardize colnames
+  names(tempdat) <- gsub(" |#", "", casefold(names(tempdat)))
+  names(tempdat) <- gsub("%", "pct_", names(tempdat))
+  names(tempdat)[grep("^photo", names(tempdat))] <- "photo_subplot" # these are full subplot photos
+  
+  # if there are notes in col 1, move them to notes col
+  noterow <- grep("[[:alpha:]]", tempdat[,1])
+  if(length(noterow)>0){
+    # search for general notes (in first column) and put them in notes col
+    tempdat$notes[noterow] <- paste("General phenology notes:",tempdat$plot[noterow])
+    # NA the note in the plot col
+    tempdat$plot[noterow] <- NA
+  }
+  
+  # clean up trace or less than numbers (we make it 0.01)
+  # check that pct_cols in tempdat
+  stopifnot(all(pct_cols %in% names(tempdat)))
+  # change Ts to 0.01 and adjust pct cover of green (or if "<" noted)
+  tempdat[pct_cols] <- sapply(tempdat[pct_cols], function(x) ifelse(trimws(x) %in% c("T", "<1"), 0.01,x))
+  # check 1: look for < > and adjust based on sum of other cols
+  flag1 <- sapply(tempdat[pct_cols],function(x) grepl("<|>",x))
+  for(f in which(flag1)){
+    adjust_pos <- grep("<|>", tempdat[f,pct_cols])
+    stopifnot(length(adjust_pos)==1) # need to add code if there is more than 1 col that has greater/less than
+    tempdat[f, pct_cols[adjust_pos]] <- 100-(sum(as.numeric(tempdat[f,pct_cols[-adjust_pos]])))
+  }
+  # make sure all pct cols converted to numeric
+  tempdat <- mutate_at(tempdat, vars(pct_green:pct_bare), as.numeric)
+  
+  # check 2: flag rows that sum to +100
+  flag2 <- apply(tempdat[c("pct_green", "pct_brown", "pct_bare")],1,function(x) sum(as.numeric(x)) > 100)
+  for(f in which(flag2)){
+    # logic check sum over 100 due to T value
+    if(!0.01 %in% tempdat[f, pct_cols]){
+      stop(paste0("Pct phenology cover for ", tempdat$plot[f], tempdat$subplot[f], " exceeds 100 and not due to trace value. Review datasheet and data entry."))
+    }
+    # subtract from whichever column has the greatest number
+    tempgreat <- which.max(tempdat[f, pct_cols])
+    tempmin <- which.min(tempdat[f, pct_cols]>0)
+    tempdat[[names(tempgreat)]][f] <- tempdat[[names(tempgreat)]][f] - tempdat[[names(tempmin)]][f]
+    # check row sums correctly now
+    stopifnot(sum(tempdat[f, pct_cols])==100)
+  }  
+  # finish with columns needed in pheno_master (others finished at end)
+  tempdat$page <- 1 # every pheno sampling fits on 1 page
+  tempdat$line <- 1:nrow(tempdat)
+  tempdat$yr <- as.numeric(substr(unique(tempdat$date), 1, 4)) # just in case this loop gets recycled
+  # except any general note should have NA for line #
+  tempdat$line[grep("General", tempdat$notes)] <- NA
+  # join treatment info
+  tempdat <- merge(tempdat, trtkey, all.x = T)
+  addnames <- names(pheno_master[!names(pheno_master) %in% names(tempdat)])
+  tempdat <- cbind(tempdat, data.frame(matrix(nrow = nrow(tempdat), ncol = length(addnames), dimnames = list(NULL, addnames))))
+  # rbind to master df
+  pheno_master <- rbind(pheno_master, tempdat[names(pheno_master)])
 }
 
-(?<=":")
-startrow <- grep("^Plot", tempdat[[names(tempdat)[1]]])
-tempcols <- tempdat[startrow,]
+names(pheno_master[!names(pheno_master) %in% names(tempdat)])
 
-test <- tempinfo[grep("Recorder", tempinfo, ignore.case = T)]
 
-str_extract(test, "(?<=:)")
-gsub("^R[[:alpha:]]+ *: *", "", test, perl = T)
 
 # -- FINISHING -----
 # write out
