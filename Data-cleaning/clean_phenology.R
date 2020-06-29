@@ -39,10 +39,13 @@ pheno_files <- list.files(paste0(datpath, "Phenology/Phenology_EnteredData"), fu
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_vals, strip.white = T)
 
 
-# -- COMPILE ----
+# -- COMPILE SPRING PHENOLOGY ----
 #initiate df for all phenology data
 pheno_master <- data.frame()
+pct_cols <- c("pct_green", "pct_brown", "pct_bare")
 
+
+# 1. spring 2019 loop -----
 # june 2020: changing this loop to prep 2019 only since winter 2020 and spring 2020 pheno files structured differently
 for(i in pheno_files[grepl("2019", pheno_files)]){
   # phenology dat
@@ -50,11 +53,10 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   # photo key
   temp_photokey <- read_excel(i, sheet = 2, na = na_vals, trim_ws = T)  
   print(paste("Compiling", unique(temp_pheno$date)[1], "phenology data and photo key"))
-  pct_cols <- c("pct_green", "pct_brown", "pct_bare")
   
   # clean up pheno dat
   # change Ts to 0.01 and adjust pct cover of green (or if "<" noted)
-  temp_pheno[pct_cols] <- sapply(temp_pheno[pct_cols], function(x) ifelse(trimws(x)=="T", 0.01,x))
+  temp_pheno[pct_cols] <- sapply(temp_pheno[pct_cols], function(x) ifelse(trimws(x) %in% c("T", "<1"), 0.01,x))
   # check 1: look for < > and adjust based on sum of other cols
   flag1 <- sapply(temp_pheno[pct_cols],function(x) grepl("<|>",x))
   for(f in which(flag1)){
@@ -64,16 +66,22 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   }
   # make sure all pct cols converted to numeric
   temp_pheno <- mutate_at(temp_pheno, vars(pct_green:pct_bare), as.numeric)
-  # check 2: flag rows that sum to +100
-  flag2 <- apply(temp_pheno[c("pct_green", "pct_brown", "pct_bare")],1,function(x) sum(as.numeric(x)) > 100)
+  # check 2: flag rows that don't sum to 100 (or 0)
+  flag2 <- apply(temp_pheno[pct_cols],1,function(x) !(sum(as.numeric(x)) %in% c(0, 100) | all(is.na(x))))
   for(f in which(flag2)){
     # logic check sum over 100 due to T value
     if(!0.01 %in% temp_pheno[f, pct_cols]){
-      stop(paste0("Pct phenology cover for ", temp_pheno$plot[f], temp_pheno$subplot[f], " exceeds 100 and not due to trace value. Review datasheet and data entry."))
+      stop(paste0("Pct phenology cover for ", temp_pheno$plot[f], temp_pheno$subplot[f], " doesn't sum to 100 and not due to trace value. Review datasheet and data entry for ", unique(temp_pheno$date)))
     }
+    # subtract from whichever column has the greatest number
+    tempgreat <- which.max(temp_pheno[f, pct_cols])
+    tempmin <- which.min(temp_pheno[f, pct_cols][which(temp_pheno[f, pct_cols]>0)])  # returns named value
+    temp_pheno[[names(tempgreat)]][f] <- temp_pheno[[names(tempgreat)]][f] - temp_pheno[[names(tempmin)]][f]
+    # check row sums correctly now
+    stopifnot(sum(temp_pheno[f, pct_cols])==100)
     # subtract from pct green
-    temp_pheno$pct_green[f] <- with(temp_pheno, 100-(sum(pct_brown[f]+pct_bare[f]))) 
-  }  
+    #temp_pheno$pct_green[f] <- with(temp_pheno, 100-(sum(pct_brown[f]+pct_bare[f]))) 
+  }
   
   # join both datasets, correct name
   tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot"))
@@ -99,7 +107,7 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   }
 }
 
-
+# 2. spring 2020 loop -----
 # write loop for spring 2020 data
 # pull names in spring 2020 excel sheet
 sp2020 <- excel_sheets(pheno_files[grep("Spring2020", pheno_files)])
@@ -147,7 +155,7 @@ for(i in sp2020[sp2020 != "Master"]){
     tempdat[f, pct_cols[adjust_pos]] <- 100-(sum(as.numeric(tempdat[f,pct_cols[-adjust_pos]])))
   }
   # make sure all pct cols converted to numeric
-  tempdat <- mutate_at(tempdat, vars(pct_green:pct_bare), as.numeric)
+  tempdat <- mutate_at(tempdat, vars(plot:pct_bare), as.numeric)
   
   # check 2: flag rows that sum to +100
   flag2 <- apply(tempdat[c("pct_green", "pct_brown", "pct_bare")],1,function(x) sum(as.numeric(x)) > 100)
@@ -158,7 +166,7 @@ for(i in sp2020[sp2020 != "Master"]){
     }
     # subtract from whichever column has the greatest number
     tempgreat <- which.max(tempdat[f, pct_cols])
-    tempmin <- which.min(tempdat[f, pct_cols]>0)
+    tempmin <- which.min(tempdat[f, pct_cols][which(tempdat[f, pct_cols]>0)])  # returns named value
     tempdat[[names(tempgreat)]][f] <- tempdat[[names(tempgreat)]][f] - tempdat[[names(tempmin)]][f]
     # check row sums correctly now
     stopifnot(sum(tempdat[f, pct_cols])==100)
@@ -173,11 +181,37 @@ for(i in sp2020[sp2020 != "Master"]){
   tempdat <- merge(tempdat, trtkey, all.x = T)
   addnames <- names(pheno_master[!names(pheno_master) %in% names(tempdat)])
   tempdat <- cbind(tempdat, data.frame(matrix(nrow = nrow(tempdat), ncol = length(addnames), dimnames = list(NULL, addnames))))
+  # order by plot
+  tempdat <- tempdat[order(tempdat$plot),]
   # rbind to master df
   pheno_master <- rbind(pheno_master, tempdat[names(pheno_master)])
 }
 
-names(pheno_master[!names(pheno_master) %in% names(tempdat)])
+
+# 3. final QA check -----
+# check range and sum
+sapply(split(pheno_master[,pct_cols], pheno_master$date), function(x) range(x, na.rm = T)) # should always be between 0 and 100
+sumcheck <- apply(pheno_master[,pct_cols], 1, function(x) unique(sum(x, na.rm = T))) # should be either 0 (NAs in row) or 100
+View(pheno_master[sumcheck < 100,]) # if all NA's okay -- just means a general plot note
+
+# visualize data to be sure nothing funky
+ggplot(subset(pheno_master, !is.na(pct_green)), aes(date, pct_green, col = nut_trt)) +
+  geom_point() +
+  geom_smooth(se = F) +
+  scale_x_datetime(date_labels = "%m-%d") +
+  facet_grid(ppt_trt~yr, scales = "free_x")
+
+ggplot(subset(pheno_master, !is.na(pct_bare)), aes(date, pct_bare, col = nut_trt, group = plot)) +
+  geom_line() +
+  #geom_smooth(se = F) +
+  scale_x_datetime(date_labels = "%m-%d") +
+  facet_grid(ppt_trt~yr, scales = "free_x") # gopher disturbance causes hi bare
+
+ggplot(subset(pheno_master, !is.na(pct_brown)), aes(date, pct_brown, col = nut_trt)) +
+  geom_point() +
+  geom_smooth(se = F) +
+  scale_x_datetime(date_labels = "%m-%d") +
+  facet_grid(ppt_trt~yr, scales = "free_x")
 
 
 
