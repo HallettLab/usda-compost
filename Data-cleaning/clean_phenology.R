@@ -258,7 +258,17 @@ jan20dat_clean <- dplyr::select(jan20dat, date:notes) %>%
   # reorder cols
   dplyr::select(page, line, recorder, date, yr, plot, fulltrt, block:ppt_trt, pct_litter:notes, photo_subplot:photo_notes) %>%
   # convert trace to 0.01
-  mutate_at(grep("pct", names(.)), function(x) gsub("T", "0.01", x))
+  mutate_at(grep("pct", names(.)), function(x) gsub("T", "0.01", x)) %>%
+  # make all pct cols numeric
+  mutate_at(grep("pct", names(.)), as.numeric)
+
+# do range and sumcheck on pct cols
+sapply(jan20dat_clean[grep("pct", names(jan20dat_clean))], range)
+apply(jan20dat_clean[pct_cols], 1, sum) # only green, brown, bare (can be under 100 if litter comprised some)
+summary(apply(jan20dat_clean[grep("pct", names(jan20dat_clean))], 1, sum)) # all at least 100 in cover. good.
+# range check on heights
+sapply(jan20dat_clean[grep("ht_", names(jan20dat_clean))], range) #ok
+str(jan20dat_clean) #looks okay
 
 # write out
 write_csv(jan20dat_clean, paste0(datpath, "Phenology/Phenology_CleanedData/Compost_PhenologyJan2020_Clean.csv"))
