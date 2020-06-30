@@ -32,9 +32,14 @@ options(stringsAsFactors = F)
 na_vals <- c(" ", "", NA, "NA")
 
 # set path to compost data (main level)
-# dependent on user, comment out path(s) that aren't pertinent to you
-datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/" #ctw's path
-#datpath <- "~/Dropbox/USDA-compost/Data/" # should work for LMH and AS
+# specify dropbox pathway (varies by user -- ctw can tweak this later)
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
+  ## CTW
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/"
+}else{
+  ## probs LMH and AS? (fix if not -- rproj is two levels down in github repo)
+  datpath <- "~/Dropbox/USDA-compost/Data/"
+}
 
 # list files in entered data folder
 vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = T, pattern = "_Cover_", ignore.case = T)
@@ -48,15 +53,18 @@ spplist_master <- data.frame()
 for(i in vegfiles){
   # read in dataset
   vegdat <- read.csv(i, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
-  print(paste("Adding new species from", vegdat$V2[2], "composition survey to master species list"))
+  print(paste("Adding new species from", str_extract(i, "(?<=_)[:alnum:]+(?=.csv)"), "composition survey to master species list"))
   
   # id where litter depth and cover data start
   litpos <- grep("depth", vegdat[,1], ignore.case = T)
+  # id col where plots/abundance data start (2020 data start in different col than 2019)
+  # > this assumes litter depth has a numeric value (which is should..)
+  covpos <- min(grep("[[:digit:]]", vegdat[litpos,]))
   # remove any species rows that don't have any entries for abundance value
-  allNAs <- apply(vegdat[litpos+1:nrow(vegdat), 2:ncol(vegdat)],1,function(x) all(is.na(x)))
+  allNAs <- apply(vegdat[litpos+1:nrow(vegdat), covpos:ncol(vegdat)],1,function(x) all(is.na(x)))
   # pull species list
   spplist <- vegdat[litpos+1:nrow(vegdat),1]
-  spplist <- spplist[allNAs==FALSE]
+  spplist <- spplist[!allNAs]
   # compile spp list data frame for i cover dataset, remove NAs from list
   spplist <- data.frame(species = sort(spplist[!is.na(spplist)]),
                         unknown = NA,
@@ -65,7 +73,7 @@ for(i in vegfiles){
                         code4 = NA,
                         code6 = NA)
   # identify unknowns in species list
-  spplist$unknown[grepl("p[.]$|[(]|[0-9]", spplist$species)] <- 1
+  spplist$unknown[grepl("p[.]$|[(]|[0-9]|group", spplist$species)] <- 1
   spplist$unknown[is.na(spplist$unknown)] <- 0
   
   # fill in cols for known species
@@ -114,10 +122,15 @@ usda_plantvars <- c("Symbol","Accepted_Symbol_x","Scientific_Name_x","Common_Nam
 
 spplist_master <- cbind(spplist_master, data.frame(matrix(nrow = nrow(spplist_master), ncol=length(usda_plantvars))))
 colnames(spplist_master)[which(colnames(spplist_master) == "X1"):ncol(spplist_master)] <- usda_plantvars
+# flag generic genera to pair on symbol instead of genus and epithet
+genera <- spplist_master$species[spplist_master$unknown == 1 & grepl("sp[.]|spp[.]", spplist_master$species)]
+# remove asters and unknowns geric grams and forbs
+genera <- genera[!grepl("aster|forb|grass", genera, ignore.case = T)]
+
 # run usda plants api query to scrape species info
 # NOTE!!: this will throw an error ["Client error: (400) Bad Request"] if a species is spelled incorrectly in the cover data (a good QA check)
 # loop will issue warnings about cbind command providing more variables to replace than there are in 
-for(p in spplist_master$species[spplist_master$unknown == 0]){
+for(p in c(spplist_master$species[spplist_master$unknown == 0], genera)){
   print(paste("Pulling USDA Plants data for",p))
   temp_genus <- spplist_master$genus[spplist_master$species == p]
   temp_epithet <- spplist_master$epithet[spplist_master$species == p] 
@@ -136,19 +149,31 @@ for(p in spplist_master$species[spplist_master$unknown == 0]){
       api_path(search) %>%
       api_query(Genus = Taeniatherum, Species = `caput-medusae`)
   }
-  if(!grepl(" ssp[.]|-", p)){
+  # special case for generic genus
+  if(p %in% genera){
+    temp_symbol <- casefold(substr(p,1,5),upper = T)
+    templist <- api("https://plantsdb.xyz") %>%
+      api_path(search) %>%
+      api_query_(Symbol = temp_symbol)
+  }
+  # for all others
+  if(!grepl(" ssp[.]|-", p) & !p %in% genera){
     templist <- api("https://plantsdb.xyz") %>%
       api_path(search) %>%
       api_query_(Genus = eval(temp_genus), Species = eval(temp_epithet))
   }
+ 
+    
   # isolate desired cols
-  temp_df <- templist$data[1,colnames(templist$data) %in% usda_plantvars]
+  temp_df <- data.frame(templist$data)
+  temp_df <- temp_df[,names(temp_df) %in% usda_plantvars]
   # rematch to updated name if accepted symbol doesn't match symbol
   if(temp_df$Symbol != temp_df$Accepted_Symbol_x){
     templist2 <- api("https://plantsdb.xyz") %>%
       api_path(search) %>%
       api_query_(Symbol = eval(temp_df$Accepted_Symbol_x))
-    update_df <- templist2$data[1,colnames(templist2$data) %in% usda_plantvars]
+    update_df <- data.frame(templist2$data)
+    update_df <- update_df[names(update_df) %in% usda_plantvars]
     temp_df[,which(colnames(temp_df)=="Common_Name"):ncol(temp_df)] <- update_df[,which(colnames(update_df)=="Common_Name"):ncol(update_df)]
   }
   # cleanup empty cells
@@ -158,6 +183,13 @@ for(p in spplist_master$species[spplist_master$unknown == 0]){
   # add to spplist_master
   spplist_master[spplist_master$species == p,usda_plantvars] <- as.data.frame(temp_df)
 }
+
+
+# save work
+copydf <- spplist_master
+# clean up environment
+rm(temp_df, templist, templist2, update_df, temp_epithet, temp_genus, temp_susbp, temp_symbol, i, p)
+
 
 
 # -- FINISHING -----
@@ -179,6 +211,23 @@ for(i in which(grepl("Trif.*[0-9]|Trifolium spp.", spplist_master$species))){
 # fix code 4 and 6 if only 1 unknown trifolium entry for multiple spp
 spplist_master[grepl("Tri.* spp.",spplist_master$species), c("code4", "code6")] <- c("TRSP", "TRSPP")
 
+# assign code 4 and 5 + genus for generic genera
+for(i in genera[grepl("[[:digit:]]", genera)]){
+  tempos <- which(spplist_master$species == i)
+  spplist_master$genus[tempos] <- str_extract(i, "[A-Z][a-z]+")
+  spplist_master$code4[tempos] <- paste0(casefold(substr(i,1,3), upper = T), str_extract(i,"[[:digit:]]+"))
+  spplist_master$code6[tempos] <- paste0(casefold(substr(i,1,5), upper = T), str_extract(i,"[[:digit:]]+"))
+  
+}
+# for generic genera without number, just use alpha chars
+for(i in genera[!grepl("[[:digit:]]", genera)]){
+  tempos <- which(spplist_master$species == i)
+  spplist_master$genus[tempos] <- str_extract(i, "[A-Z][a-z]+")
+  spplist_master$code4[tempos] <- paste0(casefold(substr(i,1,2), upper = T), "SP")
+  spplist_master$code6[tempos] <- paste0(casefold(substr(i,1,3), upper = T), "SPP")
+  
+}
+
 # name remaining forbs as unk forb #
 num2 <- 3 #last number assigned for unknowns is 2
 for(i in which(is.na(spplist_master$Native_Status))){
@@ -196,9 +245,7 @@ for(i in which(is.na(spplist_master$Native_Status))){
   }
 }
 
-# manual edit to Agoseris sp.
-spplist_master[spplist_master$species == "Agoseris sp.", c("Category", "Family", "Family_Common_Name")] <- c("Dicot", "Asteraceae", "Aster family")
-  
+ 
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
 spplist_master$fxnl_grp[grepl("Forb", spplist_master$Growth_Habit, ignore.case = T)] <- "Forb"
@@ -209,7 +256,7 @@ spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Nativ
 
 # manual edit to Agoseris sp. (all are native)
 spplist_master$nativity[spplist_master$species == "Agoseris sp."] <- "Native"
-# manual edits to forb germinates (were either Lythrum or Anagallis, both non-native) and hairy/smooth asters (either hypochaeris or leontodon -- both non-native)
+# manual edits to forb germinates (were either Lythrum or Anagalis, both non-native) and hairy/smooth asters (either hypochaeris or leontodon -- both non-native)
 spplist_master$nativity[is.na(spplist_master$nativity) & grepl("aster|germinates", spplist_master$species, ignore.case = T)] <- "Exotic"
 
 # order alphabetically by species
