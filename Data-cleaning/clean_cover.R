@@ -16,6 +16,8 @@
 
 # notes:
 # re-run whenever unknowns are identified and changed in the entered cover dataset
+# 2020 adjustment: process and append spring 2020 cover separately (Nikolai collected for us bc of COVID)
+# > more unknowns to deal with and potentially bin 
 
 
 # *** IMPORTANT TO DO BEFORE RUNNING THIS SCRIPT*** ##
@@ -30,16 +32,20 @@
 # clear environment
 rm(list=ls())
 # load libraries needed
-library(dplyr) # for join functions
-library(tidyr) # for gather/spread
-library(stringr) # for string pattern extraction
+library(tidyverse) # for dplyr, tidyr, and stringr
 options(stringsAsFactors = F)
 na_vals <- c(" ", "", NA, "NA")
 
 # set path to compost data (main level)
-# dependent on user, comment out path(s) that aren't pertinent to you
-datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/" #ctw's path
-#datpath <- "~/Dropbox/USDA-compost/Data/" # should work for LMH and AS
+# > varies by user
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
+  ## CTW
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/"
+}else{
+  ## probs LMH and AS? (fix if not -- rproj is two levels down in github repo)
+  datpath <- "~/Dropbox/USDA-compost/Data/"
+}
+
 # list files in entered data folder
 vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = T, pattern = "_Cover_", ignore.case = T)
 
@@ -48,7 +54,8 @@ spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals
 # read in treatment key
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_vals, strip.white = T)
 
-
+dat2020 <- read.csv(vegfiles[3], header = F, na.strings = na_vals, strip.white = T)
+test <- read.csv(vegfiles[1], header = F, na.strings = na_vals, strip.white = T)
 
 # -- TIDY AND TRANSPOSE ENTERED COVER DATA -----
 # loop through cover data to read in, transpose, and append to master cover dataset
@@ -57,20 +64,24 @@ cover_master_long <- data.frame()
 cover_master_wide <- data.frame()
 
 # loop iterates through each cover dataset and adds new spp to master spp set
+# > process 2020 separately
 for(i in vegfiles){
   # read in dataset
   vegdat <- read.csv(i, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
-  print(paste("Transposing and tidying", vegdat$V2[2], "composition dataset"))
+  print(paste("Transposing and tidying", str_extract(i, "(?<=_)[:alnum:]+(?=.csv)"), "composition dataset"))
   # remove blank rows
-  vegdat <- vegdat[!is.na(vegdat$V1),]
-  
+  vegdat <- vegdat[!apply(vegdat, 1, function(x) all(is.na(x))),]
+  # remove common name column if there
+  vegdat <- vegdat[,!sapply(vegdat, function(x) any(grep("^Common name", x, ignore.case = T)))]
+  # remove Grasses and Forbs section headers if present
+  vegdat <- vegdat[!apply(vegdat,1, function(x) all(x %in% c("Grasses", "Forbs", NA))), ]
   # id where plot and cover data start
   plotpos <- grep("plot", vegdat[,1], ignore.case = T)
   
   
   # -- CREATE PLOT-DATE DATA TABLE -----
   # pull out recorder, sample date, and notes into separate data frame
-  notes <- vegdat[1:plotpos,]  
+  notes <- vegdat[1:plotpos,]
   notes <- data.frame(t(notes)) #transpose, change matrix class to data frame
   colnames(notes) <- casefold(gsub(":", "", notes[1,])) # set row 1 as column names, make lower case and remove colon
   notes <- notes[-1,] # remove row 1
@@ -80,10 +91,21 @@ for(i in vegfiles){
   notes$date <- as.Date(notes$date, format = "%m/%d/%y")
   notes$yr <- substr(as.character(notes$date), 1,4)
   
+  # prep plot col depending on which ID used
+  # if plot col is number id, convert to numeric
+  if(all(grepl("[[:digit:]]+", notes$plot))){
+    notes$plot <- as.numeric(notes$plot)
+  }
+  # if plot ID is block-nut-ppt ID, rename col to fulltrt to join correctly with trtkey
+  # > 2019 we use block-nut-ppt, 2020 use plot #
+  if(any(grepl("[:alpha:]", notes$plot))){
+    notes <- rename(notes, fulltrt = plot)
+  } 
+  
   # join plot treatment info
-  notes <- left_join(notes, trtkey, by = "plot") #left_join preserves order of sampling, merge alphabetizes plots
+  notes <- left_join(notes, trtkey) #left_join preserves order of sampling, merge alphabetizes plots
   #reorder cols
-  notes <- notes[c("plot", "block", "nut_trt", "ppt_trt", "yr", "date", "recorder", "notes")]
+  notes <- notes[c("plot", "fulltrt", "block", "nut_trt", "ppt_trt", "yr", "date", "recorder", "notes")]
   
   
   # -- PREP ABUNDANCE DATA FOR TIDYING AND TRANSPOSING -----
@@ -102,9 +124,14 @@ for(i in vegfiles){
   vegdat <- right_join(spplist[c("species", "code4")], vegdat, by = c("species" = "V1"))
   # add codes for non-species cells (e.g. percent grass, percent bare/other)
   vegdat$code4[grepl("%", vegdat$species)] <- with(vegdat[grepl("%", vegdat$species),], 
-                                                     paste0("pct_", casefold(str_extract(species, "[A-Z][a-z]+"))))
-  vegdat$code4[1] <- "plot"
+                                                   paste0("pct_", casefold(str_extract(species, "[A-Z][a-z]+"))))
+  
+  # ID pct cover column headers as plot or fulltrt depending on whether letter present
+  vegdat$code4[1] <- ifelse(grepl("[[:alpha:]]", vegdat$V3[1]), "fulltrt", "plot")
   vegdat$code4[litpos] <- "litter_depth_cm"
+  # check to be sure all rows have a code4 value before proceeding
+  stopifnot(all(!is.na(vegdat$code4)))
+  
   vegdat <- vegdat[,2:ncol(vegdat)] # remove species col (using codes for headers)
   vegdat <- data.frame(t(vegdat)) # transpose, change matrix to data frame
   colnames(vegdat) <- vegdat[1,]
@@ -120,9 +147,9 @@ for(i in vegfiles){
   vegdat <- vegdat[c(colnames(vegdat)[1:litpos], sort(colnames(vegdat)[(litpos+1):ncol(vegdat)]))]
   
   # join notes and cover data
-  clean_vegdat <- full_join(notes,vegdat, by = "plot")
+  clean_vegdat <- full_join(notes,vegdat, by = "fulltrt")
   # check to make sure all plots accounted for
-  stopifnot(all(unique(clean_vegdat$plot) %in% unique(vegdat$plot)))
+  stopifnot(all(unique(clean_vegdat$fulltrt) %in% unique(vegdat$fulltrt)))
   # NOTE > can introduce more logic checks here as needed...
   
   
