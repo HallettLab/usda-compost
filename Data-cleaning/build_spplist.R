@@ -26,8 +26,7 @@
 rm(list=ls())
 # load libraries needed to use USDA plants api
 library(request) # to access USDA plants api
-library(tibble) # request reads in data to tibble
-library(dplyr) # request functions rely on pipes  
+library(tidyverse) # for tibble, dplyr, stringr
 options(stringsAsFactors = F)
 na_vals <- c(" ", "", NA, "NA")
 
@@ -184,7 +183,9 @@ for(p in c(spplist_master$species[spplist_master$unknown == 0], genera)){
   spplist_master[spplist_master$species == p,usda_plantvars] <- as.data.frame(temp_df)
 }
 
-
+glimpse(spplist_master)
+rownames(spplist_master)
+str(spplist_master)
 # save work
 copydf <- spplist_master
 # clean up environment
@@ -192,7 +193,7 @@ rm(temp_df, templist, templist2, update_df, temp_epithet, temp_genus, temp_susbp
 
 
 
-# -- FINISHING -----
+# -- MANUAL INFILLING -----
 # manual edits: fill in info for unknowns
 # unknown Annual grass spp. (AVBA, CYEC, or GAPH)
 spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")] <- c("UNGR", "UNGSPP")
@@ -227,6 +228,37 @@ for(i in genera[!grepl("[[:digit:]]", genera)]){
   spplist_master$code6[tempos] <- paste0(casefold(substr(i,1,3), upper = T), "SPP")
   
 }
+# assign codes for unk asters (3 different species, and then a general aster group for immature asters)
+asters <- spplist_master$species[is.na(spplist_master$code4) & grepl("aster", spplist_master$species)]
+# set where to start with numbering asters (will work for future additions)
+plantnum <- max(as.numeric(str_extract(asters,"[[:digit:]]")), na.rm = T) + 1
+for(i in asters){
+  tempos <- which(spplist_master$species == i)
+  # infill family info (can't assign nativity or duration since agoseris can be peren and is native, madia also native, but non-natives also mixed in here)
+  spplist_master[tempos, c("Category","Family","Family_Common_Name", "Growth_Habit")] <- c("Dicot", "Asteraceae", "Aster family", "Forb/herb")
+  
+  if(grepl("[[:digit:]]", i)){
+    spplist_master$code4[tempos] <- paste0("AST", str_extract(i,"[[:digit:]]"))
+    spplist_master$code6[tempos] <- paste0("ASTER", str_extract(i,"[[:digit:]]"))
+    next
+  }
+  if(grepl("spp[.]", i)){
+    spplist_master$code4[tempos] <- "ASSP"
+    spplist_master$code6[tempos] <- "ASTSPP"
+    next
+  }
+  if(grepl("smooth", i, ignore.case = T)){
+    spplist_master$code4[tempos] <- paste0("AST", plantnum)
+    spplist_master$code6[tempos] <- paste0("ASTER", plantnum)
+    plantnum <- plantnum + 1
+  }
+}
+
+spplist_master <- data.frame(spplist_master)
+# infill agoseris (based on usda plants info agoseris spp on sfrec list)
+spplist_master[grep("AGOSE", spplist_master$Symbol), c("Growth_Habit", "Native_Status")] <- c("Forb/herb", "L48 N")
+fillcols <- names(spplist_master)[grep("^State_and", names(spplist_master)):ncol(spplist_master)]
+
 
 # name remaining forbs as unk forb #
 num2 <- 3 #last number assigned for unknowns is 2
