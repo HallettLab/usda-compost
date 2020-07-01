@@ -54,8 +54,8 @@ spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals
 # read in treatment key
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_vals, strip.white = T)
 
-dat2020 <- read.csv(vegfiles[3], header = F, na.strings = na_vals, strip.white = T)
-test <- read.csv(vegfiles[1], header = F, na.strings = na_vals, strip.white = T)
+
+
 
 # -- TIDY AND TRANSPOSE ENTERED COVER DATA -----
 # loop through cover data to read in, transpose, and append to master cover dataset
@@ -89,16 +89,16 @@ for(i in vegfiles){
   
   # change date from character to date format and add year column
   notes$date <- as.Date(notes$date, format = "%m/%d/%y")
-  notes$yr <- substr(as.character(notes$date), 1,4)
+  notes$yr <- as.numeric(substr(as.character(notes$date), 1,4))
   
   # prep plot col depending on which ID used
   # if plot col is number id, convert to numeric
-  if(all(grepl("[[:digit:]]+", notes$plot))){
+  if(all(!grepl("[[:alpha:]]+", notes$plot))){
     notes$plot <- as.numeric(notes$plot)
   }
   # if plot ID is block-nut-ppt ID, rename col to fulltrt to join correctly with trtkey
   # > 2019 we use block-nut-ppt, 2020 use plot #
-  if(any(grepl("[:alpha:]", notes$plot))){
+  if(any(grepl("[[:alpha:]]", notes$plot))){
     notes <- rename(notes, fulltrt = plot)
   } 
   
@@ -140,16 +140,19 @@ for(i in vegfiles){
   
   #clean up trace values and empty cells for non-species cells (e.g. percent green, percent bare, litter depth)
   vegdat[vegdat == "T"] <- 0.01
-  vegdat[colnames(vegdat)[1:7]] <- sapply(vegdat[colnames(vegdat)[1:7]], function(x) ifelse(is.na(x),0,x))
-  # make all cols except plot numeric
+  vegdat[colnames(vegdat)[1:7]] <- sapply(vegdat[colnames(vegdat)[1:7]], function(x) ifelse(is.na(x)|x == "n/a",0,x))
+  # make all cols except plot numeric [except if plot is the numeric ID and not fulltrt]
   vegdat[,2:ncol(vegdat)] <- sapply(vegdat[,2:ncol(vegdat)], as.numeric)
+  # if plot numeric ID, also make numeric so it joins with trtkey
+  if(!all(grepl("[[:alpha:]]", vegdat[,1]))){
+    vegdat[,1] <- as.numeric(vegdat[,1])
+  }
   # reorder species cols alphabetically
   vegdat <- vegdat[c(colnames(vegdat)[1:litpos], sort(colnames(vegdat)[(litpos+1):ncol(vegdat)]))]
   
   # join notes and cover data
-  clean_vegdat <- full_join(notes,vegdat, by = "fulltrt")
-  # check to make sure all plots accounted for
-  stopifnot(all(unique(clean_vegdat$fulltrt) %in% unique(vegdat$fulltrt)))
+  clean_vegdat <- full_join(notes,vegdat, by = names(vegdat)[1])
+  
   # NOTE > can introduce more logic checks here as needed...
   
   
