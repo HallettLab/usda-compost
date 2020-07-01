@@ -20,6 +20,11 @@
 # can change script so reads in all files living in the Cover_EnteredData folder, but that means only entered cover data should live in that folder
 # the way it's written currently is more flexible should anything other than entered cover data live in there
 
+# notes 2020 jun 30:
+# CTW still waiting to hear back from Nikolai on some of the species noted in composition.. e.g. "skinn" and "tall branchy" -- not sure if those are forbs or grams
+# we may want to recode NS's "tarweed" if don't think it's actually Madia (native aster)
+
+
 
 # -- SETUP -----
 # clear environment
@@ -183,8 +188,7 @@ for(p in c(spplist_master$species[spplist_master$unknown == 0], genera)){
   spplist_master[spplist_master$species == p,usda_plantvars] <- as.data.frame(temp_df)
 }
 
-glimpse(spplist_master)
-rownames(spplist_master)
+
 str(spplist_master)
 # save work
 copydf <- spplist_master
@@ -200,7 +204,10 @@ spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")
 # copy descriptive info from TACA since most general and applies
 spplist_master[grepl("Annual grass",spplist_master$species), 
                which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "TACA" & !is.na(spplist_master$code4), 
-                                                                                                   which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
+                                                                                                 which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
+# infill bromus info -- not sure if NS meant Ca brome, or red brome (B rubens) so can't assign nativity
+spplist_master[grepl("Bromus sp", spplist_master$species), c("Duration", "Growth_Habit")] <- c("Annual", "Graminoid")
+
 # unknown Trifolium 
 for(i in which(grepl("Trif.*[0-9]|Trifolium spp.", spplist_master$species))){
   num <- gsub("[^0-9]","", spplist_master$species[i])
@@ -254,45 +261,76 @@ for(i in asters){
   }
 }
 
-spplist_master <- data.frame(spplist_master)
-# infill agoseris (based on usda plants info agoseris spp on sfrec list)
-spplist_master[grep("AGOSE", spplist_master$Symbol), c("Growth_Habit", "Native_Status")] <- c("Forb/herb", "L48 N")
-fillcols <- names(spplist_master)[grep("^State_and", names(spplist_master)):ncol(spplist_master)]
 
+# infill agoseris (based on usda plants info agoseris spp on sfrec list)
+spplist_master[grep("AGOSE", spplist_master$Symbol), c("Growth_Habit", "Native_Status")] <- c("Forb/herb", "L48 (N)")
+
+# assign codes for grouped genera, and clean up aster fam
+spplist_master$code4[grepl("group", spplist_master$species)] <- paste0(substr(spplist_master$species[grepl("group", spplist_master$species)],1,1),
+                                                                       str_extract(spplist_master$species[grepl("group", spplist_master$species)], "(?<=-)[A-Z]"),
+                                                                       "GR")
+spplist_master$code6[grepl("group", spplist_master$species)] <- casefold(paste0(substr(spplist_master$species[grepl("group", spplist_master$species)],1,2),
+                                                                       str_extract(spplist_master$species[grepl("group", spplist_master$species)], "(?<=-)[A-Z][a-z]"),
+                                                                       "GR"), upper = T)
+spplist_master$Category[grepl("group", spplist_master$species)] <- "Dicot" # all dicots
+spplist_master$Duration[grepl("group|Hypochaeris sp|Madia sp|Geranium sp", spplist_master$species)] <- "Annual" # all of these are annual
+spplist_master$Growth_Habit[grepl("group|Hypochaeris sp|Madia sp|Geranium sp", spplist_master$species)] <- "Forb/herb"
+spplist_master$Native_Status[grepl("group|Hypochaeris sp|Geranium sp", spplist_master$species)] <- "L48 (I)" # they are at least this
+spplist_master$Native_Status[grepl("Madia sp", spplist_master$species)] <- "L48 (N)"
+# taraxacum and hypochaeris are both asters
+spplist_master[grepl("Taraxacum-", spplist_master$species), c("Family", "Family_Common_Name")] <- c("Asteraceae", "Aster family")
+# if duration not assigned to asters by now, is unknown
+spplist_master$Duration[grepl("Aster", spplist_master$Family_Common_Name) & is.na(spplist_master$Duration)] <- "Unknown"
 
 # name remaining forbs as unk forb #
-num2 <- 3 #last number assigned for unknowns is 2
-for(i in which(is.na(spplist_master$Native_Status))){
-  num <- regmatches(spplist_master$species[i], regexpr("[0-9]+", spplist_master$species[i]))
-  # if no number already assigned, use num2 count
-  if(length(num)==0){
-    num <- num2
-    # increase num2 by 1 for next unknown species
-    num2 <- num2+1
+plantnum <- 1
+for(i in which(is.na(spplist_master$code4) & grepl("forb", spplist_master$species, ignore.case = T))){
+  # if multiple forb (forb germinates), create generic group
+  if(grepl("spp", spplist_master$species[i])){
+    spplist_master[i, c("code4", "code6")] <- c("UNFR", "UNFSPP")
+  }else{
+    spplist_master[i, c("code4", "code6")] <- c(paste0("UNF",plantnum), paste0("UNFRB",plantnum))
+    plantnum <- plantnum + 1
   }
-  spplist_master[i, c("code4", "code6", "Growth_Habit")] <- c(paste0("UNKF",num), paste0("UNKFRB",num), "Forb/herb")
-  # assign asteraceae info if an unknown aster
-  if(grepl(" aster ", spplist_master$species[i])){
-    spplist_master[i, c("Category", "Family", "Family_Common_Name")] <- c("Dicot", "Asteraceae", "Aster family")
-  }
+  # assign other general annual non-native forb info
+  spplist_master[i, c("Category", "Growth_Habit", "Duration", "Native_Status")] <- c("Dicot", "Forb/herb", "Annual", "L48 (I)") # is at least invasive in lower 48 (probably other parts of US too) 
+  
 }
 
- 
+# lastly, unknown plants (not sure whether forb or grass -- no word from Nikolai yet as of 6/30)
+spplist_master$code4[grepl("20_Unk", spplist_master$species)] <- casefold(str_extract(spplist_master$species[grepl("20_Unk", spplist_master$species)], ("(?<=_)Unk[0-9]+")), upper = T)
+spplist_master$code6[grepl("20_Unk", spplist_master$species)] <- gsub("UNK", "UNKUN", spplist_master$code4[grepl("20_Unk", spplist_master$species)])
+spplist_master[grepl("20_Unk", spplist_master$species), c("Category", "Duration", "Growth_Habit")] <- "Unknown"
+
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
 spplist_master$fxnl_grp[grepl("Forb", spplist_master$Growth_Habit, ignore.case = T)] <- "Forb"
-spplist_master$fxnl_grp[spplist_master$Family == "Fabaceae"] <- "N-fixer"
+spplist_master$fxnl_grp[grepl("Fabac", spplist_master$Family)] <- "N-fixer"
+spplist_master$fxnl_grp[spplist_master$Growth_Habit == "Unknown"] <- "Unknown"
 
 spplist_master$nativity[grepl("L48 .I.",spplist_master$Native_Status)] <- "Exotic"
 spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Native"
+spplist_master$nativity[is.na(spplist_master$Native_Status)] <- "Unknown"
 
-# manual edit to Agoseris sp. (all are native)
-spplist_master$nativity[spplist_master$species == "Agoseris sp."] <- "Native"
-# manual edits to forb germinates (were either Lythrum or Anagalis, both non-native) and hairy/smooth asters (either hypochaeris or leontodon -- both non-native)
-spplist_master$nativity[is.na(spplist_master$nativity) & grepl("aster|germinates", spplist_master$species, ignore.case = T)] <- "Exotic"
 
+# -- FINISHING -----
 # order alphabetically by species
 spplist_master <- spplist_master[order(spplist_master$species),]
 
+# qa checks
+# > check for typos
+sort(unique(spplist_master$Family))
+sort(unique(spplist_master$Growth_Habit))
+sort(unique(spplist_master$Duration))
+# check who is unknown for nativity
+sort(spplist_master$species[spplist_master$nativity == "Unknown"])
+# check gram and forb spp look good
+sort(spplist_master$species[grepl("forb", spplist_master$Growth_Habit, ignore.case = T)])
+sort(spplist_master$species[grepl("gram", spplist_master$Growth_Habit, ignore.case = T)])
+# check NAs
+sapply(spplist_master, function(x) summary(is.na(x))) # looks okay -- NAs present for unknowns
+
+
+
 # -- WRITE OUT -----
-write.csv(spplist_master, paste0(datpath, "Compost_SppList.csv"), row.names = F)
+write_csv(spplist_master, paste0(datpath, "Compost_SppList.csv"))
