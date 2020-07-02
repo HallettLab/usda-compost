@@ -19,18 +19,22 @@
 rm(list=ls())
 # load libraries needed
 library(readxl) # for reading in soil moisture datasets
-library(dplyr)
-library(tidyr)
+library(tidyverse) # for dplyr, tidyr, and ggplot
 library(lubridate)
-library(ggplot2)
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 na_vals <- c(" ", "", NA, "NA")
 
 # set path to compost data (main level)
-# dependent on user, comment out path(s) that aren't pertinent to you
-datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/" #ctw's path
-#datpath <- "~/Dropbox/USDA-compost/Data/" # should work for LMH and AS
+# > varies by user
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
+  ## CTW
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/"
+}else{
+  ## probs LMH and AS? (fix if not -- rproj is two levels down in github repo)
+  datpath <- "~/Dropbox/USDA-compost/Data/"
+}
+
 # list files in entered data folder
 datfiles <- list.files(paste0(datpath, "SoilMoisture/SoilMoisture_RawData"), full.names = T, pattern = "B[1-4]L[0-9].*[.]xls", ignore.case = T)
 
@@ -89,16 +93,17 @@ for(i in datfiles){
     ungroup() %>%
     mutate(dowy = ifelse(is.na(dowy) & maxdoy == 366, doy-274, 
                          ifelse(is.na(dowy) & maxdoy == 365, doy-273, 
-                                dowy))) %>%
+                                dowy)),
+           filename = str_extract(i, "B[0-9]L[0-9].*$")) %>%
     # join logger key
     left_join(loggerkey, by = c("logger", "port")) %>%
     # unite plot and subplot so joins with treatment key
-    mutate(plot = paste0(plot, subplot)) %>%
-    left_join(trtkey, by = "plot") %>%
+    unite(fulltrt, plot, subplot, sep = "") %>% #plot = paste0(plot, subplot)) %>%
+    left_join(trtkey, by = "fulltrt") %>%
     # clarify trt is the composition plot treatment
     rename(comp_trt = trt) %>%
     # reorder cols, remove maxdoy column
-    dplyr::select(logger, port, plot, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, vwc, doy:dowy)
+    dplyr::select(logger, port, plot, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
     
     # compile with master soil moisture data frame
     soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
@@ -112,21 +117,21 @@ for(i in datfiles){
         filter(!is.na(vwc)) %>%
         mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
                source = paste(logger, port, sep = "_")) %>%
-        ggplot(aes(date_time, vwc, col = as.factor(port))) +
+        ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
         geom_line(alpha = 0.5) +
         ggtitle("QA check: soil moisture (VWC), by logger, colored by port") +
         scale_color_discrete(name = "port") +
-        facet_wrap(~logger)
+        facet_grid(waterYear~logger)
       
      trt_plot <- soilmoisture_all %>%
         filter(!is.na(vwc)) %>%
         mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
                source = paste(logger, port, sep = "_")) %>%
-        ggplot(aes(date_time, vwc, group = source, col = as.factor(block))) +
+        ggplot(aes(dowy, vwc, group = source, col = as.factor(block))) +
         geom_line(alpha = 0.5) +
         ggtitle("Treatment check: soil moisture (VWC), by nutrient x drought treatment, colored by block") +
         scale_color_discrete(name = "block") +
-        facet_wrap(~full_trt)
+        facet_grid(full_trt~waterYear)
       
       print(logger_plot)
       print(trt_plot)
@@ -136,13 +141,12 @@ for(i in datfiles){
 
 
 # -- FINISHING -----
-write.csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"),
-          row.names = F)
+write_csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
 
 # write out preliminary plots if desired
 ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bylogger.pdf"),
        plot = logger_plot,
-       width = 8, height = 8)
+       width = 8, height = 8, units = "in")
 ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bytreatment.pdf"),
        plot = trt_plot,
-       width = 8, height = 8)
+       width = 8, height = 8, unit = "in")
