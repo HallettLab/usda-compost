@@ -21,6 +21,7 @@ rm(list=ls())
 library(readxl) # for reading in soil moisture datasets
 library(tidyverse) # for dplyr, tidyr, and ggplot
 library(lubridate)
+library(cowplot)
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 na_vals <- c(" ", "", NA, "NA")
@@ -258,7 +259,30 @@ subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
 # > data gap after break, shift series so end lines up with end timestamp collected (and check spikes align with B2L1)
 
 
+# prep cimis
+# create unique continuous field for doy.24hr time to plot both soil moisture and ppt on same hourly x axis
+cimis <- subset(cimis, !is.na(Stn.Id))
+cimis$timeid <- ifelse(nchar(cimis$Hour..PST.) == 3, paste0(cimis$Jul, ".0", cimis$Hour..PST.), paste0(cimis$Jul, ".", cimis$Hour..PST.))
+cimis$timeid <- as.numeric(cimis$timeid)
+cimis$Date <- as.Date(cimis$Date, format = "%m/%d/%Y")
+cimis$yr <- year(cimis$Date)
+test <- subset(datecheck, block == 2 & nut_trt == "N" & ppt_trt == "XC") %>%
+  mutate(timeid = as.numeric(paste(doy, substr(time, 1, 2), sep = ".")),
+         yr = year(date_time))
+ggplot(subset(cimis, !is.na(timeid)), aes(timeid, Precip..mm.)) +
+  geom_line(alpha = 0.4, col = "dodgerblue") +
+  geom_line(data = test, aes(timeid, vwc)) +
+  facet_grid(.~yr, scales = "free_x", space = "free_x")
 
+plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
+            geom_line(alpha = 0.4, col = "dodgerblue") +
+            #geom_line(data = test, aes(timeid, vwc)) +
+            facet_grid(.~yr, scales = "free_x", space = "free_x"),
+          ggplot(test, aes(timeid, vwc)) +
+            geom_line(alpha = 0.4) +
+            facet_grid(.~yr, scales = "free_x", space = "free_x"),
+          nrow = 2,
+          align = "v")
 
 # -- FINISHING -----
 write_csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
