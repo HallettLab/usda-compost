@@ -140,6 +140,71 @@ for(i in datfiles){
 }
 
 
+# -- DATA QA -----
+# troubleshoot suspect data (e.g. dates, vwc) post-compilation
+
+# check if date timestamp in expected year (1 = yes, 0 = no)
+logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename) %>%
+  distinct() %>%
+  mutate(filemo = substr(filename,6,12),
+         filemo = as.Date(filemo, format = "%d%b%y"),
+         tracker = ifelse(year(date) %in% c(year(filemo), year(filemo)-1), 1, 0),
+         yr = substr(date, 1,4)) %>%
+  group_by(logger, port, filename) %>%
+  mutate(trackseq = 1:length(date)) %>%
+  ungroup()
+
+# visualize discrepancies
+ggplot(logcheck, aes(trackseq, as.factor(tracker), col = yr)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  facet_grid(logger~filemo, scale = "free_x", space = "free_x")
+
+# for apr 2020 files, B2L2, B2L4, B3L4 need corrections from some point in middle all the way through download date
+# > B2L2 has two different years: 2000, 2001
+# > B2L4 has three different years: 2047, 2048, 2000 .. looks like L2 and L4 switch to final last year on same day?
+# > B3L4 has 1 different year: 2002
+
+# can compare vwc values to similar treatments to see if B2L2 and B3L4 stopped on date collected or earlier (i.e. is the data gap in the middle of the sequence or at the end?) 
+# go by logger?
+unique(soilmoisture_all$fulltrt[soilmoisture_all$logger %in% c("B2L2", "B2L4", "B3L3")])
+datecheck <- soilmoisture_all %>%
+  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours")) %>%
+  # crunch interval
+  group_by(logger, port, filename) %>%
+  mutate(timediff = lead(date_time,1)-date_time,
+         trackseq = 1:length(date_time)) %>%
+  ungroup()
+
+# do all ports have same timestamp (time intervals?
+portcheck <- datecheck %>%
+  dplyr::select(logger, timediff, trackseq) %>%
+  distinct() %>%
+  group_by(logger) %>%
+  mutate(seqcheck = duplicated(trackseq)) %>%
+  ungroup()
+
+# visualize
+# remove last day for each because will have NA diffed time interval
+
+ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) +
+  geom_point(alpha = 0.3) +
+  geom_point(data = subset(portcheck, seqcheck), aes(trackseq, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
+  labs(y = "Deviation from expected 2-hr interval (in days)",
+       x = "Collection sequence") +
+  #scale_fill_discrete(name = ")
+  facet_wrap(~logger)
+# > just same three loggers that have weird time jumps
+# > all loggers have same two days where +1 port has a different timestamp, but that could be from data download/new recording?
+# > !! HOWEVER, looks like three loggers with weird timestamps had at least 1 port that had correct timestamp? if that is the case, can try to match that?
+
+# example.. annoying:
+View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373)) 
+# starts with port 1 having different time than other 4 (starts at trackseq = 2367), then slowly other ports have similar date, BUT they are all wrong timestamp regardless (time from yrs 2000, 2001 and not correct month..)
+
+
+
+
 # -- FINISHING -----
 write_csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
 
