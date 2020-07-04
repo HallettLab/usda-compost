@@ -274,14 +274,19 @@ ggplot(subset(cimis, !is.na(timeid)), aes(timeid, Precip..mm.)) +
   geom_line(data = test, aes(timeid, vwc)) +
   facet_grid(.~yr, scales = "free_x", space = "free_x")
 
-plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
+plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Air.Temp..C.)) +
+            geom_line(alpha = 0.4, col = "tomato") +
+            #geom_line(data = test, aes(timeid, vwc)) +
+            geom_smooth(col = "tomato", fill = "tomato") +
+            facet_grid(.~yr, scales = "free_x", space = "free_x"),
+          ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
             geom_line(alpha = 0.4, col = "dodgerblue") +
             #geom_line(data = test, aes(timeid, vwc)) +
             facet_grid(.~yr, scales = "free_x", space = "free_x"),
           ggplot(test, aes(timeid, vwc)) +
             geom_line(alpha = 0.4) +
             facet_grid(.~yr, scales = "free_x", space = "free_x"),
-          nrow = 2,
+          nrow = 3,
           align = "v")
 
 # -- FINISHING -----
