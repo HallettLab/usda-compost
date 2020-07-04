@@ -42,7 +42,8 @@ datfiles <- list.files(paste0(datpath, "SoilMoisture/SoilMoisture_RawData"), ful
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"), na.strings = na_vals, strip.white = T)
 # read in soil data logger lookup table
 loggerkey <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_RawData/decagon_logger_key.csv"), na.strings = na_vals, strip.white = T)
-
+# read in CIMIS met data for QA checks after compilation
+cimis <- read.csv(list.files(paste0(datpath, "CIMIS"), full.names = T), na.strings = na_vals) 
 
 
 # -- COMPILE SOIL MOISTURE RAW FILES -----
@@ -169,7 +170,9 @@ ggplot(logcheck, aes(trackseq, as.factor(tracker), col = yr)) +
 # go by logger?
 unique(soilmoisture_all$fulltrt[soilmoisture_all$logger %in% c("B2L2", "B2L4", "B3L3")])
 datecheck <- soilmoisture_all %>%
-  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours")) %>%
+  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours"),
+         filemo = substr(filename,6,12),
+         filemo = as.Date(filemo, format = "%d%b%y")) %>%
   # crunch interval
   group_by(logger, port, filename) %>%
   mutate(timediff = lead(date_time,1)-date_time,
@@ -192,7 +195,6 @@ ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) 
   geom_point(data = subset(portcheck, seqcheck), aes(trackseq, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
   labs(y = "Deviation from expected 2-hr interval (in days)",
        x = "Collection sequence") +
-  #scale_fill_discrete(name = ")
   facet_wrap(~logger)
 # > just same three loggers that have weird time jumps
 # > all loggers have same two days where +1 port has a different timestamp, but that could be from data download/new recording?
@@ -201,6 +203,59 @@ ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) 
 # example.. annoying:
 View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373)) 
 # starts with port 1 having different time than other 4 (starts at trackseq = 2367), then slowly other ports have similar date, BUT they are all wrong timestamp regardless (time from yrs 2000, 2001 and not correct month..)
+
+# .. try to assign correct date based on soil moisture patterns in similar treatments?
+## B2L2
+subset(datecheck, grepl("FW", fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = block)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  ggtitle("troubleshoot B2L2 date jump (dotted vert line = break)") +
+  facet_grid(logger~nut_trt)
+
+subset(datecheck, grepl("NW", fulltrt) & grepl("Apr20", filename) & trackseq > 2250) %>%
+  ggplot(aes(trackseq, vwc, col = block)) +
+  geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  geom_point(alpha = 0.4) +
+  facet_grid(logger~.)
+# think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
+
+## B2L4
+subset(datecheck, grepl("CD", fulltrt)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = as.factor(block))) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_smooth(aes(fill = as.factor(block))) +
+  ggtitle("troubleshoot B2L4 (block 2) date jump (dotted vert line = break)") +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+
+subset(datecheck, grepl("CXC", fulltrt)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, vwc, col = logger)) +
+  geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  geom_line(alpha = 0.2) +
+  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_smooth(aes(fill = logger)) +
+  ggtitle("troubleshoot B2L4 (block 2) date jump (dotted vert line = break)") +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+# > slight data gap (spikes later in sequence should line up on same day [rain event])
+
+# B3L4
+subset(datecheck, grepl("FD", fulltrt)) %>% # trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = logger)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  ggtitle("troubleshoot B3L4 date jump (dotted vert line = break)") +
+  geom_smooth(aes(fill = logger)) +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+# yikes... I guess B2L1 is most reliable for reference?
+
+subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, vwc, col = logger)) +
+  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  geom_line(alpha = 0.4) +
+  geom_smooth(aes(fill = logger)) +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+# > data gap after break, shift series so end lines up with end timestamp collected (and check spikes align with B2L1)
 
 
 
