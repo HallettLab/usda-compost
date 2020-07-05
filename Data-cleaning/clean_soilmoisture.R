@@ -145,130 +145,7 @@ for(i in datfiles){
 # -- DATA QA -----
 # troubleshoot suspect data (e.g. dates, vwc) post-compilation
 
-# check if date timestamp in expected year (1 = yes, 0 = no)
-logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename) %>%
-  distinct() %>%
-  mutate(filemo = substr(filename,6,12),
-         filemo = as.Date(filemo, format = "%d%b%y"),
-         tracker = ifelse(year(date) %in% c(year(filemo), year(filemo)-1), 1, 0),
-         yr = substr(date, 1,4)) %>%
-  group_by(logger, port, filename) %>%
-  mutate(trackseq = 1:length(date)) %>%
-  ungroup()
-
-# visualize discrepancies
-ggplot(logcheck, aes(trackseq, as.factor(tracker), col = yr)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  facet_grid(logger~filemo, scale = "free_x", space = "free_x")
-
-# for apr 2020 files, B2L2, B2L4, B3L4 need corrections from some point in middle all the way through download date
-# > B2L2 has two different years: 2000, 2001
-# > B2L4 has three different years: 2047, 2048, 2000 .. looks like L2 and L4 switch to final last year on same day?
-# > B3L4 has 1 different year: 2002
-
-# can compare vwc values to similar treatments to see if B2L2 and B3L4 stopped on date collected or earlier (i.e. is the data gap in the middle of the sequence or at the end?) 
-# go by logger?
-unique(soilmoisture_all$fulltrt[soilmoisture_all$logger %in% c("B2L2", "B2L4", "B3L3")])
-datecheck <- soilmoisture_all %>%
-  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours"),
-         filemo = substr(filename,6,12),
-         filemo = as.Date(filemo, format = "%d%b%y")) %>%
-  # crunch interval
-  group_by(logger, port, filename) %>%
-  mutate(timediff = lead(date_time,1)-date_time,
-         trackseq = 1:length(date_time)) %>%
-  ungroup()
-
-# do all ports have same timestamp (time intervals?
-portcheck <- datecheck %>%
-  dplyr::select(logger, timediff, trackseq) %>%
-  distinct() %>%
-  group_by(logger) %>%
-  mutate(seqcheck = duplicated(trackseq)) %>%
-  ungroup()
-
-# visualize
-# remove last day for each because will have NA diffed time interval
-ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) +
-  geom_point(alpha = 0.3) +
-  geom_point(data = subset(portcheck, seqcheck), aes(trackseq, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
-  labs(y = "Deviation from expected 2-hr interval (in days)",
-       x = "Collection sequence") +
-  facet_wrap(~logger)
-# > just same three loggers that have weird time jumps
-# > all loggers have same two days where +1 port has a different timestamp, but that could be from data download/new recording?
-
-# compare total number of recordings by logger
-subset(datecheck, grepl("24Apr", filename)) %>%
-  group_by(logger, port) %>%
-  mutate(maxseq = max(trackseq)) %>%
-  ungroup() %>%
-  distinct(logger, port, maxseq) %>%
-  ggplot() +
-  geom_point(aes(as.factor(port), maxseq, col = as.factor(maxseq))) +
-  facet_wrap(~logger, scale = "free_y")
-# > most loggers have same numer of collection points for 24apr20 file, but 4 loggers differ, and b2l2 differ from other loggers and also within by port (annoying..)
-# > non-problematic ports that have fewer points for 24apr20 file do start with next expected collection point in 11jun20 file
-
-# example.. annoying:
-View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373)) 
-# starts with port 1 having different time than other 4 (starts at trackseq = 2367), then slowly other ports have similar date, BUT they are all wrong timestamp regardless (time from yrs 2000, 2001 and not correct month..)
-
-# .. try to assign correct date based on soil moisture patterns in similar treatments?
-## B2L2
-subset(datecheck, grepl("FW", fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = block, group = port)) +
-  geom_line(alpha = 0.4) +
-  geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
-  ggtitle("troubleshoot B2L2 date jump (dotted vert line = break)") +
-  facet_grid(logger~nut_trt)
-
-subset(datecheck, grepl("NW", fulltrt) & grepl("Apr20", filename) & trackseq > 2250) %>%
-  ggplot(aes(trackseq, vwc, col = block, group = port)) +
-  geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
-  geom_line(alpha = 0.4) +
-  facet_grid(logger~.)
-# think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
-
-## B2L4
-subset(datecheck, grepl("CD", fulltrt)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
-  geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
-  geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
-  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
-  ggtitle("troubleshoot B2L4 (block 2) date jump (dotted vert line = break)") +
-  facet_grid(.~filemo, scales = "free_x", space = "free_x")
-
-subset(datecheck, grepl("CXC", fulltrt)) %>% #  & grepl("Apr20", filename)
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
-  geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
-  geom_line(alpha = 0.2) +
-  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
-  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
-  ggtitle("troubleshoot B2L4 (block 2) date jump (dotted vert line = break)") +
-  facet_grid(.~filemo, scales = "free_x", space = "free_x")
-# > slight data gap (spikes later in sequence should line up on same day [rain event])
-
-# B3L4
-subset(datecheck, grepl("FD", fulltrt)) %>% # trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
-  geom_line(alpha = 0.4) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
-  ggtitle("troubleshoot B3L4 date jump (dotted vert line = break)") +
-  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
-  facet_grid(.~filemo, scales = "free_x", space = "free_x")
-# yikes... I guess B2L1 is most reliable for reference?
-
-subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
-  geom_line(alpha = 0.4) +
-  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
-  facet_grid(.~filemo, scales = "free_x", space = "free_x")
-# > data gap after break, shift series so end lines up with end timestamp collected (and check spikes align with B2L1)
-
-
+# 1. Prep CIMIS data for comparison -----
 # prep cimis
 # create unique continuous field for doy.24hr time to plot both soil moisture and ppt on same hourly x axis
 cimis <- subset(cimis, !is.na(Stn.Id))
@@ -299,15 +176,255 @@ plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$da
           nrow = 3,
           align = "v")
 
+# 2. Assess 2020 date breaks ----- 
+# check if date timestamp in expected year (1 = yes, 0 = no)
+logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename) %>%
+  distinct() %>%
+  mutate(filemo = substr(filename,6,12),
+         filemo = as.Date(filemo, format = "%d%b%y"),
+         tracker = ifelse(year(date) %in% c(year(filemo), year(filemo)-1), 1, 0),
+         yr = substr(date, 1,4)) %>%
+  group_by(logger, port, filename) %>%
+  mutate(trackseq = 1:length(date)) %>%
+  ungroup()
+
+# visualize discrepancies
+ggplot(logcheck, aes(trackseq, as.factor(tracker), col = yr)) +
+  geom_point() +
+  labs(y = "Correct date? (1 = yes, 0 = no)",
+       x = "Collection sequence (per file)",
+       title = "Soil moisture date sequence consistency, by download file by logger") +
+  scale_color_viridis_d() +
+  facet_grid(logger~filemo, scale = "free_x", space = "free_x")
+# save to qa figs
+ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/years_perlogger_alldates.pdf"),
+       width = 8, height = 6, units = "in")
+# for apr 2020 files, B2L2, B2L4, B3L4 need corrections from some point in middle all the way through download date
+# > B2L2 has two different years: 2000, 2001
+# > B2L4 has three different years: 2047, 2048, 2000 .. looks like L2 and L4 switch to final last year on same day?
+# > B3L4 has 1 different year: 2002
+
+# can compare vwc values to similar treatments to see if B2L2 and B3L4 stopped on date collected or earlier (i.e. is the data gap in the middle of the sequence or at the end?) 
+# go by logger?
+unique(soilmoisture_all$fulltrt[soilmoisture_all$logger %in% c("B2L2", "B2L4", "B3L3")])
+datecheck <- soilmoisture_all %>%
+  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours"),
+         filemo = substr(filename,6,12),
+         filemo = as.Date(filemo, format = "%d%b%y")) %>%
+  # crunch interval
+  group_by(logger, port, filename) %>%
+  mutate(timediff = date_time - lag(date_time,1),
+         trackseq = 1:length(date_time),
+         diffvwc = vwc - lag(vwc, 1)) %>%
+  ungroup() %>%
+  # add rowid
+  mutate(rowid = as.numeric(row.names(.)))
+
+# do all ports have same timestamp (time intervals?
+portcheck <- datecheck %>%
+  dplyr::select(logger, timediff, trackseq) %>%
+  distinct() %>%
+  group_by(logger) %>%
+  mutate(seqcheck = duplicated(trackseq)) %>%
+  ungroup()
+
+# visualize
+# remove last day for each because will have NA diffed time interval
+ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) +
+  geom_point(alpha = 0.3) +
+  geom_point(data = subset(portcheck, seqcheck), aes(trackseq, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
+  labs(y = "Deviation from expected 2-hr interval (in days)",
+       x = "Collection sequence",
+      title = "Soil moisture hourly interval collection, turquoise = +1 interval within logger per day",
+      subtitle = "Programmed for 2hrs, anything not 2 on y-axis deviates") +
+  facet_wrap(~logger)
+# save to qa figs
+ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/collectionintervals_perlogger_alldates.pdf"),
+       width = 8, height = 6, units = "in")
+# > just same three loggers that have weird time jumps
+# > all loggers have same two days where +1 port has a different timestamp, but that could be from data download/new recording?
+
+# compare total number of recordings by logger
+subset(datecheck, grepl("24Apr", filename)) %>%
+  group_by(logger, port) %>%
+  mutate(maxseq = max(trackseq)) %>%
+  ungroup() %>%
+  distinct(logger, port, maxseq) %>%
+  ggplot() +
+  geom_point(aes(as.factor(port), as.character(maxseq), col = as.factor(maxseq))) +
+  labs(title = "Total number data recordings for 24Apr20 files by logger, by port",
+       y = "Total data recordings",
+       x = "Logger port") +
+  scale_color_discrete(name = "Count") +
+  facet_wrap(~logger, scale = "free_y")
+# save to qa figs
+ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/nobs_perlogger-port_24Apr20download.pdf"),
+       width = 6, height = 6, units = "in")
+# > most loggers have same numer of collection points for 24apr20 file, but 4 loggers differ, and b2l2 differ from other loggers and also within by port (annoying..)
+# > non-problematic ports that have fewer points for 24apr20 file do start with next expected collection point in 11jun20 file
+
+
+# example.. annoying:
+View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373)) 
+# starts with port 1 having different time than other 4 (starts at trackseq = 2367), then slowly other ports have similar date, BUT they are all wrong timestamp regardless (time from yrs 2000, 2001 and not correct month..)
+
+# .. try to assign correct date based on soil moisture patterns in similar treatments?
+# > and verify with CIMIS ppt data
+
+# 2.a. Triage B2L2 24Apr20 -----
+b2l2trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L2"]))
+
+subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[1], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l2trt[1])
+
+subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
+  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[1], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l2trt[1])
+
+subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  geom_line(alpha = 0.4) +
+  ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[2], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l2trt[2])
+
+subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & trackseq > 2250
+  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  geom_line(alpha = 0.4) +
+  ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[2], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l2trt[2])
+
+# think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
+
+
+b2l2_fixdates <- distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, port, plot, fulltrt, comp_trt, date_time, date, time, timeinterval, timediff, trackseq, rowid)
+
+tempdat <- data.frame()
+test <- datecheck[(b2l2_fixdates$rowid[1]-20):(b2l2_fixdates$rowid[2]+20),]
+  
+  
+
+# 2.b. Triage B2L4 24Apr20 -----
+b2l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L4"]))
+
+subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
+  geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[1], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l4trt[1])
+  #facet_grid(.~filemo, scales = "free_x", space = "free_x")
+
+subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
+  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"))) +
+  geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[1], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l4trt[1])
+
+subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
+  geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[2], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l4trt[1])
+  #facet_grid(.~filemo, scales = "free_x", space = "free_x")
+
+subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
+  geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[2], "(dotted vert line = date break)")) +
+  facet_grid(logger~b2l4trt[1])
+
+# > slight data gap (spikes later in sequence should line up on same day [rain event])
+
+
+
+# 2.c. Triage B3L4 24Apr20 -----
+b3l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B3L4"]))
+
+
+subset(datecheck, grepl("FD", fulltrt)) %>% # trackseq > 2250
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  ggtitle("troubleshoot B3L4 date jump (dotted vert line = break)") +
+  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+# yikes... I guess B2L1 is most reliable for reference?
+
+subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
+  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  geom_line(alpha = 0.4) +
+  geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  facet_grid(.~filemo, scales = "free_x", space = "free_x")
+# > data gap after break, shift series so end lines up with end timestamp collected (and check spikes align with B2L1)
+
+subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"))) +
+  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = trackseq), lty = 2) +
+  geom_line(alpha = 0.4) +
+  #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  facet_grid(logger~filemo, scales = "free_x", space = "free_x")
+
+
+# rule 1: if time of day from end of bad file 2 hrs before time of day of following file, assign new times backwards end to last bad date break
+# rule 2: look for moisture spike alignment with comparison
+
+b3l4 <- subset(datecheck, grepl(b3l4trt[1], fulltrt) & grepl("20-", filename))
+good_b3l4 <- subset(b3l4, logger != "B3L4" & grepl("Apr", filename)) %>%
+  dplyr::select(logger, port, date_time, diffvwc) %>%
+  distinct() %>%
+  unite(id, logger, port) %>%
+  spread(id, diffvwc) %>%
+  subset(date_time > as.Date("2019-10-07"))
+good_b3l4$meandiff <- apply(good_b3l4[,2:5], 1, function(x) mean(x, na.rm = T))
+good_b3l4$tracker <- (nrow(good_b3l4)-1):0 
+
+b3l4_fix <- subset(b3l4, logger == "B3L4" & port == 1) %>%
+  filter(trackseq >= 1841) %>%
+  mutate(tracker = nrow(.):1)
+test <- left_join(good_b3l4, b3l4_fix[c("diffvwc", "tracker")])
+
+ggplot(test) +
+  geom_line(aes(date_time, B2L1_3), col = "green", alpha = 0.3) +
+  geom_line(aes(date_time, B2L1_4), col = "chocolate", alpha = 0.3) +
+  geom_line(aes(date_time, diffvwc), col = "purple", alpha = 0.3)
+b3l4$new_date <- NA
+b3l4$time[grepl("Apr", b3l4$filename) & b3l4$trackseq == max(b3l4$trackseq)]
+b3l4$time[grepl("Jun", b3l4$filename) & b3l4$trackseq == 1]
+
 
 
 # -- FINISHING -----
 write_csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
 
 # write out preliminary plots if desired
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bylogger.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/Compost_VWCraw_bylogger.pdf"),
        plot = logger_plot,
        width = 8, height = 8, units = "in")
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_VWCraw_bytreatment.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/Compost_VWCraw_bytreatment.pdf"),
        plot = trt_plot,
        width = 8, height = 8, unit = "in")
