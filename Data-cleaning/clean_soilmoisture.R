@@ -395,23 +395,27 @@ subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
 
 b3l4 <- subset(datecheck, grepl(b3l4trt[1], fulltrt) & grepl("20-", filename))
 good_b3l4 <- subset(b3l4, logger != "B3L4" & grepl("Apr", filename)) %>%
-  dplyr::select(logger, port, date_time, diffvwc) %>%
+  dplyr::select(logger, port, date_time, vwc) %>%
   distinct() %>%
   unite(id, logger, port) %>%
-  spread(id, diffvwc) %>%
+  spread(id, vwc) %>%
   subset(date_time > as.Date("2019-10-07"))
-good_b3l4$meandiff <- apply(good_b3l4[,2:5], 1, function(x) mean(x, na.rm = T))
+good_b3l4$meanvwc <- apply(good_b3l4[,2:5], 1, function(x) mean(x, na.rm = T))
 good_b3l4$tracker <- (nrow(good_b3l4)-1):0 
 
 b3l4_fix <- subset(b3l4, logger == "B3L4" & port == 1) %>%
   filter(trackseq >= 1841) %>%
-  mutate(tracker = nrow(.):1)
-test <- left_join(good_b3l4, b3l4_fix[c("diffvwc", "tracker")])
+  mutate(tracker = (nrow(.)-1):0)
+test <- left_join(good_b3l4, b3l4_fix[c("vwc", "tracker")])
+test$min <- apply(test[,2:5], 1, function(x) min(x, na.rm = T))
+test$max <- apply(test[,2:5], 1, function(x) max(x, na.rm = T))
+test$check <- test$vwc >= test$min & test$vwc <= test$max
 
 ggplot(test) +
-  geom_line(aes(date_time, B2L1_3), col = "green", alpha = 0.3) +
-  geom_line(aes(date_time, B2L1_4), col = "chocolate", alpha = 0.3) +
-  geom_line(aes(date_time, diffvwc), col = "purple", alpha = 0.3)
+  geom_line(aes(date_time, min), col = "grey30", alpha = 0.3) +
+  geom_line(aes(date_time, max), col = "grey60", alpha = 0.3) +
+  geom_line(aes(date_time, vwc), col = "black", alpha = 0.8) +
+  geom_point(aes(date_time, vwc, col = check), alpha = 0.3)
 b3l4$new_date <- NA
 b3l4$time[grepl("Apr", b3l4$filename) & b3l4$trackseq == max(b3l4$trackseq)]
 b3l4$time[grepl("Jun", b3l4$filename) & b3l4$trackseq == 1]
