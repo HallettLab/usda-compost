@@ -52,8 +52,14 @@ cimis <- read.csv(list.files(paste0(datpath, "CIMIS"), full.names = T), na.strin
 colnames(loggerkey) <- casefold(colnames(loggerkey))
 soilmoisture_all <- data.frame()
 
+# order datfiles chronologically and by logger
+datfiles_df <- data.frame(filename = datfiles,
+                             logger = str_extract(datfiles, "B[0-9]L[0-9]"),
+                          filedate = file.info(datfiles)$mtime) %>%
+  arrange(logger, filedate)
+
 # initiate data frame for compiling soil moisture data
-for(i in datfiles){
+for(i in datfiles_df$filename){
   print(paste("Compiling ", 
               gsub("-", "", regmatches(i, regexpr("B[0-9].*[0-9]-", i))),
               "soil moisture data!"))
@@ -106,79 +112,116 @@ for(i in datfiles){
     rename(comp_trt = trt) %>%
     # reorder cols, remove maxdoy column
     dplyr::select(logger, port, plot, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
+  
+  # compile with master soil moisture data frame
+  soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
+    distinct()
+  
+  if(i == datfiles_df$filename[nrow(datfiles_df)]){
+    #clean up
+    rm(tempdat, tempdat2)
+    print("All done! Here are 2 plots of the compiled data. Toggle back arrow to see both.")
+    logger_plot <- soilmoisture_all %>%
+      filter(!is.na(vwc)) %>%
+      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
+             source = paste(logger, port, sep = "_")) %>%
+      ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
+      geom_line(alpha = 0.5) +
+      ggtitle("QA check: soil moisture (VWC), by logger, colored by port") +
+      scale_color_discrete(name = "port") +
+      facet_grid(waterYear~logger)
     
-    # compile with master soil moisture data frame
-    soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
-      distinct()
+    trt_plot <- soilmoisture_all %>%
+      filter(!is.na(vwc)) %>%
+      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
+             source = paste(logger, port, sep = "_")) %>%
+      ggplot(aes(dowy, vwc, group = source, col = as.factor(block))) +
+      geom_line(alpha = 0.5) +
+      ggtitle("Treatment check: soil moisture (VWC), by nutrient x drought treatment, colored by block") +
+      scale_color_discrete(name = "block") +
+      facet_grid(full_trt~waterYear)
     
-    if(i == datfiles[length(datfiles)]){
-      #clean up
-      rm(tempdat, tempdat2)
-      print("All done! Here are 2 plots of the compiled data. Toggle back arrow to see both.")
-      logger_plot <- soilmoisture_all %>%
-        filter(!is.na(vwc)) %>%
-        mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
-               source = paste(logger, port, sep = "_")) %>%
-        ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
-        geom_line(alpha = 0.5) +
-        ggtitle("QA check: soil moisture (VWC), by logger, colored by port") +
-        scale_color_discrete(name = "port") +
-        facet_grid(waterYear~logger)
-      
-     trt_plot <- soilmoisture_all %>%
-        filter(!is.na(vwc)) %>%
-        mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
-               source = paste(logger, port, sep = "_")) %>%
-        ggplot(aes(dowy, vwc, group = source, col = as.factor(block))) +
-        geom_line(alpha = 0.5) +
-        ggtitle("Treatment check: soil moisture (VWC), by nutrient x drought treatment, colored by block") +
-        scale_color_discrete(name = "block") +
-        facet_grid(full_trt~waterYear)
-      
-      print(logger_plot)
-      print(trt_plot)
-      print("Review compiled dataset and if all looks good, write out to Compost Dropbox SoilMoisture_CleanedData folder.")
-    }
+    print(logger_plot)
+    print(trt_plot)
+    print("Review compiled dataset and if all looks good, write out to Compost Dropbox SoilMoisture_CleanedData folder.")
+  }
 }
+
+# order by logger, port, then rowid (chronologically -- even tho datetimes not all correct [yet])
+copy <- soilmoisture_all
+
+soilmoisture_all <- as.data.frame(soilmoisture_all) %>%
+  mutate(rowid = as.numeric(row.names(.))) %>%
+  # add sequence order
+  group_by(logger, port) %>%
+  mutate(datorder = 1:length(date_time)) %>%
+  ungroup()
+
+
+
 
 
 # -- DATA QA -----
+# do all loggers have the same #obs?
+#sapply(split(soilmoisture_all$datorder, paste(soilmoisture_all$logger, soilmoisture_all$port, sep = "_")), max)
+group_by(soilmoisture_all, logger, port) %>%
+  mutate(maxnobs = max(datorder)) %>%
+  ungroup() %>%
+  subset(datorder == maxnobs) %>%
+  ggplot(aes(as.factor(port), as.character(datorder))) +
+  geom_point() +
+  facet_wrap(~logger)
 # troubleshoot suspect data (e.g. dates, vwc) post-compilation
+
 
 # 1. Prep CIMIS data for comparison -----
 # prep cimis
-# create unique continuous field for doy.24hr time to plot both soil moisture and ppt on same hourly x axis
-cimis <- subset(cimis, !is.na(Stn.Id))
-cimis$timeid <- ifelse(nchar(cimis$Hour..PST.) == 3, paste0(cimis$Jul, ".0", cimis$Hour..PST.), paste0(cimis$Jul, ".", cimis$Hour..PST.))
-cimis$timeid <- as.numeric(cimis$timeid)
-cimis$Date <- as.Date(cimis$Date, format = "%m/%d/%Y")
-cimis$yr <- year(cimis$Date)
-test <- subset(datecheck, block == 2 & nut_trt == "N" & ppt_trt == "XC") %>%
-  mutate(timeid = as.numeric(paste(doy, substr(time, 1, 2), sep = ".")),
-         yr = year(date_time))
-ggplot(subset(cimis, !is.na(timeid)), aes(timeid, Precip..mm.)) +
-  geom_line(alpha = 0.4, col = "dodgerblue") +
-  geom_line(data = test, aes(timeid, vwc)) +
-  facet_grid(.~yr, scales = "free_x", space = "free_x")
+# remove row with all NAs
+cimis <- cimis[!apply(cimis,1,function(x) all(is.na(x))),] %>%
+  # clean up colnames
+  rename_all(function(x) gsub("[.]{2}", ".",x)) %>%
+  rename_all(function(x) gsub("[.]$", "", x)) %>%
+  # clean up cols to pair with soilmoisture dat
+  mutate(date = as.Date(Date, format = "%m/%d/%Y"),
+         # adjust 24:00 date to next day (to match SFREC format)
+         date = ifelse(Hour.PST == 2400, as.character(date +1), as.character(date)),
+         # adjust Julian day
+         doy = ifelse(Hour.PST == 2400 & grepl("^12/31", Date), 1, 
+                      ifelse(Hour.PST == 2400, Jul+1, Jul)),
+         time = ifelse(nchar(Hour.PST)==3, paste0(0, substr(Hour.PST,1,1), ":", substr(Hour.PST, 2,3), ":00"),
+                       paste(substr(Hour.PST,1,2), substr(Hour.PST, 3, 4), "00", sep =":")),
+         # change 24:00 to 00:00 to match SFRECdat
+         time = gsub("24", "00", time),
+         #date_time = as.POSIXct(paste(date, time), format = "%Y-%m-%d %H:%M:%S"),
+         # create unique continuous field for doy.24hr time to plot both soil moisture and ppt on same hourly x axis
+         timeid = as.numeric(paste0(doy, ".", substr(time, 1,2))))
 
-plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Air.Temp..C.)) +
-            geom_line(alpha = 0.4, col = "tomato") +
-            #geom_line(data = test, aes(timeid, vwc)) +
-            geom_smooth(col = "tomato", fill = "tomato") +
-            facet_grid(.~yr, scales = "free_x", space = "free_x"),
-          ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
-            geom_line(alpha = 0.4, col = "dodgerblue") +
-            #geom_line(data = test, aes(timeid, vwc)) +
-            facet_grid(.~yr, scales = "free_x", space = "free_x"),
-          ggplot(test, aes(timeid, vwc)) +
-            geom_line(alpha = 0.4) +
-            facet_grid(.~yr, scales = "free_x", space = "free_x"),
-          nrow = 3,
-          align = "v")
+# test <- subset(datecheck, block == 2 & nut_trt == "N" & ppt_trt == "XC") %>%
+#   mutate(timeid = as.numeric(paste(doy, substr(time, 1, 2), sep = ".")),
+#          yr = year(date_time))
+# ggplot(subset(cimis, !is.na(timeid)), aes(timeid, Precip..mm.)) +
+#   geom_line(alpha = 0.4, col = "dodgerblue") +
+#   geom_line(data = test, aes(timeid, vwc)) +
+#   facet_grid(.~yr, scales = "free_x", space = "free_x")
+# 
+# plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Air.Temp..C.)) +
+#             geom_line(alpha = 0.4, col = "tomato") +
+#             #geom_line(data = test, aes(timeid, vwc)) +
+#             geom_smooth(col = "tomato", fill = "tomato") +
+#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
+#           ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
+#             geom_line(alpha = 0.4, col = "dodgerblue") +
+#             #geom_line(data = test, aes(timeid, vwc)) +
+#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
+#           ggplot(test, aes(timeid, vwc)) +
+#             geom_line(alpha = 0.4) +
+#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
+#           nrow = 3,
+#           align = "v")
 
 # 2. Assess 2020 date breaks ----- 
 # check if date timestamp in expected year (1 = yes, 0 = no)
-logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename) %>%
+logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename, datorder, rowid) %>%
   distinct() %>%
   mutate(filemo = substr(filename,6,12),
          filemo = as.Date(filemo, format = "%d%b%y"),
@@ -212,14 +255,36 @@ datecheck <- soilmoisture_all %>%
          filemo = substr(filename,6,12),
          filemo = as.Date(filemo, format = "%d%b%y")) %>%
   # crunch interval
-  group_by(logger, port, filename) %>%
-  mutate(timediff = date_time - lag(date_time,1),
-         trackseq = 1:length(date_time),
+  group_by(logger, port) %>%
+  mutate(timediff = as.numeric(date_time - lag(date_time,1)),
+         timediff = ifelse(is.na(timediff) & datorder == 1, 2, timediff),
          diffvwc = vwc - lag(vwc, 1)) %>%
   ungroup() %>%
-  # add rowid
-  mutate(rowid = as.numeric(row.names(.)))
+  # create timeid to plot with ppt
+  mutate(timeid = as.numeric(paste(doy, substr(time,1,2), sep = ".")),
+         # create logger-port id
+         portid = paste(logger, port, sep = "_"))
+# crunch runlength
+runs <- sapply(split(datecheck$timediff, datecheck$portid), function(x) rle(x)$lengths) %>%
+  unlist() %>%
+  data.frame() %>%
+  rownames_to_column("portid") %>%
+  rename(runlength = names(.)[2]) %>%
+  mutate(portid = str_extract(portid, "^B.*_[0-9]")) %>%
+  group_by(portid) %>%
+  mutate(event = 1:length(portid)) %>%
+  ungroup() %>%
+  data.frame()
+# add interval event col
+rundf <- select(datecheck, portid, date_time, datorder, timediff) %>%
+  arrange(portid, datorder) %>%
+  mutate(intervalevent = NA)
 
+for(i in 1:nrow(runs)){
+  pos <- min(which(is.na(rundf$intervalevent)))
+  rundf$intervalevent[pos:((pos+runs$runlength[i])-1)] <- runs$event[i]
+}
+min(which(is.na(rundf$intervalevent)))
 # do all ports have same timestamp (time intervals?
 portcheck <- datecheck %>%
   dplyr::select(logger, timediff, trackseq) %>%
@@ -235,8 +300,8 @@ ggplot(subset(portcheck, !is.na(timediff)), aes(trackseq, as.factor(timediff))) 
   geom_point(data = subset(portcheck, seqcheck), aes(trackseq, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
   labs(y = "Deviation from expected 2-hr interval (in days)",
        x = "Collection sequence",
-      title = "Soil moisture hourly interval collection, turquoise = +1 interval within logger per day",
-      subtitle = "Programmed for 2hrs, anything not 2 on y-axis deviates") +
+       title = "Soil moisture hourly interval collection, turquoise = +1 interval within logger per day",
+       subtitle = "Programmed for 2hrs, anything not 2 on y-axis deviates") +
   facet_wrap(~logger)
 # save to qa figs
 ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/collectionintervals_perlogger_alldates.pdf"),
@@ -262,6 +327,34 @@ ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/nobs_
        width = 6, height = 6, units = "in")
 # > most loggers have same numer of collection points for 24apr20 file, but 4 loggers differ, and b2l2 differ from other loggers and also within by port (annoying..)
 # > non-problematic ports that have fewer points for 24apr20 file do start with next expected collection point in 11jun20 file
+
+# check total recordings in june (do total point since last download in 2018 match?)
+subset(datecheck, grepl("Jun20", filename)) %>%
+  group_by(logger, port) %>%
+  mutate(maxseq = max(trackseq)) %>%
+  ungroup() %>%
+  distinct(logger, port, maxseq) %>%
+  ggplot() +
+  geom_point(aes(as.factor(port), as.character(maxseq), col = as.factor(maxseq))) +
+  labs(title = "Total number data recordings for 11Jun20 files by logger, by port",
+       y = "Total data recordings",
+       x = "Logger port") +
+  scale_color_discrete(name = "Count") +
+  facet_wrap(~logger, scale = "free_y")
+
+# check total recordings in june (do total point since last download in 2018 match?)
+subset(datecheck, grepl("20-", filename)) %>%
+  group_by(logger, port) %>%
+  summarise(nobs = length(date_time)) %>%
+  ungroup() %>%
+  distinct(logger, port, nobs) %>%
+  ggplot() +
+  geom_point(aes(as.factor(port), as.character(nobs), col = as.factor(nobs))) +
+  labs(title = "Total number data recordings for 2020 files by logger, by port",
+       y = "Total data recordings",
+       x = "Logger port") +
+  scale_color_discrete(name = "Count") +
+  facet_wrap(~logger, scale = "free_y")
 
 
 # example.. annoying:
@@ -304,17 +397,33 @@ subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&
   #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
   geom_line(alpha = 0.4) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[2], "(dotted vert line = date break)")) +
+  scale_x_continuous(breaks = seq(0,4250, 250)) +
   facet_grid(logger~b2l2trt[2])
 
-# think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
+# > think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
+
+# first assess relationship of soil moisture loggers to ppt during a reliable period (e.g. first 100 days?)
+b2l2refdat <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt) & grepl("Apr20", filename)) %>%
+  filter(trackseq < 250)
+  # bring in ppt (this may not matter if spikes are due to irrigation)
+b2l2refdat <- full_join(b2l2refdat, subset(cimis, date %in% unique(b2l2refdat$date)))
+
+plot_grid(ggplot(b2l2refdat, aes(timeid, Precip.mm)) +
+            geom_point()+
+            facet_grid("CIMIS"~.),
+          ggplot(b2l2refdat, aes(timeid, vwc, group = paste(logger, port, sep = "_"))) +
+            geom_line() +
+            facet_grid(logger~.),
+          nrow = 2)
+# > they are all pretty responsive to rainfall, even being irrigated plots
 
 
 b2l2_fixdates <- distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, port, plot, fulltrt, comp_trt, date_time, date, time, timeinterval, timediff, trackseq, rowid)
 
 tempdat <- data.frame()
 test <- datecheck[(b2l2_fixdates$rowid[1]-20):(b2l2_fixdates$rowid[2]+20),]
-  
-  
+
+
 
 # 2.b. Triage B2L4 24Apr20 -----
 b2l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L4"]))
@@ -327,7 +436,7 @@ subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # &
   geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[1], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l4trt[1])
-  #facet_grid(.~filemo, scales = "free_x", space = "free_x")
+#facet_grid(.~filemo, scales = "free_x", space = "free_x")
 
 subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
   ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"))) +
@@ -346,7 +455,7 @@ subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  
   geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[2], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l4trt[1])
-  #facet_grid(.~filemo, scales = "free_x", space = "free_x")
+#facet_grid(.~filemo, scales = "free_x", space = "free_x")
 
 subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  & grepl("Apr20", filename)
   ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
@@ -389,6 +498,13 @@ subset(datecheck, grepl("FXC", fulltrt)) %>% #  & grepl("Apr20", filename)
   #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   facet_grid(logger~filemo, scales = "free_x", space = "free_x")
 
+
+# how many data points should there be after the date jumped to start of next valid time stamp (in jun 11 file?)
+max2019 <- max(datecheck$date_time[year(datecheck$date_time) == 2019 & datecheck$logger == "B3L4"])
+starttime <- datecheck$date_time[datecheck$logger == "B3L4" & grepl("Jun20", datecheck$filename)][1]
+timeseries <- seq.POSIXt(max2019, starttime, "2 hours")
+infill_df <- data.frame(date_time = timeseries[2:(length(timeseries)-1)])  %>%
+  mutate(tracker = 1:nrow(.))
 
 # rule 1: if time of day from end of bad file 2 hrs before time of day of following file, assign new times backwards end to last bad date break
 # rule 2: look for moisture spike alignment with comparison
