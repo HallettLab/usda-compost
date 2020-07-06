@@ -54,7 +54,7 @@ soilmoisture_all <- data.frame()
 
 # order datfiles chronologically and by logger
 datfiles_df <- data.frame(filename = datfiles,
-                             logger = str_extract(datfiles, "B[0-9]L[0-9]"),
+                          logger = str_extract(datfiles, "B[0-9]L[0-9]"),
                           filedate = file.info(datfiles)$mtime) %>%
   arrange(logger, filedate)
 
@@ -253,17 +253,22 @@ unique(soilmoisture_all$fulltrt[soilmoisture_all$logger %in% c("B2L2", "B2L4", "
 datecheck <- soilmoisture_all %>%
   mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours"),
          filemo = substr(filename,6,12),
-         filemo = as.Date(filemo, format = "%d%b%y")) %>%
+         filemo = as.Date(filemo, format = "%d%b%y"),
+         # create timeid to plot with ppt
+         timeid = as.numeric(paste(doy, substr(time,1,2), sep = ".")),
+         # create logger-port id
+         portid = paste(logger, port, sep = "_")) %>%
   # crunch interval
-  group_by(logger, port) %>%
+  arrange(logger, portid, datorder) %>%
+  group_by(portid) %>%
   mutate(timediff = as.numeric(date_time - lag(date_time,1)),
          timediff = ifelse(is.na(timediff) & datorder == 1, 2, timediff),
-         diffvwc = vwc - lag(vwc, 1)) %>%
-  ungroup() %>%
-  # create timeid to plot with ppt
-  mutate(timeid = as.numeric(paste(doy, substr(time,1,2), sep = ".")),
-         # create logger-port id
-         portid = paste(logger, port, sep = "_"))
+         diffvwc = round(vwc - lag(vwc, 1),2),
+         wetup = ifelse(diffvwc > 0.1, 1, 0),
+         increase = ifelse(diffvwc > lag(diffvwc), 1, 0)) %>%
+  # check for wetup events) %>%
+  ungroup()
+
 
 # add interval event cols
 rundf <- select(datecheck, portid, date_time, datorder, timediff) %>%
@@ -282,7 +287,7 @@ for(i in unique(rundf$portid)){
     tempbreaks <- which(rundf$portid ==i & rundf$timediff != 2)
     for(t in tempbreaks){
       if(t == tempbreaks[length(tempbreaks)]){
-      rundf$intevent[tempstart:tempend] <- event
+        rundf$intevent[tempstart:tempend] <- event
       }
       rundf$intevent[tempstart:(t-1)] <- event
       # add qa note
@@ -419,8 +424,10 @@ b3l4dates <- subset(datecheck, grepl("B3L4", portid)) %>%
          port = as.numeric(substr(portid, 6,7)),
          timeinterval = as.numeric(timeinterval),
          hrdiff = ifelse(timeinterval==0, 24-lag(timeinterval), 
-                          ifelse(lag(timeinterval) > timeinterval, 24+ (timeinterval  - lag(timeinterval)), timeinterval- lag(timeinterval))),
-         hrdiff = ifelse(is.na(qa_note), NA, hrdiff))
+                         ifelse(lag(timeinterval) > timeinterval, 24+ (timeinterval  - lag(timeinterval)), timeinterval- lag(timeinterval))),
+         hrdiff = ifelse(is.na(qa_note), NA, hrdiff)) %>%
+  dplyr::select(logger, date_time, filename, datorder, intevent, qa_note, hrdiff) %>%
+  distinct()
 
 # all ports have some time breaks
 # > 1 is NA to infill for missing timestep
@@ -433,30 +440,54 @@ good_b3l4 <- subset(datecheck, grepl(b3l4trt[1], fulltrt)) %>%
   spread(portid, vwc) %>%
   gather(badport, vwc, B3L4_1,B3L4_2) %>%
   gather(goodport, goodvwc, B1L3_4:B2L1_5) %>%
-  mutate(diffvwc = vwc - goodvwc)
+  group_by(goodport, badport) %>%
+  mutate(vwcrun = cumsum(vwc),
+         goodrun = cumsum(goodvwc)) %>%
+  ungroup() %>%
+  mutate(diffvwc = vwc - goodvwc,
+         diffrun = vwcrun - goodrun)
 
 ggplot(subset(good_b3l4, goodport != "B2L1_5"), aes(date_time, diffvwc, col = goodport)) +
   geom_line() +
   facet_wrap(~badport)
-  
-good_b3l4_trend <- group_by(good_b3l4,)
 
-b3l4_fix <- subset(b3l4, logger == "B3L4" & port == 1) %>%
-  filter(trackseq >= 1841) %>%
-  mutate(tracker = (nrow(.)-1):0)
-test <- left_join(good_b3l4, b3l4_fix[c("vwc", "tracker")])
-test$min <- apply(test[,2:5], 1, function(x) min(x, na.rm = T))
-test$max <- apply(test[,2:5], 1, function(x) max(x, na.rm = T))
-test$check <- test$vwc >= test$min & test$vwc <= test$max
+ggplot(subset(good_b3l4, goodport != "B2L1_5"), aes(date_time, diffrun, col = goodport)) +
+  geom_line() +
+  facet_wrap(~badport)
 
-ggplot(test) +
-  geom_line(aes(date_time, min), col = "grey30", alpha = 0.3) +
-  geom_line(aes(date_time, max), col = "grey60", alpha = 0.3) +
-  geom_line(aes(date_time, vwc), col = "black", alpha = 0.8) +
-  geom_point(aes(date_time, vwc, col = check), alpha = 0.3)
-b3l4$new_date <- NA
-b3l4$time[grepl("Apr", b3l4$filename) & b3l4$trackseq == max(b3l4$trackseq)]
-b3l4$time[grepl("Jun", b3l4$filename) & b3l4$trackseq == 1]
+good_b3l4_trend <- group_by(good_b3l4, goodport, badport) %>%
+  summarise(mean_dailydiff = mean(diffvwc)) %>%
+  ungroup()
+
+searchdata <- subset(datecheck, logger == "B3L4" & datorder >= 3863 & grepl("Apr20", filename)) %>%
+  #subset(wetup == 1) %>%
+  group_by(datorder) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(datorder >= (min(datorder[wetup == 1 & nobs > 2], na.rm = T)-20) & datorder <= (min(datorder[wetup == 1 & nobs > 2], na.rm = T)+80))
+
+refdata <- subset(datecheck, grepl(str_flatten(b3l4trt, collapse = "|"), fulltrt)  & logger != "B3L4" & datorder >= 3863 & grepl("Apr20", filename)) %>%
+  group_by(date_time) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
+unique(refdata$timeid)
+unique(searchdata$timeid)
+searchdata$timeid2 <- searchdata$timeid+259
+plot_grid(ggplot(refdata, aes(timeid, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          ggplot(searchdata, aes(timeid2, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          nrow = 2)
+
+ggplot(refdata, aes(timeid, vwc, col = portid)) +
+  geom_line(data = searchdata, aes(timeid2, vwc, group = portid), col = "grey50", lwd = 1.5, alpha = 0.6) +
+  geom_line() +
+  facet_grid(~gsub("[0-9]+", "", fulltrt))
+
+
 
 
 # 2.b. Triage B2L4 24Apr20 -----
@@ -547,7 +578,7 @@ subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&
 # first assess relationship of soil moisture loggers to ppt during a reliable period (e.g. first 100 days?)
 b2l2refdat <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt) & grepl("Apr20", filename)) %>%
   filter(trackseq < 250)
-  # bring in ppt (this may not matter if spikes are due to irrigation)
+# bring in ppt (this may not matter if spikes are due to irrigation)
 b2l2refdat <- full_join(b2l2refdat, subset(cimis, date %in% unique(b2l2refdat$date)))
 
 plot_grid(ggplot(b2l2refdat, aes(timeid, Precip.mm)) +
