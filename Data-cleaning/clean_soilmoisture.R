@@ -194,28 +194,7 @@ cimis <- cimis[!apply(cimis,1,function(x) all(is.na(x))),] %>%
          # create unique continuous field for doy.24hr time to plot both soil moisture and ppt on same hourly x axis
          timeid = as.numeric(paste0(doy, ".", substr(time, 1,2))))
 
-# test <- subset(datecheck, block == 2 & nut_trt == "N" & ppt_trt == "XC") %>%
-#   mutate(timeid = as.numeric(paste(doy, substr(time, 1, 2), sep = ".")),
-#          yr = year(date_time))
-# ggplot(subset(cimis, !is.na(timeid)), aes(timeid, Precip..mm.)) +
-#   geom_line(alpha = 0.4, col = "dodgerblue") +
-#   geom_line(data = test, aes(timeid, vwc)) +
-#   facet_grid(.~yr, scales = "free_x", space = "free_x")
-# 
-# plot_grid(ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Air.Temp..C.)) +
-#             geom_line(alpha = 0.4, col = "tomato") +
-#             #geom_line(data = test, aes(timeid, vwc)) +
-#             geom_smooth(col = "tomato", fill = "tomato") +
-#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
-#           ggplot(subset(cimis, Date >= min(test$date_time) & Date <= max(test$date_time)), aes(timeid, Precip..mm.)) +
-#             geom_line(alpha = 0.4, col = "dodgerblue") +
-#             #geom_line(data = test, aes(timeid, vwc)) +
-#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
-#           ggplot(test, aes(timeid, vwc)) +
-#             geom_line(alpha = 0.4) +
-#             facet_grid(.~yr, scales = "free_x", space = "free_x"),
-#           nrow = 3,
-#           align = "v")
+
 
 
 
@@ -271,7 +250,7 @@ datecheck <- soilmoisture_all %>%
 
 
 # add interval event cols
-rundf <- select(datecheck, portid, date_time, datorder, timediff) %>%
+rundf <- select(datecheck, logger, portid, date_time, datorder, timediff) %>%
   arrange(portid, datorder) %>%
   mutate(intevent = NA,
          qa_note = NA)
@@ -367,7 +346,7 @@ View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373))
 # > start with B3L4 logger because that is the simplest correction, then B2L4, then B2L2
 
 # pull dates that need an adjustment
-adjustdates <- subset(rundf, !is.na(qa_note))
+adjustdates <- subset(rundf, !is.na(qa_note)) 
 
 # clean up environment
 rm(portcheck, logcheck, event, i, t, tempbreaks, tempdat_names, tempend, tempnote, tempstart, rundf)
@@ -380,15 +359,14 @@ b3l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B3L4"
 subset(datecheck, grepl(b3l4trt[1], fulltrt)) %>% # trackseq > 2250
   ggplot(aes(datorder, vwc, col = portid)) +
   geom_line(alpha = 0.4) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = datorder), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B3L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   ggtitle(paste("troubleshoot B3L4", b3l4trt[1], "date jump (dotted vert line = break)")) +
   geom_smooth(aes(fill = portid)) +
   facet_grid(logger~.)
-# yikes... I guess B2L1 is most reliable for reference?
 
 subset(datecheck, grepl(b3l4trt[1], fulltrt)) %>% #  & grepl("Apr20", filename)
   ggplot(aes(datorder, diffvwc, col = portid)) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = datorder), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B3L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   geom_line(alpha = 0.4) +
   ggtitle(paste("troubleshoot B3L4", b3l4trt[1], "date jump (dotted vert line = break)")) +
   #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
@@ -397,7 +375,7 @@ subset(datecheck, grepl(b3l4trt[1], fulltrt)) %>% #  & grepl("Apr20", filename)
 
 subset(datecheck, grepl(b3l4trt[2], fulltrt)) %>% #  & grepl("Apr20", filename)
   ggplot(aes(datorder, vwc, col = portid)) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = datorder), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B3L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   geom_line(alpha = 0.4) +
   geom_smooth(aes(fill = portid)) +
   ggtitle(paste("troubleshoot B3L4", b3l4trt[2], "date jump (dotted vert line = break)")) +
@@ -406,7 +384,7 @@ subset(datecheck, grepl(b3l4trt[2], fulltrt)) %>% #  & grepl("Apr20", filename)
 
 subset(datecheck, grepl(b3l4trt[2], fulltrt)) %>% #  & grepl("Apr20", filename)
   ggplot(aes(datorder, diffvwc, col = portid)) +
-  geom_vline(data = subset(datecheck, logger == "B3L4" & timediff != 2), aes(xintercept = datorder), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B3L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   geom_line(alpha = 0.4) +
   ggtitle(paste("troubleshoot B3L4", b3l4trt[2], "date jump (dotted vert line = break)")) +
   #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
@@ -420,14 +398,12 @@ subset(datecheck, grepl(b3l4trt[2], fulltrt)) %>% #  & grepl("Apr20", filename)
 b3l4dates <- subset(datecheck, grepl("B3L4", portid)) %>%
   subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1))) %>%
   arrange(portid, datorder) %>%
-  mutate(logger = substr(portid, 1,4),
-         port = as.numeric(substr(portid, 6,7)),
+  mutate(port = as.numeric(substr(portid, 6,7)),
          timeinterval = as.numeric(timeinterval),
          hrdiff = ifelse(timeinterval==0, 24-lag(timeinterval), 
                          ifelse(lag(timeinterval) > timeinterval, 24+ (timeinterval  - lag(timeinterval)), timeinterval- lag(timeinterval))),
          hrdiff = ifelse(is.na(qa_note), NA, hrdiff)) %>%
-  dplyr::select(logger, date_time, filename, datorder, intevent, qa_note, hrdiff) %>%
-  distinct()
+  distinct(logger, date_time, filename, datorder, intevent, qa_note, hrdiff)
 
 # all ports have some time breaks
 # > 1 is NA to infill for missing timestep
@@ -494,86 +470,201 @@ ggplot(refdata, aes(timeid, vwc, col = portid)) +
 b2l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L4"]))
 
 subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"))) +
+  ggplot(aes(datorder, vwc, col = paste(logger, port, sep = "_"))) +
   geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
   geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[1], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l4trt[1])
 #facet_grid(.~filemo, scales = "free_x", space = "free_x")
 
-subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
-  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"))) +
+subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & datorder > 2000 datorder > 2250
+  ggplot(aes(datorder, diffvwc, col = paste(logger, port, sep = "_"))) +
   geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[1], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l4trt[1])
 
 subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  & grepl("Apr20", filename)
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
+  ggplot(aes(datorder, vwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
   geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[2], "(dotted vert line = date break)")) +
-  facet_grid(logger~b2l4trt[1])
+  facet_grid(logger~b2l4trt[2])
 #facet_grid(.~filemo, scales = "free_x", space = "free_x")
 
 subset(datecheck, grepl(b2l4trt[2], fulltrt) & grepl("Apr20", filename)) %>% #  & grepl("Apr20", filename)
-  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
+  ggplot(aes(datorder, diffvwc, col = paste(logger, port, sep = "_"), group = paste(logger, port, sep = "_"))) +
   geom_line(aes(group = paste(logger, port, sep = "_")), alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l4trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(data = subset(datecheck, logger == "B2L4" & timediff != 2 & trackseq > 2000), aes(xintercept = trackseq), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L4", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
   ggtitle(paste("troubleshoot B2L4 date jump", b2l4trt[2], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l4trt[1])
 
 # > slight data gap (spikes later in sequence should line up on same day [rain event])
+b2l4dates <- subset(datecheck, grepl("B2L4", portid)) %>%
+  subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1))) %>%
+  arrange(portid, datorder) %>%
+  mutate(port = as.numeric(substr(portid, 6,7)),
+         timeinterval = as.numeric(timeinterval),
+         hrdiff = ifelse(timeinterval==0, 24-lag(timeinterval), 
+                         ifelse(lag(timeinterval) > timeinterval, 24+ (timeinterval  - lag(timeinterval)), timeinterval- lag(timeinterval))),
+         hrdiff = ifelse(is.na(qa_note), NA, hrdiff)) %>%
+  distinct(logger, date_time, filename, datorder, intevent, qa_note, hrdiff)
+
+searchdata_b2l4 <- subset(datecheck, logger == "B2L4" & datorder >= 4106 & grepl("Apr20", filename)) %>%
+  #subset(wetup == 1) %>%
+  group_by(datorder) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(datorder >= (min(datorder[wetup == 1 & nobs >= 2], na.rm = T)-20) & datorder <= (min(datorder[wetup == 1 & nobs >= 2], na.rm = T)+80))
+
+refdata_b2l4 <- subset(datecheck, grepl(str_flatten(b2l4trt, collapse = "|"), fulltrt)  & logger != "B2L4" & datorder >= 4106 & grepl("Apr20", filename)) %>%
+  group_by(date_time) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
+unique(refdata_b2l4$timeid)
+unique(searchdata_b2l4$timeid)
+searchdata_b2l4$datorder2 <- searchdata_b2l4$datorder+16
+plot_grid(ggplot(refdata_b2l4, aes(datorder, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          ggplot(searchdata_b2l4, aes(datorder2, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          nrow = 2)
+
+ggplot(refdata_b2l4, aes(datorder, vwc, col = portid)) +
+  geom_line(data = searchdata_b2l4, aes(datorder2, vwc, group = portid), col = "grey50", lwd = 1, alpha = 0.6) +
+  geom_line() +
+  facet_grid(~gsub("[0-9]+", "", fulltrt))
+
+max(datecheck$datorder[datecheck$logger == "B2L4" & grepl("Apr20", datecheck$filename)])
+max(datecheck$datorder[datecheck$logger == "B1L1" & grepl("Apr20", datecheck$filename)]) # if add 16 to B2L2 logger, get max points in download period
+
+# pull first period that needs timestamp adjustment and doesn't have any spikes to crosscheck -- would +16 datorder match there too?
+searchdata_b2l4_p1 <-  subset(datecheck, logger == "B2L4" & datorder %in% c(4100:4384) & grepl("Apr20", filename)) %>%
+  mutate(datorder2 = ifelse(datorder < 4107, datorder, datorder + 12))
+refdata_b2l4_p1 <- subset(datecheck, grepl(str_flatten(b2l4trt,collapse = "|"), fulltrt) & logger != "B2L4" & grepl("Apr20", filename)) %>% # #block == 2 & nut_trt == "C" &
+  subset(datorder %in% c(4100:4396))
+#subset(date_time > b2l2dates$date_time[1] & date_time < (b2l2dates$date_time[1] + as.difftime(2*350, units = "hours")))
+
+plot_grid(ggplot(refdata_b2l4_p1, aes(datorder, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          ggplot(searchdata_b2l4_p1, aes(datorder2, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          nrow = 2)
+
+ggplot(refdata_b2l4_p1, aes(datorder, vwc, col = portid)) +
+  geom_line(data = subset(searchdata_b2l4_p1, portid != "B2L4_3"), aes(datorder2, vwc, group = portid), col = "grey50", alpha = 0.6) +
+  geom_line() +
+  geom_vline(aes(xintercept = 4107)) +
+  facet_grid(~gsub("[0-9]+", "", fulltrt))
 
 
+# pull first period that needs timestamp adjustment and doesn't have any spikes to crosscheck -- would +16 datorder match there too?
+searchdata_b2l4_p2 <-  subset(datecheck, logger == "B2L4" & datorder %in% c(4130:4600) & grepl("Apr20", filename)) %>%
+  mutate(datorder2 = ifelse(datorder < 4385, datorder+12, datorder + 16)) #14
+refdata_b2l4_p2 <- datecheck %>%
+  #subset(grepl(str_flatten(b2l4trt,collapse = "|"), fulltrt) & logger != "B2L4" & grepl("Apr20", filename)) %>% 
+  subset(block == 2 & nut_trt == "C" & logger != "B2L4" & grepl("Apr20", filename)) %>% # #block == 2 & nut_trt == "C" &
+  subset(datorder %in% c(4142:4616))
+
+ggplot(refdata_b2l4_p2, aes(datorder, vwc, col = portid)) +
+  geom_line(data = subset(searchdata_b2l4_p2, portid != "B2L4_3"), aes(datorder2, vwc, group = portid), col = "grey50", alpha = 0.6) +
+  geom_line() +
+  geom_vline(aes(xintercept = 4358))
+  facet_grid(~gsub("[0-9]+", "", fulltrt))
 
 
 
 # 2.c. Triage B2L2 24Apr20 -----
 b2l2trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L2"]))
 
-subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = port)) +
+subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # datorder > 2250
+  ggplot(aes(datorder, vwc, col = paste(logger, port, sep = "_"), group = port)) +
   geom_line(alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L2", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[1], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l2trt[1])
 
-subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # trackseq > 2250
-  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
+subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # datorder > 2250
+  ggplot(aes(datorder, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
   geom_line(alpha = 0.4) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[1], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L2", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[1], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l2trt[1])
 
-subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & trackseq > 2250
-  ggplot(aes(trackseq, vwc, col = paste(logger, port, sep = "_"), group = port)) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & datorder > 2250
+  ggplot(aes(datorder, vwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, plot, timediff, datorder), aes(xintercept = datorder), lty = 2) +
+  #geom_vline(aes(xintercept = max(unique(with(datecheck, datorder[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
   geom_line(alpha = 0.4) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[2], "(dotted vert line = date break)")) +
   facet_grid(logger~b2l2trt[2])
 
-subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & trackseq > 2250
-  ggplot(aes(trackseq, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
-  geom_vline(data = distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, plot, timediff, trackseq), aes(xintercept = trackseq), lty = 2) +
-  #geom_vline(aes(xintercept = max(unique(with(datecheck, trackseq[logger == "B2L2" & as.numeric(timediff) != 2])), na.rm = T)), lty = 2) +
+subset(datecheck, grepl(b2l2trt[2], fulltrt) & grepl("Apr20", filename)) %>%  #&  & datorder > 2250
+  ggplot(aes(datorder, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
+  geom_vline(data = mutate(subset(adjustdates, grepl("B2L2", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
   geom_line(alpha = 0.4) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[2], "(dotted vert line = date break)")) +
-  scale_x_continuous(breaks = seq(0,4250, 250)) +
   facet_grid(logger~b2l2trt[2])
 
 # > think gap happened after break, and end of series for B2L2 should align with end date -- can gauge by spike in soil moisture in mid-3000s
+b2l2dates <- subset(datecheck, grepl("B2L2", portid)) %>%
+  subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1))) %>%
+  arrange(portid, datorder) %>%
+  mutate(port = as.numeric(substr(portid, 6,7)),
+         timeinterval = as.numeric(timeinterval),
+         hrdiff = ifelse(timeinterval==0, 24-lag(timeinterval), 
+                         ifelse(lag(timeinterval) > timeinterval, 24+ (timeinterval  - lag(timeinterval)), timeinterval- lag(timeinterval))),
+         hrdiff = ifelse(is.na(qa_note), NA, hrdiff)) %>%
+  distinct(logger, portid, date_time, filename, datorder, intevent, qa_note, hrdiff) %>%
+  # note # of loggers date_time - datorder combo is applicable to for subsetting
+  group_by(date_time, datorder) %>%
+  mutate(nports = length(portid)) %>%
+  ungroup()
+
+b2l2dates_same <- subset(b2l2dates, nports == 5) %>%
+  distinct(logger, date_time, datorder, intevent, hrdiff, qa_note, filename)
+b2l2dates_different <- subset(b2l2dates, nports != 5) %>%
+  group_by(portid) %>%
+  mutate(n = length(unique(intevent))) %>%
+  ungroup()
+
+searchdata_b2l2 <- subset(datecheck, logger == "B2L2" & datorder >= 4108 & grepl("Apr20", filename)) %>%
+  group_by(datorder) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(datorder >= (min(datorder[wetup == 1 & nobs > 1], na.rm = T)-20) & datorder <= (min(datorder[wetup == 1 & nobs > 1], na.rm = T)+80))
+
+refdata_b2l2 <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt)  & logger != "B2L2" & datorder >= 4108 & grepl("Apr20", filename)) %>%
+  group_by(date_time) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup() %>%
+  subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
+unique(refdata_b2l2$timeid)
+unique(searchdata_b2l2$timeid)
+#searchdata_b2l2$timeid2 <- searchdata_b2l2$timeid+259
+plot_grid(ggplot(refdata_b2l2, aes(datorder, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          ggplot(searchdata_b2l2, aes(datorder, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          nrow = 2)
+
+ggplot(refdata, aes(timeid, vwc, col = portid)) +
+  geom_line(data = searchdata, aes(timeid2, vwc, group = portid), col = "grey50", lwd = 1.5, alpha = 0.6) +
+  geom_line() +
+  facet_grid(~gsub("[0-9]+", "", fulltrt))
+
 
 # first assess relationship of soil moisture loggers to ppt during a reliable period (e.g. first 100 days?)
 b2l2refdat <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt) & grepl("Apr20", filename)) %>%
@@ -591,10 +682,9 @@ plot_grid(ggplot(b2l2refdat, aes(timeid, Precip.mm)) +
 # > they are all pretty responsive to rainfall, even being irrigated plots
 
 
-b2l2_fixdates <- distinct(subset(datecheck, timediff != 2 & grepl(b2l2trt[2], fulltrt)), logger, port, plot, fulltrt, comp_trt, date_time, date, time, timeinterval, timediff, trackseq, rowid)
 
-tempdat <- data.frame()
-test <- datecheck[(b2l2_fixdates$rowid[1]-20):(b2l2_fixdates$rowid[2]+20),]
+
+
 
 # 2.d. Infill missing intervals with NA ----
 
