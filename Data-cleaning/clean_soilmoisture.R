@@ -666,6 +666,42 @@ ggplot(refdata, aes(timeid, vwc, col = portid)) +
   facet_grid(~gsub("[0-9]+", "", fulltrt))
 
 
+
+# look at last period for matching since middle period doesn't overlap with any spikes
+searchdata_b2l2_end <- subset(datecheck, portid == "B2L2_4" & date_time >= unique(with(b2l2dates_different, date_time[intevent == 5 & grepl("time", qa_note)])) & datorder > 4392 & grepl("Apr20", filename)) %>%
+  group_by(datorder) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup()
+  subset(datorder >= (min(datorder[wetup == 1 & nobs > 1], na.rm = T)-20) & datorder <=  (min(datorder[wetup == 1 & nobs > 1], na.rm = T)+80))
+
+nrows <- max(searchdata_b2l2_end$datorder) - min(searchdata_b2l2_end$datorder)
+tempend <- max(datecheck$datorder[grepl("Apr20", datecheck$filename)])
+refdata_b2l2_end <- #subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt)  & logger != "B2L2" & datorder >= (tempend-nrows) & grepl("Apr20", filename)) %>%
+  subset(datecheck, grepl("NW", fulltrt)  & logger != "B2L2" & datorder >= (tempend-nrows) & grepl("Apr20", filename)) %>%
+  group_by(date_time) %>%
+  mutate(nobs = sum(wetup, na.rm = T)) %>%
+  ungroup()
+  subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
+unique(refdata_b2l2$timeid)
+unique(searchdata_b2l2$timeid)
+searchdata_b2l2_end$datorder2 <- searchdata_b2l2_end$datorder + 396
+plot_grid(ggplot(refdata_b2l2_end, aes(datorder, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          ggplot(searchdata_b2l2_end, aes(datorder2, vwc, col = portid)) +
+            geom_line() +
+            facet_grid(~gsub("[0-9]+", "", fulltrt)),
+          nrow = 2)
+
+ggplot(subset(refdata_b2l2_end, portid == "B1L2_3"), aes(datorder, vwc, col = portid), alph = 0.6) +
+  geom_line(data = searchdata_b2l2_end, aes(datorder2, vwc, group = portid), col = "grey50", alpha = 0.6) +
+  geom_line() +
+  facet_grid(.~gsub("[0-9]+", "", fulltrt))
+
+
+
+
+
 # first assess relationship of soil moisture loggers to ppt during a reliable period (e.g. first 100 days?)
 b2l2refdat <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt) & grepl("Apr20", filename)) %>%
   filter(trackseq < 250)
