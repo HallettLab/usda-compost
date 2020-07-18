@@ -105,13 +105,15 @@ for(i in datfiles_df$filename){
            filename = str_extract(i, "B[0-9]L[0-9].*$")) %>%
     # join logger key
     left_join(loggerkey, by = c("logger", "port")) %>%
+    # add portid
+    unite(portid, logger, port, remove = F) %>%
     # unite plot and subplot so joins with treatment key
     unite(fulltrt, plot, subplot, sep = "") %>% #plot = paste0(plot, subplot)) %>%
     left_join(trtkey, by = "fulltrt") %>%
     # clarify trt is the composition plot treatment
     rename(comp_trt = trt) %>%
     # reorder cols, remove maxdoy column
-    dplyr::select(logger, port, plot, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
+    dplyr::select(logger, port, portid, plot, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
   
   # compile with master soil moisture data frame
   soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
@@ -123,8 +125,7 @@ for(i in datfiles_df$filename){
     print("All done! Here are 2 plots of the compiled data. Toggle back arrow to see both.")
     logger_plot <- soilmoisture_all %>%
       filter(!is.na(vwc)) %>%
-      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
-             source = paste(logger, port, sep = "_")) %>%
+      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_")) %>%
       ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
       geom_line(alpha = 0.5) +
       ggtitle("QA check: soil moisture (VWC), by logger, colored by port") +
@@ -133,9 +134,8 @@ for(i in datfiles_df$filename){
     
     trt_plot <- soilmoisture_all %>%
       filter(!is.na(vwc)) %>%
-      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_"),
-             source = paste(logger, port, sep = "_")) %>%
-      ggplot(aes(dowy, vwc, group = source, col = as.factor(block))) +
+      mutate(full_trt = paste(nut_trt,ppt_trt, sep ="_")) %>%
+      ggplot(aes(dowy, vwc, group = portid, col = as.factor(block))) +
       geom_line(alpha = 0.5) +
       ggtitle("Treatment check: soil moisture (VWC), by nutrient x drought treatment, colored by block") +
       scale_color_discrete(name = "block") +
@@ -168,8 +168,14 @@ group_by(soilmoisture_all, logger, port) %>%
   subset(datorder == maxnobs) %>%
   ggplot(aes(as.factor(port), as.character(datorder))) +
   geom_point() +
+  labs(y = "count", x= "logger port",
+       title = "USDA Compost soil moisture QA: # observations per logger-port",
+       subtitle = paste0(Sys.Date(), "; if counts differ by +1, needs review")) +
   facet_wrap(~logger)
 # troubleshoot suspect data (e.g. dates, vwc) post-compilation
+# save to qa figs
+ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/nobs_perlogger_alldates.pdf"),
+       width = 6, height = 6, units = "in")
 
 
 # 1. Prep CIMIS data for comparison -----
@@ -200,7 +206,7 @@ cimis <- cimis[!apply(cimis,1,function(x) all(is.na(x))),] %>%
 
 # 2. Assess date breaks ----- 
 # check if date timestamp in expected year (1 = yes, 0 = no)
-logcheck <- dplyr::select(soilmoisture_all, logger, port, date, filename, datorder, rowid) %>%
+logcheck <- dplyr::select(soilmoisture_all, logger, port, portid, date, filename, datorder, rowid) %>%
   distinct() %>%
   mutate(filemo = substr(filename,6,12),
          filemo = as.Date(filemo, format = "%d%b%y"),
@@ -215,7 +221,8 @@ ggplot(logcheck, aes(trackseq, as.factor(tracker), col = yr)) +
   geom_point() +
   labs(y = "Correct date? (1 = yes, 0 = no)",
        x = "Collection sequence (per file)",
-       title = "Soil moisture date sequence consistency, by download file by logger") +
+       title = "QA: Soil moisture date sequence consistency, by download file by logger",
+       subtitle = paste0(Sys.Date(), "; USDA Compost project")) +
   scale_color_viridis_d() +
   facet_grid(logger~filemo, scale = "free_x", space = "free_x")
 # save to qa figs
@@ -234,9 +241,7 @@ datecheck <- soilmoisture_all %>%
          filemo = substr(filename,6,12),
          filemo = as.Date(filemo, format = "%d%b%y"),
          # create timeid to plot with ppt
-         timeid = as.numeric(paste(doy, substr(time,1,2), sep = ".")),
-         # create logger-port id
-         portid = paste(logger, port, sep = "_")) %>%
+         timeid = as.numeric(paste(doy, substr(time,1,2), sep = "."))) %>%
   # crunch interval
   arrange(logger, portid, datorder) %>%
   group_by(portid) %>%
@@ -271,7 +276,7 @@ for(i in unique(rundf$portid)){
       rundf$intevent[tempstart:(t-1)] <- event
       # add qa note
       if(event != 1){
-        tempnote <- ifelse(rundf$timediff[tempstart] >2 & rundf$timediff[tempstart] <= 8, "needs NA infill", "correct timestamp")
+        tempnote <- ifelse(rundf$timediff[tempstart] >2 & rundf$timediff[tempstart] <= 8, "needs NA infill", "needs correct timestamp")
         rundf$qa_note[tempstart] <- tempnote
       }
       event <- event+1
@@ -283,8 +288,18 @@ for(i in unique(rundf$portid)){
 # check that sequencing worked as expected
 # > only plotting logger-ports that have more than 1 event (i.e. was a break in the 2-hr interval recording)
 ggplot(subset(rundf, portid %in% portid[!is.na(qa_note)]), aes(datorder, intevent)) +
-  geom_point ()+
+  geom_point () +
+  labs(y = "Run (continuous 2hr interval data)",
+       x = "Order data collected",
+       title = "USDA Compost soil moisture QA: # continuous 2hr runs for problematic loggers",
+       subtitle = paste0(Sys.Date(), "; paneled by logger_port")) +
   facet_wrap(~portid)
+# save to qa figs
+ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/datarun_breaks_problemloggers.pdf"),
+       width = 7, height = 6, units = "in")
+
+# > B2L2_1, _4 and _5 look similar; B2L2_2 and _3 are a pair; B2L4 ports look similar; B3L4 all look similar
+# > *BUT* each set is doing something different
 
 # what are the unique collection intervals?
 sort(unique(rundf$timediff))
@@ -309,12 +324,13 @@ ggplot(subset(portcheck, !is.na(timediff)), aes(datorder, as.factor(timediff))) 
   geom_point(data = subset(portcheck, seqcheck), aes(datorder, as.factor(timediff)), col = "turquoise", pch = 1, size = 2) +
   labs(y = "Timestep from last collection (in hours)",
        x = "Collection sequence",
-       title = "Soil moisture timestep interval, turquoise = +1 interval within logger per collection sequence",
-       subtitle = "Programmed for 2hrs, anything not 2 on y-axis deviates") +
+       title = "Compost data QA: Soil moisture timestep interval, blue = +1 interval within logger per collection sequence",
+       subtitle = paste0(Sys.Date(), "; programmed for 2hrs, anything not == 2 on y-axis deviates")) +
+  theme(plot.title = element_text(size = 11)) +
   facet_wrap(~logger)
 # save to qa figs
 ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/collectionintervals_perlogger_alldates.pdf"),
-       width = 8, height = 6, units = "in", scale = 1.1)
+       width = 7, height = 6, units = "in", scale = 1.15)
 # > just same three loggers that have weird time jumps
 # > all loggers have same two days where +1 port has a different timestamp, but that could be from data download/new recording?
 
@@ -325,7 +341,8 @@ subset(datecheck, grepl("24Apr", filename)) %>%
   ungroup() %>%
   ggplot() +
   geom_point(aes(as.factor(port), as.character(maxseq), col = as.factor(maxseq))) +
-  labs(title = "Total number data recordings for 24Apr20 files by logger, by port",
+  labs(title = "Compost soil moisture QA: Total # data recordings for 24Apr20 files by logger, by port",
+       subtitle = Sys.Date(),
        y = "Total data recordings",
        x = "Logger port") +
   scale_color_discrete(name = "Count") +
@@ -335,11 +352,6 @@ ggsave(paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/nobs_
        width = 6, height = 6, units = "in")
 # > most loggers have same numer of collection points for 24apr20 file, but 4 loggers differ, and b2l2 differ from other loggers and also within by port (annoying..)
 # > non-problematic ports that have fewer points for 24apr20 file do start with next expected collection point in 11jun20 file
-
-
-# example.. annoying:
-View(subset(datecheck, logger == "B2L2" & trackseq %in% 2360:2373)) 
-# starts with port 1 having different time than other 4 (starts at trackseq = 2367), then slowly other ports have similar date, BUT they are all wrong timestamp regardless (time from yrs 2000, 2001 and not correct month..)
 
 # .. try to assign correct date based on soil moisture patterns in similar treatments?
 # > and verify with CIMIS ppt data
@@ -352,7 +364,37 @@ adjustdates <- subset(rundf, !is.na(qa_note))
 rm(portcheck, logcheck, event, i, t, tempbreaks, tempdat_names, tempend, tempnote, tempstart, rundf)
 
 
-# 2.a. Triage B3L4 24Apr20 -----
+
+# 2.a. Infill missing intervals with NA ----
+# set expected mintime (project starts after 2017)
+clean_mintime <- min(soilmoisture_all$date_time[year(soilmoisture_all$date_time) > 2017])
+# set expected maxtime (spring 2021 slated as last field season)--can adjust this if needed
+clean_maxtime <- max(soilmoisture_all$date_time[year(soilmoisture_all$date_time) > 2017 & year(soilmoisture_all$date_time) < 2022])   
+soilmoisture_clean <- data.frame(date_time = rep(seq.POSIXt(clean_mintime, clean_maxtime, by = "2 hours"), times = length(unique(soilmoisture_all$portid)))) %>%
+  mutate(portid = rep(unique(soilmoisture_all$portid), each = length(unique(date_time)))) %>%
+  group_by(portid) %>%
+  mutate(cleanorder = seq(1, length(date_time), 1)) %>%
+  ungroup() %>%
+  left_join(soilmoisture_all[c("portid", "date_time", "filename", "vwc")]) %>%
+  group_by(portid) %>%
+  fill(filename, .direction = "downup") %>%
+  ungroup()
+
+
+# see what's missing
+soilmoisture_clean %>%
+  replace_na(list(vwc = -999)) %>%
+  #subset(grepl("Apr20", filename) & vwc == -999) %>%
+  subset(vwc == -999) %>%
+  mutate(logger = substr(portid, 1, 4),
+         port = as.numeric(substr(portid, 6,6))) %>%
+  ggplot(aes(date_time, (vwc + (0.1*port)))) +
+  geom_point(aes(col = port, group = port), alpha = 0.4) + #position = position_jitter(height = 0.2)
+  facet_wrap(~logger)
+
+
+
+# 2.b. Triage B3L4 24Apr20 -----
 b3l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B3L4"]))
 
 
@@ -466,7 +508,7 @@ ggplot(refdata, aes(timeid, vwc, col = portid)) +
 
 
 
-# 2.b. Triage B2L4 24Apr20 -----
+# 2.c. Triage B2L4 24Apr20 -----
 b2l4trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L4"]))
 
 subset(datecheck, grepl(b2l4trt[1], fulltrt) & grepl("Apr20", filename)) %>% # & grepl("Apr20", filename) & trackseq > 2000 trackseq > 2250
@@ -584,7 +626,7 @@ ggplot(refdata_b2l4_p2, aes(datorder, vwc, col = portid)) +
 
 
 
-# 2.c. Triage B2L2 24Apr20 -----
+# 2.d. Triage B2L2 24Apr20 -----
 b2l2trt <- gsub("[0-9]", "", unique(datecheck$fulltrt[datecheck$logger == "B2L2"]))
 
 subset(datecheck, grepl(b2l2trt[1], fulltrt) & grepl("Apr20", filename)) %>% # datorder > 2250
@@ -722,7 +764,7 @@ plot_grid(ggplot(b2l2refdat, aes(timeid, Precip.mm)) +
 
 
 
-# 2.d. Infill missing intervals with NA ----
+
 
 
 
