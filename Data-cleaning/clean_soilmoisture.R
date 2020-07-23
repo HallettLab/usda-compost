@@ -844,42 +844,39 @@ b2l2dates <- subset(datecheck, grepl("B2L2", portid)) %>%
 unique(b2l2dates$difforder)
 
 # split out by ports -all doing slightly different things (different datorder, cleanorder numbers)
-b2l2dates_1 <- subset(b2l2dates, portid == "B2L2_1")
-b2l2dates_2 <- subset(b2l2dates, portid == "B2L2_2")
-b2l2dates_3 <- subset(b2l2dates, portid == "B2L2_3")
-b2l2dates_4 <- subset(b2l2dates, portid == "B2L2_4")
-b2l2dates_5 <- subset(b2l2dates, portid == "B2L2_5")
+b2l2dates_1 <- subset(b2l2dates, portid == "B2L2_1") %>% subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1)) | datorder == max(datorder))
+b2l2dates_2 <- subset(b2l2dates, portid == "B2L2_2") %>% subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1)) | datorder == max(datorder))
+b2l2dates_3 <- subset(b2l2dates, portid == "B2L2_3" )%>% subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1)) | datorder == max(datorder))
+b2l2dates_4 <- subset(b2l2dates, portid == "B2L2_4") %>% subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1)) | datorder == max(datorder))
+b2l2dates_5 <- subset(b2l2dates, portid == "B2L2_5") %>% subset(datorder %in% unique(c(datorder[!is.na(qa_note)], datorder[!is.na(qa_note)]-1)) | datorder == max(datorder))
 
 # try infilling backwards and see how that looks, go by interval event
 # what happens if subtract 1 backwards in cleanorder from first good timestamp after time break?
 startorder_b2l2.1 <- unique(with(b2l2dates_1, cleanorder[grepl("last run", qa_note)]))
-startorder_b2l2.2 <- unique(with(b2l2dates_2, cleanorder[grepl("last run", qa_note)]))
-startorder_b2l2.3 <- unique(with(b2l2dates_3, cleanorder[grepl("last run", qa_note)]))
-
-
 
 # try b2l2.1 first 
 searchdata_b2l2.1 <- subset(datecheck, portid == "B2L2_1" & datorder >= with(b2l2dates_1, datorder[intevent == 5 & grepl("timestamp", qa_note)])-1) %>% # filename == with(b3l4dates, filename[grepl("timestamp", qa_note)])
   group_by(datorder) %>%
   mutate(nobs = sum(wetup, na.rm = T)) %>%
   ungroup()
-  subset(datorder >= (min(datorder[wetup == 1 & nobs > 2], na.rm = T)-20) & datorder <= (min(datorder[wetup == 1 & nobs > 2], na.rm = T)+80))
+  #subset(datorder >= (min(datorder[wetup == 1], na.rm = T)-20) & datorder <= (min(datorder[wetup == 1], na.rm = T)+80))
 
-refdata_b2l2 <- subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"), fulltrt)  & logger != "B2L2" & datorder >= with(b2l2dates_1, datorder[intevent == 5 & grepl("timestamp", qa_note)])-1) %>% # & grepl("Apr20", filename)) %>% # loggers have different april timestamps as b3l4
+refdata_b2l2 <- subset(datecheck, grepl(gsub("[0-9]", "", searchdata_b2l2.1$fulltrt[1]), fulltrt)  & logger != "B2L2" & datorder >= with(b2l2dates_1, datorder[intevent == 5 & grepl("timestamp", qa_note)])-1) %>% # & grepl("Apr20", filename)) %>% # loggers have different april timestamps as b3l4
   group_by(date_time) %>%
   mutate(nobs = sum(wetup, na.rm = T)) %>%
-  ungroup() %>%
-  subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours"))) %>%
+  ungroup()
+  #subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours"))) %>%
   # join clean order
-  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")]))
+  #left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")]))
 unique(refdata_b2l2$timeid)
 unique(searchdata_b2l2.1$timeid)
-searchdata$timeid2 <- searchdata$timeid+259
 plot_grid(ggplot(refdata_b2l2, aes(datorder, vwc, col = portid)) +
             geom_line() +
+            scale_x_continuous(limits = c(4500, 6500)) +
             facet_grid(~gsub("[0-9]+", "", fulltrt)),
           ggplot(searchdata_b2l2.1, aes(datorder, vwc, col = portid)) +
             geom_line() +
+            scale_x_continuous(limits = c(4500, 6500)) +
             facet_grid(~gsub("[0-9]+", "", fulltrt)),
           nrow = 2)
 
@@ -967,53 +964,212 @@ ggplot(b2l2early_test, aes(cleanorder, vwc, group = portid, col= as.factor(port)
   geom_line() +
   facet_grid(block ~ gsub("[0-9]", "", fulltrt)) # looks okay
 
+# clean up environment and correct by port
+rm(refdata_b2l2, refdata_b2l2_early, refdata_b2l2_end, searchdata_b2l2_early, searchdata_b2l2_end, 
+   nrows, tempend, startorder, startorder_b2l2.1, b2l2.1_test)
 
+
+
+# 2.e. Triage B2L2 by port -----------
+# create refdata
+refdata_b2l2 <- subset(soilmoisture_master, grepl(str_flatten(b2l2trt, "|"), fulltrt) & logger != "B2L2")
+
+## 2.e.1. B2L2_1 -------
 # press on with corrections for individual ports after interval 3 ..
 searchdata_b2l2.1 <- subset(datecheck, portid == "B2L2_1") %>%
   mutate(datorder2 = ifelse(intevent == 1, datorder, 
-                            ifelse(intevent == 2, datorder+3, 
-                                   ifelse(intevent == 3, datorder + 5,
+                            ifelse(intevent == 2, datorder+3, #3 
+                                   ifelse(intevent == 3, datorder + 5, #5
                                    # interval 4 is an NA -- adjust by amount of intervals off
                                    ifelse(intevent == 4, datorder + 5 + ((b2l2dates_1$hrdiff[grepl("NA", b2l2dates_1$qa_note)]-2)/2),
-                                          ifelse(intevent == 5,datorder + 396,
+                                          ifelse(intevent == max(intevent)-1,datorder + 396,
                                    ifelse(intevent == max(intevent), datorder + with(b2l2dates_1, difforder[grepl("last run", qa_note)]),NA)))))),
   cleanorder = ifelse(intevent == max(intevent), datorder2, datorder2+1)) %>%
   rename(raw_datetime = date_time) %>%
-  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")]))
+  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")])) %>%
+  mutate(difforder = cleanorder - datorder)
+unique(searchdata_b2l2.1$difforder)
 
 # plot to see how it looks
 ggplot(subset(searchdata_b2l2.1, intevent %in% 2:4), aes(cleanorder, vwc)) +
-  geom_line(data = subset(soilmoisture_master, grepl(gsub("[0-9]", "", searchdata_b2l2.1$fulltrt[1]), fulltrt) & logger != "B2L2" & cleanorder %in% searchdata_b2l2.1$cleanorder[searchdata_b2l2.1$intevent %in% 2:4]), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.1$fulltrt[1]), fulltrt) & cleanorder %in% searchdata_b2l2.1$cleanorder[searchdata_b2l2.1$intevent %in% 2:4]), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
   geom_line(aes(col = as.factor(intevent))) +
   scale_x_continuous(breaks = seq(4100,4400, 25))
 
 ggplot(searchdata_b2l2.1, aes(datorder, vwc, col = as.factor(intevent))) +
   geom_line()
 ggplot(subset(searchdata_b2l2.1, intevent %in% 2:5), aes(cleanorder, vwc)) +
-  geom_line(data = subset(soilmoisture_master, portid %in% c("B1L4_3", "B3L1_4") & cleanorder >= min(searchdata_b2l2.1$cleanorder[searchdata_b2l2.1$intevent == 2])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.1$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(data = subset(refdata_b2l2, portid %in% c("B1L4_3", "B3L1_4") & cleanorder >= min(searchdata_b2l2.1$cleanorder[searchdata_b2l2.1$intevent == 2])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.1$fulltrt[1]), fulltrt) & logger != "B2L2"
   geom_line(aes(col = as.factor(intevent)))
 
 
-# pull cleanorder, raw_datetime, and date_time.. see if can apply that to other B2L2 ports..
-b2l2_cleantimes <- distinct(searchdata_b2l2.1, raw_datetime, date_time, cleanorder)
-b2l2_fulltest <- subset(datecheck, logger == "B2L2") %>%
+
+## 2.e.2. B2L2_2 ----- 
+# port 2 has 5 runs -- 5th is final, 2, 3, 4 are timestamp breaks... 
+searchdata_b2l2.2 <- subset(datecheck, portid == "B2L2_2") %>%
+  mutate(datorder2 = ifelse(intevent == 1, datorder, 
+                            ifelse(intevent == 2, datorder+3, 
+                                   ifelse(intevent == 3, datorder + 5,
+                                                 ifelse(intevent == max(intevent)-1,datorder + 396,
+                                                        ifelse(intevent == max(intevent), datorder + with(b2l2dates_2, difforder[grepl("last run", qa_note)]),NA))))),
+         cleanorder = ifelse(intevent == max(intevent), datorder2, datorder2+min(b2l2dates_2$difforder, na.rm = T))) %>%
   rename(raw_datetime = date_time) %>%
-  left_join(b2l2_cleantimes) %>%
-  #check diff between datorder and clean order
+  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")])) %>%
   mutate(difforder = cleanorder - datorder)
-with(b2l2_fulltest, sapply(split(difforder, portid), unique))
+unique(searchdata_b2l2.2$difforder)
 
-ggplot(b2l2_fulltest, aes(cleanorder, vwc)) +
-  geom_line(data = subset(soilmoisture_master, logger != "B2L2" & grepl(str_flatten(b2l2trt, "|"), fulltrt)), aes(cleanorder, vwc, group = portid), alpha = 0.5) +
-  geom_line(aes(group = paste(portid, intevent), col = as.factor(port))) +
-  scale_x_continuous(breaks = seq(0,6500,500)) +
-  #facet_wrap(~port)
-  #facet_wrap(~gsub("[0-9]", "", fulltrt))
-  facet_grid(block ~ gsub("[0-9]", "", fulltrt))
+# plot to see how it looks
+ggplot(subset(searchdata_b2l2.2, intevent %in% 2:4), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.2$fulltrt[1]), fulltrt) & cleanorder > min(with(searchdata_b2l2.2, cleanorder[intevent==2])) & cleanorder < max(with(searchdata_b2l2.2, cleanorder[intevent==4]))), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
+  geom_line(aes(col = as.factor(intevent)))
+  scale_x_continuous(breaks = seq(4100,4400, 25))
 
-# > i think that works
+ggplot(searchdata_b2l2.2, aes(datorder, vwc, col = as.factor(intevent))) +
+  geom_line()
+ggplot(subset(searchdata_b2l2.2, intevent %in% 2:3), aes(cleanorder, vwc)) +
+  geom_line(data = subset(soilmoisture_master, grepl(gsub("[0-9]", "", searchdata_b2l2.2$fulltrt[1]), fulltrt) & logger != "B2L2" & cleanorder >= min(searchdata_b2l2.2$cleanorder[searchdata_b2l2.2$intevent == 2]) & cleanorder < max(searchdata_b2l2.2$cleanorder[searchdata_b2l2.2$intevent == 3])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.2$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~., scales = "free_y")
 
 
+## 2.e.3. B2L2_3 ----- 
+# port 3 has 5 runs -- 5th is final, 2, 3, 4 are timestamp breaks... similar to port 2
+searchdata_b2l2.3 <- subset(datecheck, portid == "B2L2_3") %>%
+  mutate(datorder2 = ifelse(intevent == 1, datorder, 
+                            ifelse(intevent == 2, datorder+3, 
+                                   ifelse(intevent == 3, datorder + 5,
+                                          ifelse(intevent == max(intevent)-1,datorder + 396,
+                                                 ifelse(intevent == max(intevent), datorder + with(b2l2dates_3, difforder[grepl("last run", qa_note)]),NA))))),
+         cleanorder = ifelse(intevent == max(intevent), datorder2, datorder2+min(b2l2dates_3$difforder, na.rm = T))) %>%
+  rename(raw_datetime = date_time) %>%
+  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")])) %>%
+  mutate(difforder = cleanorder - datorder)
+unique(searchdata_b2l2.3$difforder)
+
+# plot to see how it looks
+ggplot(subset(searchdata_b2l2.3, intevent %in% 2:4), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.3$fulltrt[1]), fulltrt) & cleanorder > min(with(searchdata_b2l2.3, cleanorder[intevent==2])) & cleanorder < max(with(searchdata_b2l2.3, cleanorder[intevent==4]))), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
+  geom_line(aes(col = as.factor(intevent)))
+
+ggplot(searchdata_b2l2.3, aes(datorder, vwc, col = as.factor(intevent))) +
+  geom_line()
+ggplot(subset(searchdata_b2l2.3, intevent %in% 2:3), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.3$fulltrt[1]), fulltrt)  & cleanorder >= min(searchdata_b2l2.3$cleanorder[searchdata_b2l2.3$intevent == 2]) & cleanorder < max(searchdata_b2l2.3$cleanorder[searchdata_b2l2.3$intevent == 3])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.3$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~., scales = "free_y")
+
+
+
+## 2.e.4. B2L2_4 ----- 
+# port 4 has 6 runs -- 6 is final; 2, 3, and 5 are time breaks; 4 is NA skip
+searchdata_b2l2.4 <- subset(datecheck, portid == "B2L2_4") %>%
+  mutate(datorder2 = ifelse(intevent == 1, datorder, 
+                            ifelse(intevent == 2, datorder+3, #3 
+                                   ifelse(intevent == 3, datorder + 5, #5
+                                          # interval 4 is an NA -- adjust by amount of intervals off
+                                          ifelse(intevent == 4, datorder + 5 + ((b2l2dates_4$hrdiff[grepl("NA", b2l2dates_4$qa_note)]-2)/2),
+                                                 ifelse(intevent == max(intevent)-1,datorder + 396,
+                                                        ifelse(intevent == max(intevent), datorder + with(b2l2dates_4, difforder[grepl("last run", qa_note)]),NA)))))),
+         cleanorder = ifelse(intevent == max(intevent), datorder2, datorder2+ min(b2l2dates_4$difforder, na.rm = T))) %>%
+  rename(raw_datetime = date_time) %>%
+  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")])) %>%
+  mutate(difforder = cleanorder - datorder)
+unique(searchdata_b2l2.4$difforder)
+
+
+# plot to see how it looks
+ggplot(subset(searchdata_b2l2.4, intevent %in% 2:5), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt) & cleanorder > min(with(searchdata_b2l2.4, cleanorder[intevent==2])) & cleanorder < max(with(searchdata_b2l2.4, cleanorder[intevent==5]))), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
+  geom_line(aes(col = as.factor(intevent)))
+
+
+ggplot(searchdata_b2l2.4, aes(datorder, vwc, col = as.factor(intevent))) +
+  geom_line()
+ggplot(subset(searchdata_b2l2.4, intevent %in% 2:4), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt)  & cleanorder >= min(searchdata_b2l2.4$cleanorder[searchdata_b2l2.4$intevent == 2]) & cleanorder < max(searchdata_b2l2.4$cleanorder[searchdata_b2l2.4$intevent == 4])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  #scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~gsub("[0-9]", "", fulltrt), scales = "free_y")
+
+# look at end of int 1 through int 3
+ggplot(subset(searchdata_b2l2.4, cleanorder %in% 4000:4400), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt)  & cleanorder %in% 4000:4400), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  scale_x_continuous(breaks = seq(4000,4400, 40)) +
+  facet_grid(block~., scales = "free_y") # looks good
+ 
+# look at end --5 and 6
+ggplot(subset(searchdata_b2l2.4, intevent %in% 5:6), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt)  & cleanorder >= min(searchdata_b2l2.4$cleanorder[searchdata_b2l2.4$intevent == 5]) & cleanorder < max(searchdata_b2l2.4$cleanorder[searchdata_b2l2.4$intevent == 6])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.4$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  #scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~., scales = "free_y") # looks good
+
+
+
+## 2.e.5. B2L2_5 ----- 
+# port 5 similar to port 4: has 6 runs -- 6 is final; 2, 3, and 5 are time breaks; 4 is NA skip
+searchdata_b2l2.5 <- subset(datecheck, portid == "B2L2_5") %>%
+  mutate(datorder2 = ifelse(intevent == 1, datorder, 
+                            ifelse(intevent == 2, datorder+3, #3 
+                                   ifelse(intevent == 3, datorder + 5, #5
+                                          # interval 4 is an NA -- adjust by amount of intervals off
+                                          ifelse(intevent == 4, datorder + 5 + ((b2l2dates_5$hrdiff[grepl("NA", b2l2dates_5$qa_note)]-2)/2),
+                                                 ifelse(intevent == max(intevent)-1,datorder + 396,
+                                                        ifelse(intevent == max(intevent), datorder + with(b2l2dates_5, difforder[grepl("last run", qa_note)]),NA)))))),
+         cleanorder = ifelse(intevent == max(intevent), datorder2, datorder2+ min(b2l2dates_5$difforder, na.rm = T))) %>%
+  rename(raw_datetime = date_time) %>%
+  left_join(distinct(soilmoisture_clean[c("date_time", "cleanorder")])) %>%
+  mutate(difforder = cleanorder - datorder)
+unique(searchdata_b2l2.5$difforder)
+
+
+# plot to see how it looks
+ggplot(subset(searchdata_b2l2.5, intevent %in% 2:5), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt) & cleanorder > min(with(searchdata_b2l2.5, cleanorder[intevent==2])) & cleanorder < max(with(searchdata_b2l2.5, cleanorder[intevent==5]))), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
+  geom_line(aes(col = as.factor(intevent)))
+
+
+ggplot(searchdata_b2l2.5, aes(datorder, vwc, col = as.factor(intevent))) +
+  geom_line()
+ggplot(subset(searchdata_b2l2.5, intevent %in% 2:4), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt)  & cleanorder >= min(searchdata_b2l2.5$cleanorder[searchdata_b2l2.5$intevent == 2]) & cleanorder < max(searchdata_b2l2.5$cleanorder[searchdata_b2l2.5$intevent == 4])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  #scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~.)
+
+# look at end of int 1 through int 3
+ggplot(subset(searchdata_b2l2.5, cleanorder %in% 4000:4400), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt)  & cleanorder %in% 4000:4400), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  scale_x_continuous(breaks = seq(4000,4400, 40)) +
+  facet_grid(block~., scales = "free_y") # looks good
+
+# look at end --5 and 6
+ggplot(subset(searchdata_b2l2.5, intevent %in% 5:6), aes(cleanorder, vwc)) +
+  geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt)  & cleanorder >= min(searchdata_b2l2.5$cleanorder[searchdata_b2l2.5$intevent == 5]) & cleanorder < max(searchdata_b2l2.5$cleanorder[searchdata_b2l2.5$intevent == 6])), aes(cleanorder, vwc, group = portid), alpha = 0.3) + # grepl(gsub("[0-9]", "", searchdata_b2l2.5$fulltrt[1]), fulltrt) & logger != "B2L2"
+  geom_line(aes(col = as.factor(intevent))) +
+  #scale_x_continuous(breaks = seq(4100,4400, 20)) +
+  facet_grid(block~., scales = "free_y") # looks good
+
+
+## 2.e.6 Compile all B2L2 ports -----
+masterb2l2_clean <- rbind(searchdata_b2l2.1, searchdata_b2l2.2) %>%
+                            rbind(rbind(searchdata_b2l2.3, searchdata_b2l2.4)) %>% 
+                            rbind(searchdata_b2l2.5)
+unique(masterb2l2_clean$portid)
+
+# plot everything
+ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = paste(portid, intevent), col = as.factor(port))) +
+  geom_line() +
+  ggtitle("Timestamp-corrected B2L2 soil moisture data") +
+  facet_grid(gsub("[0-9]", "", fulltrt)~., scales = "free_y")
+
+
+# -- 3. COMPILE CLEAN DATA ------
+# add qa notes for NAs
 
 
 
