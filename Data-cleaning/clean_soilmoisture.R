@@ -508,6 +508,7 @@ ggplot(subset(good_b3l4, goodport != "B2L1_5"), aes(date_time, diffvwc, col = go
 ggplot(subset(good_b3l4, goodport != "B2L1_5"), aes(date_time, diffrun, col = goodport)) +
   geom_line() +
   facet_wrap(~badport)
+# clean up
 rm(good_b3l4)
 
 searchdata <- subset(datecheck, logger == "B3L4" & datorder >= with(b3l4dates, datorder[grepl("correct timestamp", qa_note)]-1) & filename == with(b3l4dates, filename[grepl("timestamp", qa_note)])) %>%
@@ -583,7 +584,7 @@ ggplot(subset(b3l4test, intevent == 3), aes(cleanorder2, vwc, col = portid, grou
 # correct B3L4 in soilmoisture_clean
 clean_b3l4 <- subset(soilmoisture_clean, grepl("B3L4", portid)) %>%
   select(date_time:cleanorder, filename) %>%
-  left_join(select(b3l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note), by = c("portid", "cleanorder" = "cleanorder3")) %>%
+  left_join(select(b3l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
   left_join(distinct(soilmoisture_all, portid, logger, port, block, fulltrt))
 
 # create temp master with timestamp-corrected data (NAs not yet addressed)..
@@ -595,7 +596,7 @@ soilmoisture_master <- subset(soilmoisture_clean, !grepl("B3L4", portid), c(date
 # check out NAs by logger
 with(soilmoisture_master, sapply(split(vwc, portid), function(x) summary(is.na(x)))) #small numbers are just missing data for 2-hr intervals
 # clean up
-rm(searchdata, refdata, b3l4dates, b3l4trt, b3l4test)
+rm(searchdata, refdata, b3l4dates, b3l4trt, b3l4test, startorder)
 
 
 
@@ -773,7 +774,7 @@ ggplot(subset(b2l4test, intevent == 3 & portid != "B2L4_3"), aes(cleanorder3, vw
 # correct B2L4 in soilmoisture_clean
 clean_b2l4 <- subset(soilmoisture_clean, grepl("B2L4", portid)) %>%
   select(date_time:cleanorder, filename) %>%
-  left_join(select(b2l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note), by = c("portid", "cleanorder" = "cleanorder3")) %>%
+  left_join(select(b2l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
   left_join(distinct(soilmoisture_all, portid, logger, port, block, fulltrt))
 
 # create temp master with timestamp-corrected data (NAs not yet addressed)..
@@ -802,7 +803,7 @@ subset(datecheck, grepl(b2l2trt[1], fulltrt)) %>% # datorder > 2250
   facet_grid(logger~b2l2trt[1])
 
 subset(datecheck, grepl(b2l2trt[1], fulltrt)) %>% # datorder > 2250
-  ggplot(aes(datorder, diffvwc, col = paste(logger, port, sep = "_"), group = port)) +
+  ggplot(aes(datorder, diffvwc, col = port, group = paste(logger, port, sep = "_"))) +
   geom_line(alpha = 0.4) +
   geom_vline(data = mutate(subset(adjustdates, grepl("B2L2", portid)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note, col = as.numeric(substr(portid,6,6)))) +
   ggtitle(paste("troubleshoot B2L2 date jump", b2l2trt[1], "(dotted vert line = date break)")) +
@@ -902,7 +903,7 @@ searchdata_b2l2_end <- subset(datecheck, portid == "B2L2_1" & datorder > 4392 & 
   group_by(datorder) %>%
   mutate(nobs = sum(wetup, na.rm = T)) %>%
   ungroup()
-subset(datorder >= (min(datorder[wetup == 1 & nobs > 1], na.rm = T)-20) & datorder <=  (min(datorder[wetup == 1 & nobs > 1], na.rm = T)+80))
+#subset(datorder >= (min(datorder[wetup == 1 & nobs > 1], na.rm = T)-20) & datorder <=  (min(datorder[wetup == 1 & nobs > 1], na.rm = T)+80))
 
 nrows <- max(searchdata_b2l2_end$datorder) - min(searchdata_b2l2_end$datorder)
 tempend <- max(datecheck$datorder[grepl("Apr20", datecheck$filename)])
@@ -911,7 +912,7 @@ refdata_b2l2_end <- #subset(datecheck, grepl(str_flatten(b2l2trt, collapse = "|"
   group_by(date_time) %>%
   mutate(nobs = sum(wetup, na.rm = T)) %>%
   ungroup()
-subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
+#subset(date_time >= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)-as.difftime(20*2, units = "hours")) & date_time <= (min(date_time[wetup == 1 & nobs > 1], na.rm = T)+as.difftime(80*2, units = "hours")))
 unique(refdata_b2l2_end$timeid)
 unique(searchdata_b2l2_end$timeid)
 searchdata_b2l2_end$datorder2 <- searchdata_b2l2_end$datorder + 396
@@ -966,7 +967,7 @@ ggplot(b2l2early_test, aes(cleanorder, vwc, group = portid, col= as.factor(port)
 
 # clean up environment and correct by port
 rm(refdata_b2l2, refdata_b2l2_early, refdata_b2l2_end, searchdata_b2l2_early, searchdata_b2l2_end, 
-   nrows, tempend, startorder, startorder_b2l2.1, b2l2.1_test)
+   nrows, tempend, startorder_b2l2.1, b2l2.1_test)
 
 
 
@@ -1160,6 +1161,10 @@ masterb2l2_clean <- rbind(searchdata_b2l2.1, searchdata_b2l2.2) %>%
                             rbind(rbind(searchdata_b2l2.3, searchdata_b2l2.4)) %>% 
                             rbind(searchdata_b2l2.5)
 unique(masterb2l2_clean$portid)
+# attach all possible timestamps
+masterb2l2_clean <- subset(soilmoisture_clean, grepl("B2L2", portid), c(date_time, cleanorder, portid)) %>%
+  left_join(masterb2l2_clean)
+
 
 # plot everything
 ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = paste(portid, intevent), col = as.factor(port))) +
@@ -1170,11 +1175,48 @@ ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = paste(portid, intevent), c
 
 # -- 3. COMPILE CLEAN DATA ------
 # add qa notes for NAs
+# want cleanorder, correct timestamp, treatment info, water year info, vwc, qa notes and raw timestamp, and rawdatorder
 
+names(masterb2l2_clean)
+names(clean_b2l4)
+names(clean_b3l4)
+names(soilmoisture_master) # has clean b3l4 and b2l4, but not clean b2l2
+names(soilmoisture_clean)
+names(soilmoisture_all)
+
+# remake soilmoisture_master with all colnames from soilmoisture_all + 2 qa cols (qa note and raw timestamp)
+# > start with loggers than aren't b3l4, b2l4 and b2l2
+# > also reattach logger key and trt key info
+
+soilmoisture_master <- select(soilmoisture_clean, date_time:cleanorder, filename, vwc) %>%
+  subset(!grepl("B3L4|B2L4|B2L2", portid)) %>%
+  # add rawdatorder back in 
+  left_join(subset(soilmoisture_all, !grepl("B3L4|B2L4|B2L2", portid), c(date_time, portid, datorder))) %>%
+#summary(is.na(soilmoisture_master))
+#View(subset(soilmoisture_master, is.na(datorder)))
+  rename(clean_datetime = date_time) %>%
+  # add original datetime in so data user can see where was recorded
+  left_join(subset(soilmoisture_all, !grepl("B3L4|B2L4|B2L2", portid), c(date_time, portid, datorder))) %>%
+  rename(raw_datetime = date_time) %>%
+  # add in col for qa_note
+  mutate(qa_note = NA) %>%
+  rbind(rename(clean_b3l4, clean_datetime = date_time)[names(.)]) %>%
+  rbind(rename(clean_b2l4, clean_datetime = date_time)[names(.)]) %>%
+  rbind(rename(masterb2l2_clean, clean_datetime = date_time)[names(.)]) %>%
+  rename(raw_datorder = datorder) %>%
+  mutate(qa_note2 = NA)
+
+# infill qa_notes
+for(i in unique(adjustdates$portid)){
+  tempadjust <- subset(adjustdates, portid == i)
+}
+
+
+# add in trt info, logger info, water year info..
 
 
 # -- FINISHING -----
-write_csv(soilmoisture_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
+write_csv(soilmoisture_master, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMosture_all_clean.csv"))
 
 # write out preliminary plots if desired
 ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/PrelimQA_Figures/Compost_VWCraw_bylogger.pdf"),
