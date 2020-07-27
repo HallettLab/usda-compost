@@ -160,10 +160,21 @@ for(i in vegfiles){
   vegdat_long <- clean_vegdat %>%
     # gather species cover only (keep pct green through litter depth in their own cols in case want to drop or break out in analysis)
     gather(code4, pct_cover, (grep("depth",colnames(.))+1):ncol(.), na.rm = T) %>%
+    # clean up period and number additions from cols with same code
+    mutate(code4 = gsub("[.][0-9]", "", code4)) %>%
+    # group by code and sum pct cover [2020 has nikolai's unqiue species names, but correspond to duplicated code4]
+    grouped_df(names(.)[names(.) != "pct_cover"]) %>%
+    summarise(pct_cover = sum(pct_cover)) %>%
+    ungroup() %>%
     # append species descriptive info
-    left_join(spplist, by = "code4") %>%
+    left_join(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species)), by = "code4") %>%
     # order by plot, date, code
-    arrange(plot, date, code4)
+    arrange(plot, date, code4) %>%
+    #modify full trt and plotid cols
+    rename(plotid = fulltrt) %>%
+    mutate(fulltrt = paste0(nut_trt,ppt_trt)) %>%
+    # rearrange cols
+    select(plot, plotid, fulltrt, block:ncol(.))
   
   
   # -- APPEND LONG FORM TO MASTER LONG FORM -----
@@ -180,6 +191,48 @@ for(i in vegfiles){
     print("Master cover dataset compiled! Inspect and if all looks good write out and proceed to analysis! (w00t w00t!)")
   }
 }
+
+# modify fulltrt and plotid cols
+
+# -- PRELIM PLOT -----
+# quick check that cover dat looks okay
+# spp richness
+cover_master_long %>%
+  mutate(mo = month(date, label = T, abbr = T),
+         date_group = paste(mo, yr, sep = " "),
+         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020")),
+         nut_trt = gsub("N", "XC", nut_trt)) %>%
+  grouped_df(c("plot", "nut_trt", "ppt_trt", "date_group")) %>%
+  summarise(S = length(unique(code4))) %>%
+  ungroup() %>%
+  ggplot(aes(plot, S, group = plot)) +
+  geom_line() +
+  geom_point(aes(col = as.factor(date_group)), alpha = 0.6) +
+  scale_color_viridis_d(name = "Sample date") +
+  ggtitle(paste0("USDA Compost data QA (", Sys.Date() ,"):\nprelim spp comp, richness by plot, treatments, and sample date")) +
+  facet_grid(nut_trt~ppt_trt) # AS and CTW sampling in 2019 vs NS sampling in 2020.. influence in spp richness
+# save to QA figs
+ggsave(filename = paste0(datpath, "Cover/Cover_Figures/Prelim_QAFigures/SppComp_S_PlotxYr.pdf"),
+       width = 6, height = 6, units = "in", scale = 1) 
+
+# what about cover by family?
+cover_master_long %>%
+  mutate(mo = month(date, label = T, abbr = T),
+         date_group = paste(mo, yr, sep = " "),
+         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020"))) %>%
+  grouped_df(c("plot","date_group", "Family")) %>%
+  summarise(totcov = sum(pct_cover)) %>%
+  ungroup() %>%
+  ggplot(aes(plot, totcov)) +
+  geom_line(aes(group = plot)) +
+  geom_point(aes(col = as.factor(date_group)), alpha = 0.6) +
+  scale_color_viridis_d(name = "Sample date") +
+  ggtitle(paste0("USDA Compost data QA (", Sys.Date() ,"): prelim spp comp, Family total cover by plot and sample date")) +
+  facet_wrap(~Family, scales = "free") # interesting switch with poa vs forbs in 2020 for lower blocks..
+# save to QA figs
+ggsave(filename = paste0(datpath, "Cover/Cover_Figures/Prelim_QAFigures/SppComp_Familycover_PlotxYr.pdf"),
+       width = 9, height = 6, units = "in", scale = 1.1) 
+
 
 
 # -- FINISHING -----

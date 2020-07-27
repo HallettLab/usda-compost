@@ -207,14 +207,6 @@ rm(temp_df, templist, templist2, update_df, temp_epithet, temp_genus, temp_susbp
 # -- MANUAL INFILLING -----
 # manual edits: fill in info for unknowns
 
-# assign silene gallica, navarretia pubescens, brome rubens to 3 of nikolai's unknowns
-# tall branchy = silene
-spplist_master[grep("tall branchy", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Silene gallica", spplist_master$species), 2:ncol(spplist_master)]
-# different navar == same navar. pub.
-spplist_master[grep("different .Navar.", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Navarretia pubescens", spplist_master$species), 2:ncol(spplist_master)]
-# NS says his red brome he thinks is invasive (not native).. assigning brome mad.
-spplist_master[grep("red california", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Bromus madritensis", spplist_master$species), 2:ncol(spplist_master)]
-
 # unknown Annual grass spp. (AVBA, CYEC, or GAPH)
 spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")] <- c("UNGR", "UNGSPP")
 # copy descriptive info from TACA since most general and applies
@@ -313,11 +305,6 @@ for(i in which(is.na(spplist_master$code4) & grepl("forb", spplist_master$specie
   spplist_master[i, c("Category", "Growth_Habit", "Duration", "Native_Status")] <- c("Dicot", "Forb/herb", "Annual", "L48 (I)") # is at least invasive in lower 48 (probably other parts of US too) 
   
 }
-
-# lastly, unknown plants -- NS says all are forbs
-spplist_master$code4[grepl("20_Unk1", spplist_master$species)] <- casefold(str_extract(spplist_master$species[grepl("20_Unk1", spplist_master$species)], ("(?<=_)Unk[0-9]+")), upper = T)
-spplist_master$code6[grepl("20_Unk1", spplist_master$species)] <- gsub("UNK", "UNKUN", spplist_master$code4[grepl("20_Unk1", spplist_master$species)])
-spplist_master[grepl("20_Unk1", spplist_master$species), c("Category", "Duration", "Growth_Habit", "Native_Status")] <- c("Dicot", "Annual", "Forb/herb", "L48 (I)")
 
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
