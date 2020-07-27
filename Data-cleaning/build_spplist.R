@@ -21,8 +21,15 @@
 # the way it's written currently is more flexible should anything other than entered cover data live in there
 
 # notes 2020 jun 30:
-# CTW still waiting to hear back from Nikolai on some of the species noted in composition.. e.g. "skinn" and "tall branchy" -- not sure if those are forbs or grams
+# CTW still waiting to hear back from Nikolai on some of the species noted in composition.. e.g. "skinny" and "tall branchy" -- not sure if those are forbs or grams
 # we may want to recode NS's "tarweed" if don't think it's actually Madia (native aster)
+
+# notes from 1 july 2020:
+# The question on Navarretia…the name in question is “Navarretia Junior” the other version of nav. Much smaller and daintier looking. Ashley said later that they were both the same but in different life stages. The 70 % cover was for the “Junior” and “regular Nav.” was 10.
+# The question on invasive vs. native red brome…I figure it was invasive seeing the large seed heads and brown stems.
+# I sent a photo on the “Tall Branchy”. (Silene gallica -- sent to AS on April 30)
+# As for the “Skinny” I am still processing that request. (sent April 30 too? it's a forb.. don't know what, too undeveloped.. but could be unknown forb from last year)
+
 
 
 
@@ -199,14 +206,21 @@ rm(temp_df, templist, templist2, update_df, temp_epithet, temp_genus, temp_susbp
 
 # -- MANUAL INFILLING -----
 # manual edits: fill in info for unknowns
+
+# assign silene gallica, navarretia pubescens, brome rubens to 3 of nikolai's unknowns
+# tall branchy = silene
+spplist_master[grep("tall branchy", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Silene gallica", spplist_master$species), 2:ncol(spplist_master)]
+# different navar == same navar. pub.
+spplist_master[grep("different .Navar.", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Navarretia pubescens", spplist_master$species), 2:ncol(spplist_master)]
+# NS says his red brome he thinks is invasive (not native).. assigning brome mad.
+spplist_master[grep("red california", spplist_master$species), 2:ncol(spplist_master)] <- spplist_master[grep("Bromus madritensis", spplist_master$species), 2:ncol(spplist_master)]
+
 # unknown Annual grass spp. (AVBA, CYEC, or GAPH)
 spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")] <- c("UNGR", "UNGSPP")
 # copy descriptive info from TACA since most general and applies
 spplist_master[grepl("Annual grass",spplist_master$species), 
                which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "TACA" & !is.na(spplist_master$code4), 
                                                                                                  which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
-# infill bromus info -- not sure if NS meant Ca brome, or red brome (B rubens) so can't assign nativity
-spplist_master[grepl("Bromus sp", spplist_master$species), c("Duration", "Growth_Habit")] <- c("Annual", "Graminoid")
 
 # unknown Trifolium 
 for(i in which(grepl("Trif.*[0-9]|Trifolium spp.", spplist_master$species))){
@@ -221,6 +235,9 @@ spplist_master[grepl("Tri.* spp.",spplist_master$species), c("code4", "code6")] 
 
 # assign code 4 and 5 + genus for generic genera
 for(i in genera[grepl("[[:digit:]]", genera)]){
+  if(grepl("Bromus", i)){
+    next
+  }
   tempos <- which(spplist_master$species == i)
   spplist_master$genus[tempos] <- str_extract(i, "[A-Z][a-z]+")
   spplist_master$code4[tempos] <- paste0(casefold(substr(i,1,3), upper = T), str_extract(i,"[[:digit:]]+"))
@@ -297,10 +314,10 @@ for(i in which(is.na(spplist_master$code4) & grepl("forb", spplist_master$specie
   
 }
 
-# lastly, unknown plants (not sure whether forb or grass -- no word from Nikolai yet as of 6/30)
-spplist_master$code4[grepl("20_Unk", spplist_master$species)] <- casefold(str_extract(spplist_master$species[grepl("20_Unk", spplist_master$species)], ("(?<=_)Unk[0-9]+")), upper = T)
-spplist_master$code6[grepl("20_Unk", spplist_master$species)] <- gsub("UNK", "UNKUN", spplist_master$code4[grepl("20_Unk", spplist_master$species)])
-spplist_master[grepl("20_Unk", spplist_master$species), c("Category", "Duration", "Growth_Habit")] <- "Unknown"
+# lastly, unknown plants -- NS says all are forbs
+spplist_master$code4[grepl("20_Unk1", spplist_master$species)] <- casefold(str_extract(spplist_master$species[grepl("20_Unk1", spplist_master$species)], ("(?<=_)Unk[0-9]+")), upper = T)
+spplist_master$code6[grepl("20_Unk1", spplist_master$species)] <- gsub("UNK", "UNKUN", spplist_master$code4[grepl("20_Unk1", spplist_master$species)])
+spplist_master[grepl("20_Unk1", spplist_master$species), c("Category", "Duration", "Growth_Habit", "Native_Status")] <- c("Dicot", "Annual", "Forb/herb", "L48 (I)")
 
 # finish by adding fxnl_grp and simplified nativity col
 spplist_master$fxnl_grp[grepl("Gram", spplist_master$Growth_Habit)] <- "Grass"
