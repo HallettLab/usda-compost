@@ -1,7 +1,7 @@
 # create compost treatment lookup table
 # author(s): ctw
 # created: april 2019
-# last update: june 2020
+# last update: aug 2020
 
 
 
@@ -30,14 +30,16 @@ nut_trt <- rep(c(rep("C",3), rep("F", 3), rep("N", 3)), 4)
 ppt_trt <- rep(rep(c("D", "W", "XC"),3),4)
 # put together
 trt_df <- data.frame(block, nut_trt, ppt_trt)
-# add plot name: concatenate block, nutrient treatment, and precipitation treatment
-trt_df$fulltrt <- paste0(trt_df$block, trt_df$nut_trt, trt_df$ppt_trt)
-# add in plot numers
+# add full treatment: concatenate nutrient treatment and precipitation treatment
+trt_df$plotid <- paste0(trt_df$block, trt_df$nut_trt, trt_df$ppt_trt)
+# add plot id: concatenate block, nutrient treatment, and precipitation treatment
+trt_df$fulltrt <- paste0(trt_df$nut_trt, trt_df$ppt_trt)
+# add in plot numbers
 trt_df <- merge(trt_df, trtkey)
 # order by plotnum
 trt_df <- trt_df[order(trt_df$plot),]
 # move plot to first column
-trt_df <- trt_df[c("plot","fulltrt", "block", "nut_trt", "ppt_trt")]
+trt_df <- trt_df[c("plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt")]
 
 
 

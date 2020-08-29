@@ -49,9 +49,9 @@ pct_cols <- c("pct_green", "pct_brown", "pct_bare")
 # june 2020: changing this loop to prep 2019 only since winter 2020 and spring 2020 pheno files structured differently
 for(i in pheno_files[grepl("2019", pheno_files)]){
   # phenology dat
-  temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T)  
+  temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T) %>% data.frame()  
   # photo key
-  temp_photokey <- read_excel(i, sheet = 2, na = na_vals, trim_ws = T)  
+  temp_photokey <- read_excel(i, sheet = 2, na = na_vals, trim_ws = T) %>% data.frame()
   print(paste("Compiling", unique(temp_pheno$date)[1], "phenology data and photo key"))
   
   # clean up pheno dat
@@ -84,17 +84,17 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   }
   
   # join both datasets, correct name
-  tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot"))
-  # concatenate plot and subplot so plot values match treatment key plot values
-  tempdat$plot <- with(tempdat, ifelse(!is.na(subplot), paste0(plot, subplot), plot))
-  # rename "plot" col so pairs correctly with trtkey
-  names(tempdat)[names(tempdat) == "plot"] <- "fulltrt"
+  tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot")) %>%
+    #  # concatenate plot and subplot so plot values match treatment key plot values
+    mutate(plotid = ifelse(!is.na(subplot), paste0(plot, subplot), plot)) %>%
+    # drop plot so pairs correctly with trtkey
+    dplyr::select(-plot)
   # join treatment data
   tempdat <- left_join(tempdat, trtkey)
   # add year
   tempdat$yr <- substr(as.character(tempdat$date),1,4) %>% as.numeric()
   # reorder cols
-  tempdat <- dplyr::select(tempdat, page:date, yr, plot, fulltrt, block:ppt_trt,pct_green:photo_notes)
+  tempdat <- dplyr::select(tempdat, page:date, yr, plot, plotid, fulltrt, block:ppt_trt,pct_green:photo_notes)
   
   # rbind to master phenology df
   pheno_master <- rbind(pheno_master, tempdat)
@@ -234,7 +234,7 @@ names(pheno_master) # <-- these are the cols that should be in final + height co
 # clean dat should have block and trts in their own cols, veg and litter heights, notes, and photo info -- keep wide format
 # convert T(race) to 0.01
 jan20_times <- dplyr::select(jan20dat, start_time, stop_time, date, plot) %>%
-  rename(fulltrt = plot) %>%
+  rename(plotid = plot) %>%
   left_join(trtkey) %>%
   group_by(block, nut_trt) %>%
   mutate(start = unique(start_time[!is.na(start_time)]),
@@ -251,12 +251,12 @@ ggplot(jan20_times, aes(nut_trt, duration_min, col = as.factor(block))) +
   scale_color_discrete(name = "Block")
 
 jan20dat_clean <- dplyr::select(jan20dat, date:notes) %>%
-  rename(fulltrt = plot) %>%
+  rename(plotid = plot) %>%
   left_join(trtkey) %>%
-  left_join(dplyr::select(jan20foto, -c(page_order, order)), by = c("fulltrt" = "plot", "date", "recorder")) %>%
+  left_join(dplyr::select(jan20foto, -c(page_order, order)), by = c("plotid" = "plot", "date", "recorder")) %>%
   mutate(yr = as.numeric(substr(date, 1, 4))) %>%
   # reorder cols
-  dplyr::select(page, line, recorder, date, yr, plot, fulltrt, block:ppt_trt, pct_litter:notes, photo_subplot:photo_notes) %>%
+  dplyr::select(page, line, recorder, date, yr, plot, plotid, fulltrt, block:ppt_trt, pct_litter:notes, photo_subplot:photo_notes) %>%
   # convert trace to 0.01
   mutate_at(grep("pct", names(.)), function(x) gsub("T", "0.01", x)) %>%
   # make all pct cols numeric
