@@ -120,12 +120,12 @@ for(i in datfiles_df$filename){
     # add portid
     unite(portid, logger, port, remove = F) %>%
     # unite plot and subplot so joins with treatment key
-    unite(fulltrt, plot, subplot, sep = "") %>% #plot = paste0(plot, subplot)) %>%
-    left_join(trtkey, by = "fulltrt") %>%
+    unite(plotid, plot, subplot, sep = "") %>% #plot = paste0(plot, subplot)) %>%
+    left_join(trtkey, by = "plotid") %>%
     # clarify trt is the composition plot treatment
     rename(comp_trt = trt) %>%
     # reorder cols, remove maxdoy column
-    dplyr::select(logger, port, portid, plot, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
+    dplyr::select(logger, port, portid, plot, plotid, fulltrt, block, nut_trt, ppt_trt, comp_trt, date_time, date, time, doy:dowy, vwc, filename)
   
   # compile with master soil moisture data frame
   soilmoisture_all <- rbind(soilmoisture_all, tempdat2) %>%
@@ -384,7 +384,7 @@ soilmoisture_clean <- data.frame(date_time = rep(seq.POSIXt(clean_mintime, clean
   group_by(portid) %>%
   mutate(cleanorder = seq(1, length(date_time), 1)) %>%
   ungroup() %>%
-  left_join(soilmoisture_all[c("portid", "logger", "port", "block", "fulltrt", "date_time", "filename", "vwc")]) %>%
+  left_join(soilmoisture_all[c("portid", "logger", "port", "plotid", "block", "fulltrt", "date_time", "filename", "vwc")]) %>%
   group_by(portid) %>%
   fill(filename, .direction = "downup") %>%
   ungroup()
@@ -568,23 +568,23 @@ ggplot(b3l4test, aes(cleanorder2, vwc, col = port, group = portid)) +
   geom_point(data = subset(soilmoisture_clean, grepl(str_flatten(b3l4trt, collapse = "|"), fulltrt) & logger != "B3L4"), aes(cleanorder, vwc, group = portid, col = port)) +
   geom_point() +
   geom_vline(data = mutate(subset(adjustdates, grepl(str_flatten(b3l4trt, collapse = "|"), fulltrt)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
-  facet_grid(logger~gsub("[0-9]+", "", fulltrt))
+  facet_grid(logger~fulltrt)
 
 ggplot(subset(b3l4test, intevent == 3), aes(cleanorder2, vwc, col = portid, group = portid)) +
   geom_line(data = subset(soilmoisture_clean, grepl(str_flatten(b3l4trt, collapse = "|"), fulltrt) & logger != "B3L4" & cleanorder %in% b3l4test$cleanorder2[b3l4test$intevent == 3]), aes(cleanorder, vwc, group = portid), col = "grey50") +
   geom_line() +
-  facet_grid(.~gsub("[0-9]+", "", fulltrt)) # looks okay now
+  facet_grid(.~fulltrt) # looks okay now
 
 
 # correct B3L4 in soilmoisture_clean
 clean_b3l4 <- subset(soilmoisture_clean, grepl("B3L4", portid)) %>%
   select(date_time:cleanorder, filename) %>%
   left_join(select(b3l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
-  left_join(distinct(soilmoisture_all, portid, logger, port, block, fulltrt))
+  left_join(distinct(soilmoisture_all, portid, logger, port, block, plotid, fulltrt))
 
 # create temp master with timestamp-corrected data (NAs not yet addressed)..
 soilmoisture_master <- subset(soilmoisture_clean, !grepl("B3L4", portid), c(date_time, portid, cleanorder, filename, vwc)) %>%
-  left_join(distinct(select(soilmoisture_all, portid, logger, port, block, fulltrt))) %>%
+  left_join(distinct(select(soilmoisture_all, portid, logger, port, block, plotid, fulltrt))) %>%
   select(names(soilmoisture_clean)) %>%
   rbind(clean_b3l4[names(.)])
 
@@ -770,7 +770,7 @@ ggplot(subset(b2l4test, intevent == 3 & portid != "B2L4_3"), aes(cleanorder3, vw
 clean_b2l4 <- subset(soilmoisture_clean, grepl("B2L4", portid)) %>%
   select(date_time:cleanorder, filename) %>%
   left_join(select(b2l4test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
-  left_join(distinct(soilmoisture_all, portid, logger, port, block, fulltrt))
+  left_join(distinct(soilmoisture_all, portid, logger, port, block, plotid, fulltrt))
 
 # create temp master with timestamp-corrected data (NAs not yet addressed)..
 soilmoisture_master <- subset(soilmoisture_master, !grepl("B2L4", portid)) %>%
@@ -939,7 +939,7 @@ ggplot(data = refdata_b2l2_early, aes(datorder, vwc, group = portid), col = "gre
   geom_line() +
   geom_line(data = searchdata_b2l2_early, aes(datorder2, vwc, group = paste(portid, intevent), col = as.factor(port), lty = as.factor(intevent))) +
   facet_grid(. ~ gsub("[0-9]", "", fulltrt))
-theme(legend.position = "none")
+  #theme(legend.position = "none")
 
 # join correct cleanorder and date time to searchdata by datorder2
 b2l2early_test <- subset(datecheck, logger == "B2L2" & intevent %in% unique(with(b2l2dates, intevent[nports == 5]))) %>%
@@ -1018,7 +1018,7 @@ unique(searchdata_b2l2.2$difforder)
 ggplot(subset(searchdata_b2l2.2, intevent %in% 2:4), aes(cleanorder, vwc)) +
   geom_line(data = subset(refdata_b2l2, grepl(gsub("[0-9]", "", searchdata_b2l2.2$fulltrt[1]), fulltrt) & cleanorder > min(with(searchdata_b2l2.2, cleanorder[intevent==2])) & cleanorder < max(with(searchdata_b2l2.2, cleanorder[intevent==4]))), aes(cleanorder, vwc, group = portid), alpha = 0.3) +
   geom_line(aes(col = as.factor(intevent)))
-scale_x_continuous(breaks = seq(4100,4400, 25))
+#scale_x_continuous(breaks = seq(4100,4400, 25))
 
 ggplot(searchdata_b2l2.2, aes(datorder, vwc, col = as.factor(intevent))) +
   geom_line()
@@ -1285,10 +1285,8 @@ soilmoisture_master <- soilmoisture_master %>%
   ungroup() %>%
   # add in trt info, logger info..
   left_join(distinct(select(soilmoisture_all, logger:comp_trt)), by = "portid") %>%
-  rename(plotid = fulltrt) %>%
   # add in fulltrt info, year, doy, join water year info, etc back in..
-  mutate(fulltrt = paste0(nut_trt,ppt_trt),
-         date = as.Date(clean_datetime),
+  mutate(date = as.Date(clean_datetime),
          time = format(clean_datetime, format = "%H:%M:%S")) %>%
   left_join(date_lookup, by = "date") %>%
   select(-qa_note) %>%
