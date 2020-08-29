@@ -96,16 +96,16 @@ for(i in vegfiles){
   if(all(!grepl("[[:alpha:]]+", notes$plot))){
     notes$plot <- as.numeric(notes$plot)
   }
-  # if plot ID is block-nut-ppt ID, rename col to fulltrt to join correctly with trtkey
+  # if plot ID is block-nut-ppt ID, rename col to plotid to join correctly with trtkey
   # > 2019 we use block-nut-ppt, 2020 use plot #
   if(any(grepl("[[:alpha:]]", notes$plot))){
-    notes <- rename(notes, fulltrt = plot)
+    notes <- rename(notes, plotid = plot)
   } 
   
   # join plot treatment info
   notes <- left_join(notes, trtkey) #left_join preserves order of sampling, merge alphabetizes plots
   #reorder cols
-  notes <- notes[c("plot", "fulltrt", "block", "nut_trt", "ppt_trt", "yr", "date", "recorder", "notes")]
+  notes <- notes[c("plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt", "yr", "date", "recorder", "notes")]
   
   
   # -- PREP ABUNDANCE DATA FOR TIDYING AND TRANSPOSING -----
@@ -126,8 +126,8 @@ for(i in vegfiles){
   vegdat$code4[grepl("%", vegdat$species)] <- with(vegdat[grepl("%", vegdat$species),], 
                                                    paste0("pct_", casefold(str_extract(species, "[A-Z][a-z]+"))))
   
-  # ID pct cover column headers as plot or fulltrt depending on whether letter present
-  vegdat$code4[1] <- ifelse(grepl("[[:alpha:]]", vegdat$V3[1]), "fulltrt", "plot")
+  # ID pct cover column headers as plot or plotid depending on whether letter present
+  vegdat$code4[1] <- ifelse(grepl("[[:alpha:]]", vegdat$V3[1]), "plotid", "plot")
   vegdat$code4[litpos] <- "litter_depth_cm"
   # check to be sure all rows have a code4 value before proceeding
   stopifnot(all(!is.na(vegdat$code4)))
@@ -170,9 +170,6 @@ for(i in vegfiles){
     left_join(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species)), by = "code4") %>%
     # order by plot, date, code
     arrange(plot, date, code4) %>%
-    #modify full trt and plotid cols
-    rename(plotid = fulltrt) %>%
-    mutate(fulltrt = paste0(nut_trt,ppt_trt)) %>%
     # rearrange cols
     select(plot, plotid, fulltrt, block:ncol(.))
   
