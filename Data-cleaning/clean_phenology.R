@@ -223,7 +223,7 @@ ggplot(subset(pheno_master, !is.na(pct_green)), aes(date, pct_green, col = nut_t
   geom_point(alpha = 0.75) +
   geom_smooth(se = F) +
   scale_x_datetime(date_labels = "%m-%d") +
-  ggtitle("USDA Compost senesence, all years, QA quickplot") +
+  ggtitle("USDA Compost senescence, all years, QA quickplot") +
   facet_grid(ppt_trt~yr, scales = "free_x") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
