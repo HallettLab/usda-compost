@@ -33,8 +33,10 @@
 rm(list=ls())
 # load libraries needed
 library(tidyverse) # for dplyr, tidyr, and stringr
+library(lubridate)
 options(stringsAsFactors = F)
 na_vals <- c(" ", "", NA, "NA")
+theme_set(theme_bw())
 
 # set path to compost data (main level)
 # > varies by user
@@ -85,7 +87,7 @@ for(i in vegfiles){
   notes <- data.frame(t(notes)) #transpose, change matrix class to data frame
   colnames(notes) <- casefold(gsub(":", "", notes[1,])) # set row 1 as column names, make lower case and remove colon
   notes <- notes[-1,] # remove row 1
-  rownames(notes) <- seq(1,nrow(notes),1) # rename rownames in numeric sequence
+  rownames(notes) <- NULL # rename rownames in numeric sequence
   
   # change date from character to date format and add year column
   notes$date <- as.Date(notes$date, format = "%m/%d/%y")
@@ -119,15 +121,29 @@ for(i in vegfiles){
   allNAs[1:litpos] <- FALSE 
   # allNAs <- allNAs[!grepl("NA",names(allNAs))] # remove NAs created by ignoring rows 1 through litter depth
   vegdat <- vegdat[!allNAs,] 
+  # rename rownames in sequential order to preserve correct order as in datasheets
+  rownames(vegdat) <- 1:nrow(vegdat)
   
+  
+  # replace entered species name with synonym if present
+  synonyms <- vegdat$V1[vegdat$V1 %in% spplist$species[!is.na(spplist$compost_synonym)]]
+  if(length(synonyms)>0){
+    for(s in synonyms){
+      vegdat$V1[vegdat$V1 == s] <- spplist$compost_synonym[spplist$species == s]
+    }
+  }
   # join species codes and descriptive info
   vegdat <- right_join(spplist[c("species", "code4")], vegdat, by = c("species" = "V1"))
+  vegdat <- distinct(vegdat)
   # add codes for non-species cells (e.g. percent grass, percent bare/other)
   vegdat$code4[grepl("%", vegdat$species)] <- with(vegdat[grepl("%", vegdat$species),], 
                                                    paste0("pct_", casefold(str_extract(species, "[A-Z][a-z]+"))))
   
   # ID pct cover column headers as plot or plotid depending on whether letter present
-  vegdat$code4[1] <- ifelse(grepl("[[:alpha:]]", vegdat$V3[1]), "plotid", "plot")
+  ## track new litpos and plotpos because something apparently has changed in 2021 (CTW hates new package versions)
+  plotpos <- grep("plot", vegdat[,1], ignore.case = T)
+  litpos <- grep("depth", vegdat[,1])
+  vegdat$code4[plotpos] <- ifelse(grepl("[[:alpha:]]", vegdat$V3[plotpos]), "plotid", "plot")
   vegdat$code4[litpos] <- "litter_depth_cm"
   # check to be sure all rows have a code4 value before proceeding
   stopifnot(all(!is.na(vegdat$code4)))
@@ -136,19 +152,24 @@ for(i in vegfiles){
   vegdat <- data.frame(t(vegdat)) # transpose, change matrix to data frame
   colnames(vegdat) <- vegdat[1,]
   vegdat <- vegdat[-1,]
-  rownames(vegdat) <- seq(1,nrow(vegdat), 1)
+  rownames(vegdat) <- NULL
   
   #clean up trace values and empty cells for non-species cells (e.g. percent green, percent bare, litter depth)
   vegdat[vegdat == "T"] <- 0.01
-  vegdat[colnames(vegdat)[1:7]] <- sapply(vegdat[colnames(vegdat)[1:7]], function(x) ifelse(is.na(x)|x == "n/a",0,x))
+  # make sure plot and pct cols are first (got reorganized in 2021 with some type of R/package update)
+  plotnames <- names(vegdat)[!grepl("[A-Z0-9]{4}", names(vegdat))]
+  sppnames <- names(vegdat)[!names(vegdat) %in% plotnames]
+  # reorganize
+  vegdat <- cbind(vegdat[plotnames],vegdat[sppnames])
+  vegdat[plotnames] <- sapply(vegdat[plotnames], function(x) ifelse(is.na(x)|x == "n/a",0,x))
   # make all cols except plot numeric [except if plot is the numeric ID and not fulltrt]
-  vegdat[,2:ncol(vegdat)] <- sapply(vegdat[,2:ncol(vegdat)], as.numeric)
+  vegdat[,!grepl("plot", names(vegdat), ignore.case = T)] <- sapply(vegdat[,!grepl("plot", names(vegdat), ignore.case = T)], as.numeric)
   # if plot numeric ID, also make numeric so it joins with trtkey
-  if(!all(grepl("[[:alpha:]]", vegdat[,1]))){
-    vegdat[,1] <- as.numeric(vegdat[,1])
+  if(!all(grepl("[[:alpha:]]", vegdat[,grepl("plot", names(vegdat), ignore.case = T)]))){
+    vegdat[,grepl("plot", names(vegdat), ignore.case = T)] <- as.numeric(vegdat[,grepl("plot", names(vegdat), ignore.case = T)])
   }
   # reorder species cols alphabetically
-  vegdat <- vegdat[c(colnames(vegdat)[1:litpos], sort(colnames(vegdat)[(litpos+1):ncol(vegdat)]))]
+  vegdat <- vegdat[c(plotnames, sort(sppnames))]
   
   # join notes and cover data
   clean_vegdat <- full_join(notes,vegdat, by = names(vegdat)[1])
@@ -159,15 +180,16 @@ for(i in vegfiles){
   # -- CREATE TIDY LONG FORM DATASET ----
   vegdat_long <- clean_vegdat %>%
     # gather species cover only (keep pct green through litter depth in their own cols in case want to drop or break out in analysis)
-    gather(code4, pct_cover, (grep("depth",colnames(.))+1):ncol(.), na.rm = T) %>%
+    gather(code4, pct_cover, all_of(sppnames), na.rm = T) %>%
     # clean up period and number additions from cols with same code
     mutate(code4 = gsub("[.][0-9]", "", code4)) %>%
     # group by code and sum pct cover [2020 has nikolai's unqiue species names, but correspond to duplicated code4]
     grouped_df(names(.)[names(.) != "pct_cover"]) %>%
     summarise(pct_cover = sum(pct_cover)) %>%
     ungroup() %>%
+    mutate(num = 1:nrow(.)) %>%
     # append species descriptive info
-    left_join(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species)), by = "code4") %>%
+    left_join(distinct(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species) & is.na(compost_synonym), select = c(species:nativity))), by = "code4") %>%
     # order by plot, date, code
     arrange(plot, date, code4) %>%
     # rearrange cols
@@ -194,36 +216,38 @@ for(i in vegfiles){
 # -- PRELIM PLOT -----
 # quick check that cover dat looks okay
 # spp richness
-cover_master_long %>%
+data.frame(cover_master_long) %>%
   mutate(mo = month(date, label = T, abbr = T),
          date_group = paste(mo, yr, sep = " "),
-         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020")),
+         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020", "Apr 2021")),
          nut_trt = gsub("N", "XC", nut_trt)) %>%
   grouped_df(c("plot", "nut_trt", "ppt_trt", "date_group")) %>%
   summarise(S = length(unique(code4))) %>%
   ungroup() %>%
   ggplot(aes(plot, S, group = plot)) +
-  geom_line() +
-  geom_point(aes(col = as.factor(date_group)), alpha = 0.6) +
-  scale_color_viridis_d(name = "Sample date") +
+  geom_line(aes(group = plot)) +
+  geom_point(aes(fill = date_group), pch = 21, alpha = 0.6) +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_viridis_d(name = "Sample date") +
   ggtitle(paste0("USDA Compost data QA (", Sys.Date() ,"):\nprelim spp comp, richness by plot, treatments, and sample date")) +
   facet_grid(nut_trt~ppt_trt) # AS and CTW sampling in 2019 vs NS sampling in 2020.. influence in spp richness
 # save to QA figs
 ggsave(filename = paste0(datpath, "Cover/Cover_Figures/Prelim_QAFigures/SppComp_S_PlotxYr.pdf"),
-       width = 6, height = 6, units = "in", scale = 1) 
+       width = 5.25, height = 4, units = "in", scale = 1.1) 
 
 # what about cover by family?
 cover_master_long %>%
   mutate(mo = month(date, label = T, abbr = T),
          date_group = paste(mo, yr, sep = " "),
-         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020"))) %>%
+         date_group = factor(date_group, levels = c("Apr 2019", "May 2019", "Apr 2020", "Apr 2021"))) %>%
   grouped_df(c("plot","date_group", "Family")) %>%
   summarise(totcov = sum(pct_cover)) %>%
   ungroup() %>%
   ggplot(aes(plot, totcov)) +
   geom_line(aes(group = plot)) +
-  geom_point(aes(col = as.factor(date_group)), alpha = 0.6) +
-  scale_color_viridis_d(name = "Sample date") +
+  geom_point(aes(fill = date_group), pch = 21, alpha = 0.6) +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_viridis_d(name = "Sample date") +
   ggtitle(paste0("USDA Compost data QA (", Sys.Date() ,"): prelim spp comp, Family total cover by plot and sample date")) +
   facet_wrap(~Family, scales = "free") # interesting switch with poa vs forbs in 2020 for lower blocks..
 # save to QA figs
