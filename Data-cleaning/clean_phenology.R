@@ -22,7 +22,7 @@ library(tidyverse)
 library(readxl)
 # modify default settings
 options(stringsAsFactors = F)
-na_vals <- c("" , " ", "NA", NA)
+na_vals <- c("" , " ",".", "NA", NA)
 
 # specify dropbox pathway (varies by user -- ctw can tweak this later)
 if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
@@ -45,9 +45,15 @@ pheno_master <- data.frame()
 pct_cols <- c("pct_green", "pct_brown", "pct_bare")
 
 
-# 1. spring 2019 loop -----
+# 1. spring 2019 + 2021 loop -----
 # june 2020: changing this loop to prep 2019 only since winter 2020 and spring 2020 pheno files structured differently
-for(i in pheno_files[grepl("2019", pheno_files)]){
+# may 2021: modifying loop to accommodate 2021 data
+
+for(i in pheno_files[grepl("2019|2021", pheno_files)]){
+  # except if Dustin's 2021 dat, run in next loop
+  if(grepl("20210427", i)){
+    next
+  }
   # phenology dat
   temp_pheno <- read_excel(i, sheet = 1, na = na_vals, trim_ws = T) %>% data.frame()  
   # photo key
@@ -84,11 +90,20 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   }
   
   # join both datasets, correct name
-  tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot")) %>%
-    #  # concatenate plot and subplot so plot values match treatment key plot values
-    mutate(plotid = ifelse(!is.na(subplot), paste0(plot, subplot), plot)) %>%
-    # drop plot so pairs correctly with trtkey
-    dplyr::select(-plot)
+  # need to trt 2019 and 2021 a little differently because datasheets structured differently
+  if(unique(year(temp_pheno$date))==2019){
+    tempdat <- full_join(temp_pheno, temp_photokey, by = c("recorder", "date", "plot", "subplot")) %>%
+      #  # concatenate plot and subplot so plot values match treatment key plot values
+      mutate(plotid = ifelse(!is.na(subplot), paste0(plot, subplot), plot)) %>%
+      # drop plot so pairs correctly with trtkey
+      dplyr::select(-c(plot, subplot))
+  }else{
+    tempdat <- full_join(temp_pheno, temp_photokey) %>%
+      # add line to tempdat to match 2019 data. will be same as plot #
+      mutate(line = plot) %>%
+      #reorder cols
+      dplyr::select(page, line, recorder:ncol(.))
+  }
   # join treatment data
   tempdat <- left_join(tempdat, trtkey)
   # add year
@@ -100,7 +115,7 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
   pheno_master <- rbind(pheno_master, tempdat)
   
   # if end of loop, print done
-  if(i == pheno_files[length(pheno_files)]){
+  if(i == last(pheno_files[grepl("2019|2021", pheno_files)])){
     # make df data frame
     pheno_master <- data.frame(pheno_master)
     print("Master phenology dataset compiled! Inspect and if all looks good write out and proceed to analysis! (w00t w00t!)")
@@ -108,11 +123,17 @@ for(i in pheno_files[grepl("2019", pheno_files)]){
 }
 
 # 2. spring 2020 loop -----
-# write loop for spring 2020 data
-# pull names in spring 2020 excel sheet
+# write loop for spring 2020 data + Dustin's 2021 data
+# pull names in spring 2020 + 2021 excel workbooks
 sp2020 <- excel_sheets(pheno_files[grep("Spring2020", pheno_files)])
-for(i in sp2020[sp2020 != "Master"]){
-  tempdat <- read_excel(pheno_files[grep("Spring2020", pheno_files)], sheet = i, na = na_vals)
+sp2021 <- excel_sheets(pheno_files[grep("20210427", pheno_files)])
+
+for(i in c(sp2020[sp2020 != "Master"], sp2021)){
+  if(grepl("-20$", i)){
+    tempdat <- read_excel(pheno_files[grep("Spring2020", pheno_files)], sheet = i, na = na_vals)
+  }else{
+    tempdat <- read_excel(pheno_files[grep("20210427", pheno_files)], sheet = i, na = na_vals)
+  }
   tempinfo <- names(tempdat)[grep("[:alpha:]", names(tempdat))]
   # remove any cols that are all NA
   tempdat <- tempdat[,!sapply(tempdat, function(x) all(is.na(x)))]
@@ -127,6 +148,9 @@ for(i in sp2020[sp2020 != "Master"]){
   # remove any rows that are all NA
   tempdat <- tempdat[!apply(tempdat, 1, function(x) all(is.na(x))),]
   tempdat$recorder <- trimws(gsub("^R[[:alpha:]]+ *: *", "", tempinfo[grep("Recorder", tempinfo, ignore.case = T)]))
+  # clean up i (characters present in 2021)
+  i <- str_remove(i, "[:alpha:]+")
+  i <- trimws(i)
   tempdat$date <- as.Date(i, format = "%m-%d-%y")
   # standardize colnames
   names(tempdat) <- gsub(" |#", "", casefold(names(tempdat)))
@@ -196,10 +220,16 @@ View(pheno_master[sumcheck < 100,]) # if all NA's okay -- just means a general p
 
 # visualize data to be sure nothing funky
 ggplot(subset(pheno_master, !is.na(pct_green)), aes(date, pct_green, col = nut_trt)) +
-  geom_point() +
+  geom_point(alpha = 0.75) +
   geom_smooth(se = F) +
   scale_x_datetime(date_labels = "%m-%d") +
-  facet_grid(ppt_trt~yr, scales = "free_x")
+  ggtitle("USDA Compost senesence, all years, QA quickplot") +
+  facet_grid(ppt_trt~yr, scales = "free_x") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# write out
+ggsave(paste0(datpath, "Phenology/Phenology_Figures/Compost_senescence_QAprelim.pdf"), 
+       width = 6, height = 4)
 
 ggplot(subset(pheno_master, !is.na(pct_bare)), aes(date, pct_bare, col = nut_trt, group = plot)) +
   geom_line() +
@@ -210,6 +240,7 @@ ggplot(subset(pheno_master, !is.na(pct_bare)), aes(date, pct_bare, col = nut_trt
 ggplot(subset(pheno_master, !is.na(pct_brown)), aes(date, pct_brown, col = nut_trt)) +
   geom_point() +
   geom_smooth(se = F) +
+  ggtitle("USDA Compost brownup, all years, QA quickplot") +
   scale_x_datetime(date_labels = "%m-%d") +
   facet_grid(ppt_trt~yr, scales = "free_x")
 
