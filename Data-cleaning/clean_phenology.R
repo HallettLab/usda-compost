@@ -235,7 +235,14 @@ ggplot(subset(pheno_master, !is.na(pct_bare)), aes(date, pct_bare, col = nut_trt
   geom_line() +
   #geom_smooth(se = F) +
   scale_x_datetime(date_labels = "%m-%d") +
-  facet_grid(ppt_trt~yr, scales = "free_x") # gopher disturbance causes hi bare
+  labs(title = "USDA Compost bare ground, all years, QA quickplot",
+       subtitle = "Bare most often due to gopher disturbance") +
+  facet_grid(ppt_trt~yr, scales = "free_x") + # gopher disturbance causes hi bare
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# write out
+ggsave(paste0(datpath, "Phenology/Phenology_Figures/Compost_pctbare_QAprelim.pdf"), 
+       width = 6, height = 4)
 
 ggplot(subset(pheno_master, !is.na(pct_brown)), aes(date, pct_brown, col = nut_trt)) +
   geom_point() +
