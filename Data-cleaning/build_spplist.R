@@ -30,6 +30,13 @@
 # I sent a photo on the “Tall Branchy”. (Silene gallica -- sent to AS on April 30)
 # As for the “Skinny” I am still processing that request. (sent April 30 too? it's a forb.. don't know what, too undeveloped.. but could be unknown forb from last year)
 
+# notes from 15 may 2021:
+# Scott Chamberlain took down his RESTful API for USDA Plants in Sep 2020 per USDA saying they have an API to use..
+# .. they don't (CTW is super mad)
+# new workflow is to read in existing spplist compiled through summer 2020 and then use .rdata USDA PLANTS DB I found (https://uofi.app.box.com/v/usdaplants)
+# import data from .rdata source for any spp that aren't already on Compost spp list
+# appears info in .rdata come from 2011-2016 USDA PLANTS info, which was as current as S. Chamberlain API info (his was from 2011 I think)
+# CTW is super annoyed with USDA (so mad I am documenting it. grrrrrr!!)
 
 
 
@@ -40,7 +47,7 @@ rm(list=ls())
 library(request) # to access USDA plants api
 library(tidyverse) # for tibble, dplyr, stringr
 options(stringsAsFactors = F)
-na_vals <- c(" ", "", NA, "NA")
+na_vals <- c(" ", "", NA, "NA", ".")
 
 # set path to compost data (main level)
 # specify dropbox pathway (varies by user -- ctw can tweak this later)
@@ -53,7 +60,38 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
 }
 
 # list files in entered data folder
+## look at both main cover dat and native recruitment cover 
 vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = T, pattern = "_Cover_", ignore.case = T)
+# append native recruitment
+vegfiles <- c(vegfiles, list.files(paste0(datpath, "Native/Native_EnteredData"), full.names = T))
+
+# read in USDA PLANTS .rdata from Univ. Ill.
+load(paste0(datpath, "USDA_PLANTS/usdaplants.RData"))
+# read in current Compost spplist
+spplist_current <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals) 
+
+
+
+# -- TIDY USDA PLANTS DATA -----
+names(usdaplants)
+# specify cols to keep (to match API process below)
+rdat_vars <- c("Symbol","AcceptedSymbol","ScientificName","CommonName","State",
+               "Category","Family","FamilyCommonName","Duration","GrowthHabit","NativeStatus")
+
+tidyusda  <- usdaplants[rdat_vars]
+# NA empty cells
+tidyusda <- data.frame(sapply(tidyusda, function(x) ifelse(x %in% c("", " "), NA, x)))
+# clean up state info
+head(tidyusda$State)
+head(spplist_current$State_and_Province)
+tidyusda$State <- gsub("<strong>|</strong>", "", tidyusda$State)
+# check results
+sort(unique(tidyusda$State))
+summary(unique(tidyusda$State) %in% unique(spplist_current$State_and_Province))
+sort(unique(spplist_current$State_and_Province))
+spplist_current$State_and_Province[spplist_current$species == "Avena barbata"]
+tidyusda$State[tidyusda$ScientificName == "Avena barbata"] # will look at this more after run through species
+
 
 
 # -- COMPILE SPP LIST -----
@@ -138,6 +176,8 @@ genera <- spplist_master$species[spplist_master$unknown == 1 & grepl("sp[.]|spp[
 # remove asters and unknowns geric grams and forbs
 genera <- genera[!grepl("aster|forb|grass", genera, ignore.case = T)]
 
+# ============= SKIP THESE SECTIONS IN 2021 =========================
+
 # run usda plants api query to scrape species info
 # NOTE!!: this will throw an error ["Client error: (400) Bad Request"] if a species is spelled incorrectly in the cover data (a good QA check)
 # loop will issue warnings about cbind command providing more variables to replace than there are in 
@@ -201,6 +241,8 @@ str(spplist_master)
 copydf <- spplist_master
 # clean up environment
 rm(temp_df, templist, templist2, update_df, temp_epithet, temp_genus, temp_susbp, temp_symbol, i, p)
+
+
 
 
 
@@ -315,6 +357,76 @@ spplist_master$fxnl_grp[spplist_master$Growth_Habit == "Unknown"] <- "Unknown"
 spplist_master$nativity[grepl("L48 .I.",spplist_master$Native_Status)] <- "Exotic"
 spplist_master$nativity[grepl("L48 .N.",spplist_master$Native_Status)] <- "Native"
 spplist_master$nativity[is.na(spplist_master$Native_Status)] <- "Unknown"
+
+
+# ============= RESUME SCRIPT FOR 2021 =========================
+
+
+# -- ADD IN NEW 2021 SPP ----
+# assign full master to a different df so code in finishing runs as intended
+spplist_master_base <- spplist_master
+
+# separate new list for 2021
+spplist_2021 <- subset(spplist_master, !species %in% spplist_current$species)
+# designate unknowns that didn't get marked in code above
+spplist_2021$species[!spplist_2021$species %in% tidyusda$ScientificName] #FEMI is VUMI
+spplist_2021$unknown[!(spplist_2021$species %in% tidyusda$ScientificName) & !grepl("microstachys", spplist_2021$species)] <- 1
+# NA cols for unknowns
+spplist_2021[spplist_2021$unknown == 1, c("genus", "epithet", "code4", "code6")] <- NA
+
+# pull USDA data for known spp
+spplist_2021_known <- left_join(subset(spplist_2021, unknown == 0, select = c(species:code6)), tidyusda, by = c("species" = "ScientificName"), keep = T)
+# add in data for VUMI
+spplist_2021_known[grepl("microstach", spplist_2021_known$species), grep("^Symbol", names(spplist_2021_known)):ncol(spplist_2021_known)] <- subset(tidyusda, Symbol == "VUMI")
+
+
+# clean up unknowns
+spplist_2021 <- subset(spplist_2021, unknown == 1)
+spplist_2021$compost_synonym <- NA
+
+# > check what might overlap already with current species
+# manual corrections
+## ASTERS
+spplist_2021[grepl("hairy", spplist_2021$species, ignore.case = T), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "ASSP", select = c(code4:Native_Status, species))
+spplist_2021[grepl("[(]smooth[)]$", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "AST3", select = c(code4:Native_Status, species))
+spplist_2021[grepl("catpaw", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "HYSP", select = c(code4:Native_Status, species))
+
+## TRIFOL
+spplist_2021[grepl("smooth heart", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "TRSP", select = c(code4:Native_Status, species))
+
+## assign unk bulb (unsure if genus will be tritel. or dichelo.)
+spplist_2021[grepl("bulb", spplist_2021$species, ignore.case = T), c("code4", "code6")] <- rep(c("UNBU", "UNBULB"), each = 2)
+spplist_2021[grepl("bulb", spplist_2021$species), grep("^State", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(tidyusda, Symbol == "DICA14", select = c(State:NativeStatus))
+ 
+# assign remaining unk forbs (currently only 1 in spplist)
+num <- sum(grepl("UNFRB[0-9]+", spplist_current$code6)) # more dynamic way of counting
+for(s in spplist_2021$species[is.na(spplist_2021$code4)]){
+  spplist_2021$code4[spplist_2021$species == s] <- paste0("UNF", (num+1))
+  spplist_2021$code6[spplist_2021$species == s] <- paste0("UNFRB", (num+1))
+  num <- num+1
+}
+# assign other info
+spplist_2021[grepl("UNFRB", spplist_2021$code6), grep("Category", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(spplist_current, code4 == "UNF1", select = c(Category:Native_Status))
+
+# stack knowns to unknowns and assign fxnl group then nativity to append to master
+names(spplist_2021)
+names(spplist_2021_known)
+spplist_2021_known$compost_synonym <- NA
+names(spplist_2021_known) <- names(spplist_2021) 
+spplist_2021 <- rbind(spplist_2021, spplist_2021_known)
+
+# finish by adding fxnl_grp and simplified nativity col
+spplist_2021$fxnl_grp[grepl("Gram", spplist_2021$Growth_Habit)] <- "Grass"
+spplist_2021$fxnl_grp[grepl("Forb", spplist_2021$Growth_Habit, ignore.case = T)] <- "Forb"
+spplist_2021$fxnl_grp[grepl("Fabac", spplist_2021$Family)] <- "N-fixer"
+spplist_2021$fxnl_grp[spplist_2021$Growth_Habit == "Unknown"] <- "Unknown"
+
+spplist_2021$nativity[grepl("L48 .I.",spplist_2021$Native_Status)] <- "Exotic"
+spplist_2021$nativity[grepl("L48 .N.",spplist_2021$Native_Status)] <- "Native"
+spplist_2021$nativity[is.na(spplist_2021$Native_Status)] <- "Unknown"
+
+# create all years master
+spplist_master <- rbind(cbind(spplist_current, compost_synonym = NA), spplist_2021)
 
 
 # -- FINISHING -----
