@@ -187,7 +187,6 @@ for(i in vegfiles){
     grouped_df(names(.)[names(.) != "pct_cover"]) %>%
     summarise(pct_cover = sum(pct_cover)) %>%
     ungroup() %>%
-    mutate(num = 1:nrow(.)) %>%
     # append species descriptive info
     left_join(distinct(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species) & is.na(compost_synonym), select = c(species:nativity))), by = "code4") %>%
     # order by plot, date, code
@@ -211,7 +210,6 @@ for(i in vegfiles){
   }
 }
 
-# modify fulltrt and plotid cols
 
 # -- PRELIM PLOT -----
 # quick check that cover dat looks okay
