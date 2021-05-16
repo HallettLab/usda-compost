@@ -219,6 +219,16 @@ sapply(split(pheno_master[,pct_cols], pheno_master$date), function(x) range(x, n
 sumcheck <- apply(pheno_master[,pct_cols], 1, function(x) unique(sum(x, na.rm = T))) # should be either 0 (NAs in row) or 100
 View(pheno_master[sumcheck < 100,]) # if all NA's okay -- just means a general plot note
 
+# check order of data
+unique(pheno_master$date) # not in order
+pheno_master <- arrange(pheno_master, date, page, line) %>%
+  # also add sampling event per year
+  group_by(yr) %>%
+  mutate(sample_event = as.numeric(factor(date))) %>%
+  ungroup() %>%
+  #reorder cols
+  dplyr::select(page:yr, sample_event, plot:ncol(.))
+
 # visualize data to be sure nothing funky
 ggplot(subset(pheno_master, !is.na(pct_green)), aes(date, pct_green, col = nut_trt)) +
   geom_point(alpha = 0.75) +
