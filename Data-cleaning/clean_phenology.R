@@ -20,6 +20,7 @@ rm(list = ls()) # clear environment
 # load needed libraries
 library(tidyverse)
 library(readxl)
+library(lubridate)
 # modify default settings
 options(stringsAsFactors = F)
 na_vals <- c("" , " ",".", "NA", NA)
@@ -224,7 +225,7 @@ ggplot(subset(pheno_master, !is.na(pct_green)), aes(date, pct_green, col = nut_t
   geom_smooth(se = F) +
   scale_x_datetime(date_labels = "%m-%d") +
   ggtitle("USDA Compost senescence, all years, QA quickplot") +
-  facet_grid(ppt_trt~yr, scales = "free_x") +
+  facet_grid(ppt_trt~yr, scales = "free_x") + 
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 # write out
