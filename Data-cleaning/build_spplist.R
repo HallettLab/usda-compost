@@ -173,10 +173,12 @@ for(i in vegfiles){
   spplist_master <- spplist_master[!duplicated(spplist_master$species),]
 }
 
+# > only need to run this part once (done)
 # add generic dichelostemma and leontodon sp. (in may notes to replace apr, but not recorded/entered in data rows)
-addgeneric <- data.frame(matrix(nrow = 2, ncol = ncol(spplist_master), dimnames = list(NULL, names(spplist_master))))
-addgeneric$species <- c("Dichelostemma sp.", "Leontodon sp.") 
-spplist_master <- rbind(spplist_master, addgeneric)
+# addgeneric <- data.frame(matrix(nrow = 2, ncol = ncol(spplist_master), dimnames = list(NULL, names(spplist_master))))
+# addgeneric$species <- c("Dichelostemma sp.", "Leontodon sp.") 
+# spplist_master <- rbind(spplist_master, addgeneric)
+
 
 
 # -- APPEND USDA PLANTS DATA -----
