@@ -65,6 +65,9 @@ vegfiles <- list.files(paste0(datpath, "Cover/Cover_EnteredData"), full.names = 
 # append native recruitment
 vegfiles <- c(vegfiles, list.files(paste0(datpath, "Native/Native_EnteredData"), full.names = T))
 
+# take out crosswalk files (to use in native prep only)
+vegfiles <- vegfiles[!grepl("crosswalk", vegfiles)]
+
 # read in USDA PLANTS .rdata from Univ. Ill.
 load(paste0(datpath, "USDA_PLANTS/usdaplants.RData"))
 # read in current Compost spplist
@@ -107,8 +110,15 @@ for(i in vegfiles){
   # id where litter depth and cover data start
   litpos <- grep("depth", vegdat[,1], ignore.case = T)
   # id col where plots/abundance data start (2020 data start in different col than 2019)
-  # > this assumes litter depth has a numeric value (which is should..)
-  covpos <- min(grep("[[:digit:]]", vegdat[litpos,]))
+  # > this assumes litter depth has a numeric value (which it should..)
+  # > may 2021 dats don't always if just an update on april data. force to be col that corresponds to first plot if empty
+  if(sum(grep("[[:digit:]]", vegdat[litpos,])) > 0){
+    covpos <- min(grep("[[:digit:]]", vegdat[litpos,]))
+  }else{
+    # id plot pos
+    plotpos <- grep("plot", vegdat[,1], ignore.case = T)
+    covpos <- min(grep("[[:digit:]]", vegdat[plotpos,]))
+  }
   # remove any species rows that don't have any entries for abundance value
   allNAs <- apply(vegdat[litpos+1:nrow(vegdat), covpos:ncol(vegdat)],1,function(x) all(is.na(x)))
   # pull species list
@@ -213,8 +223,8 @@ for(p in c(spplist_master$species[spplist_master$unknown == 0], genera)){
       api_path(search) %>%
       api_query_(Genus = eval(temp_genus), Species = eval(temp_epithet))
   }
- 
-    
+  
+  
   # isolate desired cols
   temp_df <- data.frame(templist$data)
   temp_df <- temp_df[,names(temp_df) %in% usda_plantvars]
@@ -254,7 +264,7 @@ spplist_master[grepl("Annual grass",spplist_master$species), c("code4", "code6")
 # copy descriptive info from TACA since most general and applies
 spplist_master[grepl("Annual grass",spplist_master$species), 
                which(colnames(spplist_master)=="Category"):ncol(spplist_master)] <- spplist_master[spplist_master$code4 == "TACA" & !is.na(spplist_master$code4), 
-                                                                                                 which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
+                                                                                                   which(colnames(spplist_master)=="Category"):ncol(spplist_master)]
 
 # unknown Trifolium 
 for(i in which(grepl("Trif.*[0-9]|Trifolium spp.", spplist_master$species))){
@@ -321,8 +331,8 @@ spplist_master$code4[grepl("group", spplist_master$species)] <- paste0(substr(sp
                                                                        str_extract(spplist_master$species[grepl("group", spplist_master$species)], "(?<=-)[A-Z]"),
                                                                        "GR")
 spplist_master$code6[grepl("group", spplist_master$species)] <- casefold(paste0(substr(spplist_master$species[grepl("group", spplist_master$species)],1,2),
-                                                                       str_extract(spplist_master$species[grepl("group", spplist_master$species)], "(?<=-)[A-Z][a-z]"),
-                                                                       "GR"), upper = T)
+                                                                                str_extract(spplist_master$species[grepl("group", spplist_master$species)], "(?<=-)[A-Z][a-z]"),
+                                                                                "GR"), upper = T)
 spplist_master$Category[grepl("group", spplist_master$species)] <- "Dicot" # all dicots
 spplist_master$Duration[grepl("group|Hypochaeris sp|Madia sp|Geranium sp", spplist_master$species)] <- "Annual" # all of these are annual
 spplist_master$Growth_Habit[grepl("group|Hypochaeris sp|Madia sp|Geranium sp", spplist_master$species)] <- "Forb/herb"
@@ -367,6 +377,7 @@ spplist_master$nativity[is.na(spplist_master$Native_Status)] <- "Unknown"
 spplist_master_base <- spplist_master
 
 # separate new list for 2021
+# > if nothing exists (because list full compiled, skip this part)
 spplist_2021 <- subset(spplist_master, !species %in% spplist_current$species)
 # designate unknowns that didn't get marked in code above
 spplist_2021$species[!spplist_2021$species %in% tidyusda$ScientificName] #FEMI is VUMI
@@ -397,7 +408,7 @@ spplist_2021[grepl("smooth heart", spplist_2021$species), grep("code4", names(sp
 ## assign unk bulb (unsure if genus will be tritel. or dichelo.)
 spplist_2021[grepl("bulb", spplist_2021$species, ignore.case = T), c("code4", "code6")] <- rep(c("UNBU", "UNBULB"), each = 2)
 spplist_2021[grepl("bulb", spplist_2021$species), grep("^State", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(tidyusda, Symbol == "DICA14", select = c(State:NativeStatus))
- 
+
 # assign remaining unk forbs (currently only 1 in spplist)
 num <- sum(grepl("UNFRB[0-9]+", spplist_current$code6)) # more dynamic way of counting
 for(s in spplist_2021$species[is.na(spplist_2021$code4)]){
@@ -426,12 +437,14 @@ spplist_2021$nativity[grepl("L48 .N.",spplist_2021$Native_Status)] <- "Native"
 spplist_2021$nativity[is.na(spplist_2021$Native_Status)] <- "Unknown"
 
 # create all years master
-spplist_master <- rbind(cbind(spplist_current, compost_synonym = NA), spplist_2021)
+spplist_master <- rbind(spplist_current, spplist_2021)
 
 
 # -- FINISHING -----
 # order alphabetically by species
 spplist_master <- spplist_master[order(spplist_master$species),]
+# remove any spp no longer in ongoing veg datasets
+spplist_master <- subset(spplist_master, species %in% spplist_master_base$species)
 
 # qa checks
 # > check for typos
