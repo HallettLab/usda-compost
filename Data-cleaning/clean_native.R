@@ -1,5 +1,13 @@
 # clean 2021 native diversity sub-experiment data
 
+# script purpose:
+# read in apr 2021, may 2021 cover dat + cross walk
+# stack apr and may data with spplist
+# apply crosswalk to update apr unknowns 
+# verify abundances summed by code (no duplicate codes per plot)
+# > also add col for gopher disturbance (screen for gopher in notes)
+# treatments will be: herbicided, unherbided (both apr + may) + background herbicide (surveyed may 2021 only)
+
 # notes:
 # borrowing code from clean_cover script to build
 # major difference is will need to add col for herbicided vs. non-herbicided
@@ -31,6 +39,17 @@ vegfiles <- list.files(paste0(datpath, "Native/Native_EnteredData"), full.names 
 trtkey <- read.csv(paste0(datpath, "Compost_TreatmentKey.csv"),na.strings = na_vals, strip.white = T)
 # read in master spp list (lookup table)
 spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals, strip.white = T)
+# add generic dichelostemma to spplist
+
+# pull out crosswalk
+crosswalk <- read.csv(vegfiles[grepl("crosswalk_long", vegfiles)], na.strings = na_vals) %>%
+  # add herbicide info
+  mutate(herbicide = ifelse(grepl("NH", `Plot.`), "Non-herbicided", "Herbicided")) %>%
+  # add code for may
+  left_join(spplist[c("species", "code4")], by = c("May21_correction" = "species")) %>%
+  rename(may_code4 = code4) %>%
+  dplyr::select(plot, herbicide, Apr21_species:ncol(.)) %>%
+  rename_all(casefold)
 
 
 # -- TIDY AND TRANSPOSE ENTERED COVER DATA -----
@@ -39,8 +58,8 @@ spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals
 native_master_long <- data.frame()
 native_master_wide <- data.frame()
 
-# loop iterates through 2021 native entered data
-for(i in vegfiles){
+# loop iterates through 2021 native entered data (ignore crosswalks)
+for(i in vegfiles[!grepl("crosswalk", vegfiles)]){
   # read in dataset
   vegdat <- read.csv(i, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
   print(paste("Transposing and tidying", str_extract(i, "(?<=_)[:alnum:]+(?=.csv)"), "native dataset"))
@@ -68,13 +87,15 @@ for(i in vegfiles){
   
   # split herbicide info from plot
   notes$herbicide <- ifelse(grepl("NH", notes$plot), "Non-herbicided", "Herbicided")
+  # note whether treatment native seeded or ambient
+  notes$seedtrt <- ifelse(grepl("background", i), "unseeded", "native seeded")
   # clean up plot -- data collection only occurred in 2021, so only plot# used
   notes$plot <- parse_number(notes$plot)
   
   # join plot treatment info
   notes <- left_join(notes, trtkey) #left_join preserves order of sampling, merge alphabetizes plots
   #reorder cols
-  notes <- notes[c("file", "pages", "plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt", "herbicide", "yr", "date", "recorder", "notes")]
+  notes <- notes[c("file", "pages", "plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt", "herbicide", "seedtrt", "yr", "date", "recorder", "notes")]
   
   
   # -- PREP ABUNDANCE DATA FOR TIDYING AND TRANSPOSING -----
@@ -133,6 +154,8 @@ for(i in vegfiles){
   rownames(vegdat) <- NULL
   # create column for herbicided
   vegdat$herbicide <- ifelse(grepl("NH", vegdat$plot), "Non-herbicided", "Herbicided")
+  # create column for seed trt
+  vegdat$seedtrt <-  ifelse(grepl("background", i), "unseeded", "native seeded")
   # clean up plot
   vegdat$plot <- parse_number(vegdat$plot)
   
@@ -145,13 +168,13 @@ for(i in vegfiles){
   vegdat <- cbind(vegdat[plotnames],vegdat[sppnames])
   vegdat[plotnames] <- sapply(vegdat[plotnames], function(x) ifelse(is.na(x)|x == "n/a",0,x))
   # make all cols except herbicide numeric
-  vegdat[,!grepl("herbic", names(vegdat), ignore.case = T)] <- sapply(vegdat[,!grepl("herbic", names(vegdat), ignore.case = T)], as.numeric)
+  vegdat[,!grepl("herbic|seedtr", names(vegdat), ignore.case = T)] <- sapply(vegdat[,!grepl("herbic|seedtr", names(vegdat), ignore.case = T)], as.numeric)
   
   # reorder species cols alphabetically
-  vegdat <- vegdat[c("plot", "herbicide", plotnames[grepl("pct|lit", plotnames)], sort(sppnames))]
+  vegdat <- vegdat[c("plot", "herbicide", "seedtrt", plotnames[grepl("pct|lit", plotnames)], sort(sppnames))]
   
   # join notes and cover data
-  clean_vegdat <- full_join(notes,vegdat, by = names(vegdat)[1:2])
+  clean_vegdat <- full_join(notes,vegdat, by = c("plot", "herbicide", "seedtrt"))
   
   # NOTE > can introduce more logic checks here as needed...
   
