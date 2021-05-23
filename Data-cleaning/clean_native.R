@@ -22,6 +22,7 @@ library(readxl)
 # modify default settings
 options(stringsAsFactors = F)
 na_vals <- c("" , " ",".", "NA", NA)
+theme_set(theme_test())
 
 # specify dropbox pathway (varies by user)
 if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
@@ -42,14 +43,23 @@ spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals
 # add generic dichelostemma to spplist
 
 # pull out crosswalk
-crosswalk <- read.csv(vegfiles[grepl("crosswalk_long", vegfiles)], na.strings = na_vals) %>%
+crosswalk <- read.csv(vegfiles[grepl("crosswalk", vegfiles)], na.strings = na_vals) %>%
   # add herbicide info
   mutate(herbicide = ifelse(grepl("NH", `Plot.`), "Non-herbicided", "Herbicided")) %>%
   # add code for may
   left_join(spplist[c("species", "code4")], by = c("May21_correction" = "species")) %>%
   rename(may_code4 = code4) %>%
+  # add code for apr species
+  left_join(spplist[c("species", "code4")], by = c("Apr21_species" = "species")) %>%
+  rename(apr_code4 = code4) %>%
   dplyr::select(plot, herbicide, Apr21_species:ncol(.)) %>%
-  rename_all(casefold)
+  rename_all(casefold) %>%
+  # drop any unknown that doesn't have a correction
+  filter(!is.na(may_code4)) %>%
+  # change T(race) to 0.01 cover
+  mutate(cover = gsub("T", "0.01", cover),
+         cover = as.numeric(cover))
+
 
 
 # -- TIDY AND TRANSPOSE ENTERED COVER DATA -----
@@ -58,7 +68,8 @@ crosswalk <- read.csv(vegfiles[grepl("crosswalk_long", vegfiles)], na.strings = 
 native_master_long <- data.frame()
 native_master_wide <- data.frame()
 
-# loop iterates through 2021 native entered data (ignore crosswalks)
+# loop iterates through 2021 native entered data
+# > also updates entries for april that were ID'd in May
 for(i in vegfiles[!grepl("crosswalk", vegfiles)]){
   # read in dataset
   vegdat <- read.csv(i, na.strings = na_vals, header = F, blank.lines.skip = T, strip.white = T)
@@ -84,18 +95,19 @@ for(i in vegfiles[!grepl("crosswalk", vegfiles)]){
   # change date from character to date format and add year column
   notes$date <- as.Date(notes$date, format = "%m/%d/%y")
   notes$yr <- as.numeric(substr(as.character(notes$date), 1,4))
+  notes$mon <- lubridate::month(notes$date)
   
   # split herbicide info from plot
   notes$herbicide <- ifelse(grepl("NH", notes$plot), "Non-herbicided", "Herbicided")
   # note whether treatment native seeded or ambient
-  notes$seedtrt <- ifelse(grepl("background", i), "unseeded", "native seeded")
+  notes$seedtrt <- ifelse(grepl("background", i), "Unseeded", "Native seeded")
   # clean up plot -- data collection only occurred in 2021, so only plot# used
   notes$plot <- parse_number(notes$plot)
   
   # join plot treatment info
   notes <- left_join(notes, trtkey) #left_join preserves order of sampling, merge alphabetizes plots
   #reorder cols
-  notes <- notes[c("file", "pages", "plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt", "herbicide", "seedtrt", "yr", "date", "recorder", "notes")]
+  notes <- notes[c("file", "pages", "plot", "plotid", "fulltrt", "block", "nut_trt", "ppt_trt", "herbicide", "seedtrt", "yr", "mon", "date", "recorder", "notes")]
   
   
   # -- PREP ABUNDANCE DATA FOR TIDYING AND TRANSPOSING -----
@@ -155,7 +167,7 @@ for(i in vegfiles[!grepl("crosswalk", vegfiles)]){
   # create column for herbicided
   vegdat$herbicide <- ifelse(grepl("NH", vegdat$plot), "Non-herbicided", "Herbicided")
   # create column for seed trt
-  vegdat$seedtrt <-  ifelse(grepl("background", i), "unseeded", "native seeded")
+  vegdat$seedtrt <-  ifelse(grepl("background", i), "Unseeded", "Native seeded")
   # clean up plot
   vegdat$plot <- parse_number(vegdat$plot)
   
@@ -185,34 +197,79 @@ for(i in vegfiles[!grepl("crosswalk", vegfiles)]){
     gather(code4, pct_cover, all_of(sppnames), na.rm = T) %>%
     # clean up period and number additions from cols with same code
     mutate(code4 = gsub("[.][0-9]", "", code4)) %>%
-    # group by code and sum pct cover [2020 has nikolai's unqiue species names, but correspond to duplicated code4]
+    # group by code and sum pct cover [2020 has nikolai's unique species names, but correspond to duplicated code4]
     grouped_df(names(.)[names(.) != "pct_cover"]) %>%
     summarise(pct_cover = sum(pct_cover)) %>%
-    ungroup() %>%
-    # append species descriptive info
-    left_join(distinct(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species) & is.na(compost_synonym), select = c(species:nativity))), by = "code4") %>%
+    ungroup()
+  
+  # if April data, update unknown species
+  if(grepl("April", i)){
+    vegdat_long$rowid <- as.numeric(rownames(vegdat_long)) 
+    for(p in unique(clean_vegdat$plot)){
+      crosssub <- subset(crosswalk, plot == p)
+      for(h in unique(crosssub$herbicide)){
+        crosssub2 <- subset(crosssub, herbicide == h)
+        tempnote <- c("Data QA note -- Apr 2021 unknown species updated with May 2021 ID's: ")
+        for(r in 1:nrow(crosssub2)){
+          tempid <- with(vegdat_long, rowid[plot == p & herbicide == h & code4 == crosssub2$apr_code4[r] & pct_cover == crosssub2$cover[r]])
+          # check only pulled 1 row, and that it pulled a row
+          stopifnot(length(tempid)==1 & !is.na(tempid))
+          # update apr spp with may update
+          vegdat_long$code4[tempid] <- crosssub2$may_code4[r]
+          # append species updated
+          tempnote <- paste0(tempnote, paste0(crosssub2$apr_code4[r], ", ", crosssub2$apr21_species[r], ", to ", crosssub2$may_code4[r], ", ", crosssub2$may21_correction[r], "; "))
+        }
+        # clean up note before appending to plot notes
+        tempnote <- gsub("; $", "", tempnote)
+        # add to plot notes
+        currentnote <- unique(vegdat_long$notes[vegdat_long$plot == p & vegdat_long$herbicide == h])
+        if(is.na(currentnote)){
+          # if no note present, assign tempnote
+          vegdat_long$notes[vegdat_long$plot == p & vegdat_long$herbicide == h] <- tempnote
+        }else{
+          # if note present, append tempnote
+          vegdat_long$notes[vegdat_long$plot == p & vegdat_long$herbicide == h] <- paste(currentnote, tempnote, sep = "; ")
+        }
+      }
+    }
+    # sum cover for any duplicates codes from updated spp, drop rowid
+    vegdat_long <- vegdat_long %>%
+      grouped_df(names(vegdat_long)[!names(vegdat_long) %in% c("pct_cover", "rowid")]) %>%
+      summarise(pct_cover = sum(pct_cover)) %>%
+      ungroup() %>%
+      data.frame()
+  }
+  
+  
+  # continue with data prep
+  vegdat_long <- vegdat_long %>%
+  # append species descriptive info
+  left_join(distinct(subset(spplist, !grepl("red california|different .Navar.|tall branchy", species) & is.na(compost_synonym), select = c(species:nativity))), by = "code4") %>%
     # order by plot, date, code
     arrange(plot, date, code4) %>%
     # rearrange cols
     select(file, pages, plot, plotid, fulltrt, block:ncol(.))
   
   
+  
   # -- APPEND LONG FORM TO MASTER LONG FORM -----
   native_master_long <- rbind(native_master_long, vegdat_long)
+
   
-  
-  # -- CREATE MASTER WIDE FORM FROM MASTER LONG FORM -----
-  native_master_wide <- native_master_long[,1:grep("pct_cover",colnames(native_master_long), fixed = T)] %>%
-    spread(code4, pct_cover, fill = 0) %>%
-    arrange(plot, date)
-  
-  # if end of loop, print done
-  if(i == vegfiles[length(vegfiles)]){
+  # -- FINISHING -----
+  # if end of loop, make wideform dataset and print done
+  if(i == vegfiles[sum(!grepl("crosswalk", vegfiles))]){
+    
+    # CREATE MASTER WIDE FORM FROM MASTER LONG FORM -----
+    native_master_wide <- native_master_long[,1:grep("pct_cover",colnames(native_master_long), fixed = T)] %>%
+      spread(code4, pct_cover, fill = 0) %>%
+      arrange(plot, date)
+    
     print("Master cover dataset compiled! Inspect and if all looks good write out and proceed to analysis! (w00t w00t!)")
   }
 }
 
-
+# -- POST-LOOP CHECKS -----
 # check all looks okay
 native_master_long <- data.frame(native_master_long)
 native_master_wide <- data.frame(native_master_wide)
@@ -221,6 +278,13 @@ summary(duplicated(native_master_long))
 str(native_master_wide)
 summary(duplicated(native_master_wide))
 summary(native_master_long)
+
+# check only plots with QA note are those that should have been updated
+aprQAcheck <- subset(native_master_wide, grepl("Data QA", notes), select = c(plot, herbicide, seedtrt, yr, mon))
+nrow(aprQAcheck) == nrow(distinct(crosswalk, plot, herbicide)) # looks okay
+# review notes
+with(native_master_wide, unique(notes[grepl("Data QA", notes)])) # okay
+
 
 ggplot(native_master_long, aes(factor(plot), pct_cover, col = fxnl_grp)) +
   geom_jitter(height = 0) +
