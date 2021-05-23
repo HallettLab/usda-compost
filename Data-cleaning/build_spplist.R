@@ -173,6 +173,11 @@ for(i in vegfiles){
   spplist_master <- spplist_master[!duplicated(spplist_master$species),]
 }
 
+# add generic dichelostemma and leontodon sp. (in may notes to replace apr, but not recorded/entered in data rows)
+addgeneric <- data.frame(matrix(nrow = 2, ncol = ncol(spplist_master), dimnames = list(NULL, names(spplist_master))))
+addgeneric$species <- c("Dichelostemma sp.", "Leontodon sp.") 
+spplist_master <- rbind(spplist_master, addgeneric)
+
 
 # -- APPEND USDA PLANTS DATA -----
 # specify vars desired from usda plants database (there are 134)
@@ -401,6 +406,9 @@ spplist_2021$compost_synonym <- NA
 spplist_2021[grepl("hairy", spplist_2021$species, ignore.case = T), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "ASSP", select = c(code4:Native_Status, species))
 spplist_2021[grepl("[(]smooth[)]$", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "AST3", select = c(code4:Native_Status, species))
 spplist_2021[grepl("catpaw", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "HYSP", select = c(code4:Native_Status, species))
+spplist_2021[grepl("Leontodon sp.", spplist_2021$species), grep("^Symbol$", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(tidyusda, ScientificName == "Leontodon")
+spplist_2021[grepl("Leontodon sp.", spplist_2021$species), c("genus", "code4", "code6")] <- c("Leontodon", "LEON", "LEONSP")
+spplist_2021[grepl("Leontodon sp.", spplist_2021$species), c("Duration", "Growth_Habit", "Native_Status")] <- subset(tidyusda, Symbol == "LETA", select = c(Duration:NativeStatus))
 
 ## TRIFOL
 spplist_2021[grepl("smooth heart", spplist_2021$species), grep("code4", names(spplist_2021)):ncol(spplist_2021)] <- subset(spplist_current, code4 == "TRSP", select = c(code4:Native_Status, species))
@@ -408,6 +416,9 @@ spplist_2021[grepl("smooth heart", spplist_2021$species), grep("code4", names(sp
 ## assign unk bulb (unsure if genus will be tritel. or dichelo.)
 spplist_2021[grepl("bulb", spplist_2021$species, ignore.case = T), c("code4", "code6")] <- rep(c("UNBU", "UNBULB"), each = 2)
 spplist_2021[grepl("bulb", spplist_2021$species), grep("^State", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(tidyusda, Symbol == "DICA14", select = c(State:NativeStatus))
+spplist_2021[grepl("Dichelostemma sp.", spplist_2021$species), grep("^Symbol$", names(spplist_2021)):(ncol(spplist_2021)-1)] <- subset(tidyusda, ScientificName == "Dichelostemma")
+spplist_2021[grepl("Dichelostemma sp.", spplist_2021$species), c("genus", "code4", "code6")] <- c("Dichelostemma", "DICH", "DICHSP")
+spplist_2021[grepl("Dichelostemma sp.", spplist_2021$species), c("Duration", "Growth_Habit", "Native_Status")] <- subset(tidyusda, Symbol == "DICA14", select = c(Duration:NativeStatus))
 
 # assign remaining unk forbs (currently only 1 in spplist)
 num <- sum(grepl("UNFRB[0-9]+", spplist_current$code6)) # more dynamic way of counting
