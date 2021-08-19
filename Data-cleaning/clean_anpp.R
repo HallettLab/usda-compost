@@ -41,6 +41,8 @@ for(i in anpp_files){
       mutate_at(c("date_clip", "date_sort", "date_weigh"), as.Date, format = "%m/%d/%y") %>%
       # add yr, month, and yday
       mutate(yr = year(date_clip), mon = month(date_clip), doy = yday(date_clip)) %>%
+      # remove empty rows
+      subset(!(is.na(dry_wgt_g) & is.na(notes))) %>%
       # write out fxnl grp
       mutate(fxnl_grp = ifelse(grepl("G", fxnl_grp, ignore.case = T), "Grass", "Forb")) %>%
       # join trt key
@@ -51,6 +53,8 @@ for(i in anpp_files){
   }else{
     # all other dats are entered in the same way
     temp_anpp <- temp_anpp %>%
+      # remove empty rows
+      subset(!(is.na(dry_wgt_g) & is.na(notes))) %>%
       mutate_at(c("date_clip", "date_sort", "date_weigh"), as.Date, format = "%m/%d/%y") %>%
       # add yr, month, and yday
       mutate(yr = year(date_clip), mon = month(date_clip), doy = yday(date_clip)) %>%
@@ -74,6 +78,11 @@ anpp_master <- group_by(anpp_master, yr) %>%
   ungroup() %>%
   select(file:date_clip, clip_order, clip_event, yr:ncol(.)) %>%
   arrange(yr, date_clip, page, line)
+
+# check each plot has value for each fxnl grp per yr per clip event (sampling trip)
+length(unique(anpp_master$plot)) # should be 36 nobs per group
+group_by(anpp_master, yr, clip_event, fxnl_grp) %>%
+  summarise(nobs = length(plot)) # two plots missed in 2nd clip of 2020
 
 
 
