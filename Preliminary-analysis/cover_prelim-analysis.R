@@ -3,12 +3,19 @@ library(vegan)
 library(lsmeans)
 library(nlme)
 
-# set path to compost data (dependent on user)
-#datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Cover/" #ctw's path
-datpath <- "~/Dropbox/USDA-compost/Data/Cover/" # should work for LMH and AS
+# specify dropbox pathway (varies by user -- ctw can tweak this later)
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData")){
+  ## CTW
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
+}else{
+  ## LMH and AS
+  datpath <- "~/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
+}
 
 cover_master_wide <- read_csv(paste0(datpath,"Cover_CleanedData/Compost_Cover_WideClean.csv"))
+
 cover_master_long <- read_csv(paste0(datpath, "Cover_CleanedData/Compost_Cover_LongClean.csv"))
+
 
 dat <- cover_master_wide %>%
   tbl_df() %>%
@@ -480,3 +487,55 @@ ggplot(data=struc, aes(x=ppt_trt, y=SimpsonEvenness, fill=nut_trt))+
   #geom_errorbar(aes(ymin=mean_dry_wgt_g-sedry, ymax=mean_dry_wgt_g+sedry))+
   labs(x="Rainfall Treatment", y="Evenness (Simpson's)") +
   scale_x_discrete(labels=c("D" = "Dry", "XC" = "Ambient", "W" = "Wet"))
+
+ggplot(dat, aes(y = BRHO, x=interaction(ppt_trt))) + geom_boxplot() + facet_wrap(~nut_trt)
+ggplot(dat, aes(y = VUBR, x=interaction(ppt_trt))) + geom_boxplot() + facet_wrap(~nut_trt)
+
+
+# look at diversity per trt (does compost * wet supress diversity?)
+# richness
+cover_master_long %>%
+  subset(unknown == 0) %>%
+  select(block:ppt_trt, code4) %>%
+  group_by(block, ppt_trt, nut_trt) %>%
+  summarise(S = length(unique(code4))) %>%
+  ggplot(aes(ppt_trt, S)) +
+  geom_boxplot() +
+  geom_jitter(aes(col = as.factor(block)), width = 0.1) +
+  labs(x = "Precipitation treatment", y = "Number of unique species", 
+       title = "Species richness: more variability under drought, similar range within compost",
+       subtitle = "Note: block 1-2 = forb dominant; blocks 3-4 = grass dominant") +
+  facet_wrap(~nut_trt, labeller = labeller(nut_trt = c(C = "Compost", F = "Fertilizer", N = "Control"))) +
+  scale_color_viridis_d(name = "Block") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 12))
+
+ggsave(paste0(datpath,"Cover_Figures/spprichness_bytrts.pdf"), 
+       width = 6, height = 5, units = "in", scale = 1.1)
+
+forage_outcome_grass <- subset(cover_master_long, fxnl_grp == "Grass" & lubridate::month(date) == 5) %>%
+  mutate(desire = ifelse(grepl("madriten|diandr|Taen|Hord", species), "Weedy", "Desirable")) %>%
+  group_by(block, nut_trt, ppt_trt, desire) %>%
+  summarise(totcov = sum(pct_cover),
+            S = length(unique(code4))) %>%
+  ungroup()
+
+ggplot(forage_outcome_grass, aes(ppt_trt, S)) +
+  geom_boxplot(aes(fill = ppt_trt)) +
+  #geom_point(aes(col = block)) +
+  facet_grid(desire~nut_trt, scales = "free")
+
+ggplot(forage_outcome_grass, aes(ppt_trt, totcov)) +
+  geom_boxplot() +
+  geom_jitter(aes(col = as.factor(block)), size = 2, width = 0.2) +
+  labs(y = "Total cover (%)", x = "Precipitation treatment",
+       title = "May 2019 grass cover, arrayed by nutrient treatment and forage desirability",
+       subtitle = "Note: blocks 1-2 = forb dominant; blocks 3-4 = grass dominant") +
+  scale_color_viridis_d(name = "Block") +
+  facet_grid(desire~nut_trt, scales = "free", labeller = labeller(nut_trt = c(C = "Compost", F = "Fertilizer", N = "Control"))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 12))
+  
+ggsave(paste0(datpath,"Cover_Figures/peak_gramcover_desirability.pdf"), 
+       width = 6, height = 5, units = "in", scale = 1.1)
+
