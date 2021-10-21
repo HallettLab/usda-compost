@@ -137,7 +137,7 @@ missing_recs <- subset(anpp_master, yr == 2020 & clip_event == 2 & fulltrt %in% 
   dplyr::select(names(anpp_master)) %>%
   # add QA note to notes col
   mutate(notes = "QA note: not collected, missing")
-
+  
 # rbind to master and re-sort
 anpp_master <- rbind(anpp_master, missing_recs) %>%
   arrange(yr, date_clip, page, line)
@@ -149,4 +149,3 @@ summary(anpp_master) # looks okay
 # -- FINISHING ----
 # write out dataset to cleaned folder
 write_csv(anpp_master, paste0(datpath, "ANPP/ANPP_CleanedData/Compost_ANPP_clean.csv"))
-
