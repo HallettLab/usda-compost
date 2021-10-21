@@ -56,7 +56,10 @@ cimis_hrly <- cimis[!apply(cimis,1,function(x) all(is.na(x))),] %>%
                        paste(substr(Hour.PST,1,2), substr(Hour.PST, 3, 4), "00", sep =":")),
          # change 24:00 to 00:00 to match SFRECdat
          time = gsub("24", "00", time),
-         clean_datetime = as.POSIXct(paste(date, time), format = "%Y-%m-%d %H:%M:%S"),
+         # clean_datetime = as.POSIXct(paste(date, time), format = "%Y-%m-%d %H:%M:%S"),
+         # using as.character date-time because R doesn't know how to convert 2am timestamp in March when switch from PST to PDT
+         # CIMIS is report in PST-converted times only, so will deal with time zone DST issue in QA or analysis later if needed
+         clean_datetime = paste(date, time),
          date = as.Date(date))
 
 
@@ -78,6 +81,8 @@ date_lookup_cimis <- data.frame(date = seq.Date(firstWYcimis, lastWYcimis, 1)) %
 # add in water year then clean up cols
 cimis_hrly <- left_join(cimis_hrly, date_lookup_cimis)
 summary(cimis_hrly)
+# check: any NAs present in cols where shouldn't be?
+summary(is.na(cimis_hrly))
 
 
 
