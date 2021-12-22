@@ -942,7 +942,7 @@ ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = paste(portid, intevent), c
 
 
 
-# -- 3. COMPILE CLEAN DATA ------
+# -- 3. COMPILE PERIOD 1 CLEAN DATA ------
 # add qa notes for NAs
 # want cleanorder, correct timestamp, treatment info, water year info, vwc, qa notes and raw timestamp, and rawdatorder
 
@@ -1096,17 +1096,444 @@ trt_plot_clean
 
 
 # write out clean data preliminary plots to if desired
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bylogger.pdf"),
-       plot = logger_plot_clean,
-       width = 8, height = 8, units = "in")
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bytreatment.pdf"),
-       plot = trt_plot_clean,
-       width = 8, height = 8, unit = "in")
+# ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bylogger.pdf"),
+#        plot = logger_plot_clean,
+#        width = 8, height = 8, units = "in")
+# ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bytreatment.pdf"),
+#        plot = trt_plot_clean,
+#        width = 8, height = 8, unit = "in")
 
 
-# -- TREAT PERIOD 2 -----
+# clean up environment before moving on to period 2
+rm(searchdata_b2l2.1, searchdata_b2l2.2, searchdata_b2l2.3, searchdata_b2l2.4, searchdata_b2l2.5,
+   tempadjust, checkNA, b2l2trt, clean_maxtime_p1, clean_mintime_p1, end_raworder, event, firstdat, firstrow,
+   firstWY, i, lastdat, lastrow, lastWY, notelast, r, start_raworder, startorder_b2l4, startorder3_b2l4,
+   t, tempbreaks, tempdiff, tempend, tempnote, tempstart, b2l2dates, b2l2early_test, clean_b2l2_early, clean_b2l4,
+   clean_b3l4, masterb2l2_clean, masterb2l2_clean2, refdata_b2l2, refdata_b2l4_p1, refdata_b2l4_p2, temphr,
+   b2l2dates_1, b2l2dates_2, b2l2dates_3, b2l2dates_4, b2l2dates_5)
+
+
+
+# -- CORRECT PERIOD 2 -----
 ## timestamp corrections for all data downloaded after June 11 2020 download (Sep 2021 files - ongoing)
 # > covers June 11 2020 - project end
+datecheck_p2 <- soilmoisture_p2 %>%
+  mutate(timeinterval = as.difftime(time, format = "%H:%M:%S", units = "hours"),
+         filemo = substr(filename,6,12),
+         filemo = as.Date(filemo, format = "%d%b%y"),
+         # create timeid to plot with ppt
+         timeid = as.numeric(paste(doy, substr(time,1,2), sep = "."))) %>%
+  # crunch interval
+  arrange(logger, portid, datorder) %>%
+  group_by(portid) %>%
+  # create new datorder col that starts at this period
+  mutate(raw_datorder = datorder,
+         datorder = 1:length(date),
+         # carry on prep as done for period 1
+         timediff = as.numeric(date_time - lag(date_time,1)),
+         timediff = ifelse(is.na(timediff) & datorder == 1, 2, timediff),
+         diffvwc = round(vwc - lag(vwc, 1),2),
+         wetup = ifelse(diffvwc > 0.1, 1, 0),
+         increase = ifelse(diffvwc > lag(diffvwc), 1, 0)) %>%
+  # check for wetup events) %>%
+  ungroup()
+
+str(datecheck_p2)
+
+# add interval event cols
+rundf_p2 <- select(datecheck_p2, logger, portid, date_time, datorder, timediff) %>%
+  arrange(portid, datorder) %>%
+  mutate(intevent = NA, 
+         qa_note = NA)
+
+for(i in unique(rundf_p2$portid)){
+  if(all(rundf_p2$timediff[rundf_p2$portid == i] == 2)){
+    rundf_p2$intevent[rundf_p2$portid == i] <- 1
+  }else{
+    event <- 1
+    tempstart <- which(rundf_p2$portid == i & rundf_p2$datorder == 1)
+    tempend <- max(which(rundf_p2$portid == i))
+    tempbreaks <- c(which(rundf_p2$portid ==i & rundf_p2$timediff != 2), tempend)
+    for(t in tempbreaks){
+      if(t == tempbreaks[length(tempbreaks)]){
+        rundf_p2$intevent[tempstart:tempend] <- event
+      }else{
+        rundf_p2$intevent[tempstart:(t-1)] <- event
+      }
+      # add qa note
+      if(event != 1){
+        tempnote <- ifelse(rundf_p2$timediff[tempstart] >2 & rundf_p2$timediff[tempstart] <= 8, "needs NA infill", 
+                           ifelse(t == tempbreaks[length(tempbreaks)], "begin last run", "needs correct timestamp"))
+        rundf_p2$qa_note[tempstart] <- tempnote
+      }
+      event <- event+1
+      tempstart <- t
+    }
+  }
+}
+
+# attach interval event to datecheck
+datecheck_p2 <- left_join(datecheck_p2, rundf_p2)
+
+# pull dates that need an adjustment
+adjustdates_p2 <- subset(rundf_p2, !is.na(qa_note)) %>%
+  # attach filename info
+  left_join(distinct(datecheck_p2[c("portid", "fulltrt", "filename", "filemo", "date_time", "datorder")]))
+
+
+# 4.a. Infill missing intervals with NA ----
+# set expected mintime (period 2 starts at min datorder number as long as year is 2020)
+clean_mintime_p2 <- with(datecheck_p2, min(date_time[datorder == 1 & year(date_time) > 2019]))
+# set expected maxtime -- last field visit was in sep (NS downloaded logger dat for AS)
+clean_maxtime_p2 <- with(datecheck_p2, max(date_time[year(date_time) > 2019 & year(date_time)<2022]))
+soilmoisture_clean_p2 <- data.frame(date_time = rep(seq.POSIXt(clean_mintime_p2, clean_maxtime_p2, by = "2 hours"), times = length(unique(soilmoisture_p2$portid)))) %>%
+  mutate(portid = rep(unique(soilmoisture_p2$portid), each = length(unique(date_time)))) %>%
+  group_by(portid) %>%
+  mutate(cleanorder = seq(1, length(date_time), 1)) %>%
+  ungroup() %>%
+  left_join(soilmoisture_p2[c("portid", "logger", "port", "plotid", "block", "fulltrt", "date_time", "filename", "vwc")]) %>%
+  group_by(portid) %>%
+  fill(filename, .direction = "downup") %>%
+  ungroup()
+
+
+# who needs triage due to NAs or timestamp jump?
+distinct(datecheck_p2[grepl("time", datecheck_p2$qa_note), c("logger", "filename")])
+# bad years
+distinct(datecheck_p2[!year(datecheck_p2$date) %in% c(2020,2021), c("logger", "filename")])
+# > b3l4 got off track at last run, so that's how it got past the qa flagging -- yrs are 2044, 2045
+
+# 4.b. Triage B1L2 15Sep21 -----
+# little to no missing data, same # nobs per port (5543)
+# time difference of 10hrs at break where need correct timestamp (06-27-2020 2am)
+b1l2trt <- gsub("[0-9]", "", unique(datecheck_p2$fulltrt[datecheck_p2$logger == "B1L2"]))
+
+# compare vwc across similar treatments by data order rather than date-time
+## actual vwc values
+subset(datecheck_p2, grepl(b1l2trt[1], fulltrt)) %>% # trackseq > 2250
+  ggplot(aes(datorder, vwc, col = portid)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = mutate(subset(adjustdates_p2, grepl(b1l2trt[1], fulltrt)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
+  ggtitle(paste("troubleshoot B1L2", b1l2trt[1], "date jump (dotted vert line = break)")) +
+  geom_smooth(aes(fill = portid)) +
+  facet_grid(logger~.) # looks like it's lined up where it should be, just switched to bad timestamps
+
+## t2-t1 (diffed) values
+subset(datecheck_p2, grepl(b1l2trt[1], fulltrt)) %>% #
+  ggplot(aes(datorder, diffvwc, col = portid)) +
+  geom_vline(data = subset(adjustdates_p2, grepl(b1l2trt[1], fulltrt)), aes(xintercept = datorder, lty = qa_note)) +
+  geom_line(alpha = 0.4) +
+  ggtitle(paste("troubleshoot B1L2", b1l2trt[1], "date jump (dotted vert line = break)")) +
+  #geom_smooth(aes(fill = paste(logger, port, sep = "_"))) +
+  facet_grid(logger~., scales = "free_x", space = "free_x")
+
+# why do diffs look weird compared to reference logger?
+ggplot(subset(datecheck_p2, logger == "B1L2" & datorder < 100), aes(datorder, diffvwc, col = portid)) +
+  geom_line() # don't look weird here
+
+# plot second treatment type logger record
+subset(datecheck_p2, grepl(b1l2trt[2], fulltrt)) %>% #
+  ggplot(aes(datorder, vwc, col = portid)) +
+  geom_vline(data = subset(adjustdates_p2, grepl(b1l2trt[2], fulltrt)), aes(xintercept = datorder, lty = qa_note)) +
+  geom_line(alpha = 0.4) +
+  geom_smooth(aes(fill = portid)) +
+  ggtitle(paste("troubleshoot B1L2", b1l2trt[2], "date jump (vert line = break)")) +
+  facet_grid(logger~.)
+# > data gap after break, shift series so end lines up with end timestamp collected (and check spikes align with B2L1)
+
+# zoom in on period that's off to see if just needs NAs inserted or if time got off..
+searchorder <- with(subset(datecheck_p2, grepl(b1l2trt[2], fulltrt) & logger == "B1L2"), min(datorder[grepl("correct", qa_note)]))
+searchrange <- (searchorder-10):(searchorder +10)
+subset(datecheck_p2,  grepl(b1l2trt[2], fulltrt) & datorder %in% searchrange) %>% #  & grepl("Apr20", filename)
+  ggplot(aes(datorder, vwc, col = portid)) +
+  geom_vline(data = mutate(subset(adjustdates_p2, grepl(b1l2trt[2], fulltrt) & datorder %in% searchrange), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
+  geom_line(alpha = 0.4) +
+  #geom_smooth(aes(fill = portid)) +
+  ggtitle(paste("troubleshoot B1L2", b1l2trt[2], "date jump (dotted vert line = break)"))
+# looks pretty spot on
+
+# what are the missing dates in the clean master?
+missingdates_b1l2<- unique(with(soilmoisture_clean_p2, date_time[is.na(vwc) & grepl("B1L2", portid)]))
+missingdates_b1l2
+# what are the date times around the off times in datecheck?
+offtimes_b1l2 <- unique(with(datecheck_p2, date_time[logger == "B1L2" & datorder %in% searchrange]))
+offtimes_b1l2 # jumps from 4pm on 6/26 to 2am on 6/27
+
+# what does the clean order look like if timestamps left as is?
+subset(soilmoisture_clean_p2, portid %in% unique(datecheck_p2$portid[datecheck_p2$fulltrt %in% b1l2trt])) %>%
+  #subset to dates of interest
+  subset(date_time %in% min(offtimes_b1l2):max(offtimes_b1l2)) %>%
+  # create col to pull out logger to correct
+  mutate(triage = grepl("B1L2", portid)) %>%
+  ggplot(aes(date_time, vwc, col = portid, size = triage)) +
+  #geom_vline(data = mutate(subset(adjustdates_p1, grepl(b3l4trt[2], fulltrt)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
+  geom_point(alpha = 0.75) 
+# seems like the datetimes should just be shifted back
+
+# if everything is off by 10 hrs, how does the end of the sequence look?
+subset(soilmoisture_clean_p2, portid %in% unique(datecheck_p2$portid[datecheck_p2$fulltrt %in% b1l2trt])) %>%
+  #subset to dates of interest
+  subset(date(date_time) > date(max(missingdates_b1l2))-5) %>%
+  # create col to pull out logger to correct
+  mutate(triage = grepl("B1L2", portid)) %>%
+  ggplot(aes(date_time, vwc, col = portid, size = triage, shape = filename)) +
+  #geom_vline(data = mutate(subset(adjustdates_p1, grepl(b3l4trt[2], fulltrt)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
+  geom_point(alpha = 0.75) 
+# datetimes for 16 Sep 2021 look fine, just need to adjust times in 15Sep21
+
+# shift sep 15 file back 10 hrs starting at break. the datorder is fine, but the timestamp needs to be corrected
+# think can just keep datorder and drop timestamp
+b1l2test <- subset(datecheck_p2, logger == "B1L2") %>%
+  # create cleanorder where 15Sep datorder is as is, 16Sep datorder is shifted to be the datorder corresponding to +10hrs (5 2-hr timesteps)
+  left_join(distinct(subset(soilmoisture_clean_p2, select = c(date_time, cleanorder)))) %>%
+  mutate(cleanorder2 = ifelse(grepl("15Sep", filename), datorder, cleanorder)) %>%
+  rename(raw_datetime = date_time)
+
+ggplot(b1l2test, aes(cleanorder2, vwc, col = port, group = portid)) +
+  geom_point(data = subset(soilmoisture_clean_p2, grepl(str_flatten(b1l2trt, collapse = "|"), fulltrt) & logger != "B1L2"), aes(cleanorder, vwc, group = portid, col = port)) +
+  geom_point() +
+  geom_vline(data = mutate(subset(adjustdates_p2, grepl(str_flatten(b1l2trt, collapse = "|"), fulltrt)), logger = substr(portid, 1,4)), aes(xintercept = datorder, lty = qa_note)) +
+  facet_grid(logger~fulltrt)
+
+
+# correct B3L4 in soilmoisture_clean_p1
+clean_b1l2 <- subset(soilmoisture_clean_p2, grepl("B1L2", portid)) %>%
+  select(date_time:cleanorder, filename) %>%
+  left_join(select(b1l2test, portid, cleanorder2, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder2")) %>%
+  left_join(distinct(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt))
+
+# replot
+subset(clean_b1l2, date(date_time) > date(max(missingdates_b1l2))-5) %>%
+  ggplot(aes(date_time, vwc, fill = portid, shape = filename)) +
+  # plot old points first
+  geom_point(data = subset(datecheck_p2, logger == "B1L2" & date(date_time) > date(max(missingdates_b1l2))-5), aes(date_time, vwc, col = portid)) +
+  geom_point(col = "black", pch = 21) # looks good
+
+# create temp master with timestamp-corrected data (NAs not yet addressed)..
+soilmoisture_master_p2 <- subset(soilmoisture_clean_p2, !grepl("B1L2", portid), c(date_time, portid, cleanorder, filename, vwc)) %>%
+  left_join(distinct(select(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt))) %>%
+  select(names(soilmoisture_clean_p2)) %>%
+  rbind(clean_b1l2[names(.)])
+
+# clean up
+rm(b1l2trt, b1l2test, missingdates_b1l2, offtimes_b1l2, searchorder, searchrange, t, tempend, tempnote, tempstart)
+
+
+# 4.c. Triage B3L4 16Sep21 -----
+# all ports same number obs (5543), get off track in timestamp (year) at same time (last run)
+b3l4trt <- gsub("[0-9]", "", unique(datecheck_p2$fulltrt[datecheck_p2$logger == "B3L4"])) # only CW
+
+# compare vwc across similar treatments by data order rather than date-time
+## actual vwc values
+subset(datecheck_p2, grepl(b3l4trt[1], fulltrt)) %>%
+  ggplot(aes(datorder, vwc, col = portid)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = subset(adjustdates_p2, grepl(b3l4trt[1], fulltrt)), aes(xintercept = datorder, lty = qa_note)) +
+  ggtitle(paste("troubleshoot B3L4", b3l4trt[1], "date jump (vert line = break)")) +
+  geom_smooth(aes(fill = portid)) +
+  facet_grid(logger~.) # looks like all lines up on dataorder, just datetime off
+
+# color in each portid's line by year
+subset(datecheck_p2, grepl(b3l4trt[1], fulltrt)) %>%
+  ggplot(aes(datorder, vwc, group = portid)) +
+  geom_vline(data = subset(adjustdates_p2, grepl(b3l4trt[1], fulltrt)), aes(xintercept = datorder, lty = qa_note)) +
+  ggtitle(paste("troubleshoot B3L4", b3l4trt[1], "date jump (vert line = break)")) +
+  geom_smooth(aes(fill = portid), col ="grey50", alpha = 0.5) +
+  geom_line(aes(col = factor(year(date)))) +
+  facet_grid(logger~.) # easy fix
+
+# keep datorder, assign date_time as raw_datetime and join the master
+b3l4test <- subset(datecheck_p2, logger == "B3L4") %>%
+  # create cleanorder where 15Sep datorder is as is, 16Sep datorder is shifted to be the datorder corresponding to +10hrs (5 2-hr timesteps)
+  left_join(distinct(subset(soilmoisture_clean_p2, select = c(date_time, cleanorder))))
+# double check clean order diffs by one for all with dat order
+summary(b3l4test$datorder - b3l4test$cleanorder) # yep
+b3l4test <- mutate(b3l4test, cleanorder2 = datorder +1) %>%
+  rename(raw_datetime = date_time)
+
+
+# correct B3L4 in soilmoisture_clean_p2
+clean_b3l4 <- subset(soilmoisture_clean_p2, grepl("B3L4", portid)) %>%
+  select(date_time:cleanorder, filename) %>%
+  left_join(select(b3l4test, portid, cleanorder2, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder2")) %>%
+  left_join(distinct(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt))
+
+# append
+soilmoisture_master_p2 <- subset(soilmoisture_master_p2, !grepl("B3L4", portid)) %>%
+  rbind(clean_b3l4[names(.)])
+
+# plot to review -- exclude loggers that still have issues
+ggplot(subset(soilmoisture_master_p2, !grepl("B2L5|B3L3|B2L4", logger)), aes(date(date_time), vwc, group = portid, col = logger)) +
+  geom_line(alpha = 0.5) +
+  facet_grid(substr(fulltrt, 1,1)~gsub("^(C|F|N)", "", fulltrt)) 
+# > some spikes in b3l4 and b2l1 look mismatched. check out after all stacked since b2l1 not flagged.
+# > could just be regular deviation based on landscape position and vert depth
+
+# check NAs per port
+with(subset(soilmoisture_master_p2, !grepl("B2L5|B3L3|B2L4", logger)), sapply(split(vwc, portid), summary))
+# b3l4_3 has a lot of missing.. check against raw (thought they had same nobs, but maybe I included NAs in those counts -- if row present, counted)
+with(subset(soilmoisture_master_p2, grepl("B3L4", logger) & is.na(vwc)), sapply(split(vwc, portid), length))
+with(subset(soilmoisture_p2, grepl("B3L4", logger) & is.na(vwc)), sapply(split(vwc, portid), length)) # checks out
+
+# clean up environment
+rm(b3l4trt, b3l4test)
+
+
+
+# 4.d. Triage B2L5 15Sep21 -----
+# data end in march 2021?
+b2l5trt <- gsub("[0-9]", "", unique(datecheck_p2$fulltrt[datecheck_p2$logger == "B2L5"])) # only CW
+
+# compare vwc across similar treatments by data order rather than date-time
+## actual vwc values
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt)) %>%
+  ggplot(aes(datorder, vwc, col = portid)) +
+  geom_line(alpha = 0.4) +
+  geom_vline(data = subset(adjustdates_p2, grepl(b2l5trt[1], fulltrt)), aes(xintercept = datorder, lty = qa_note)) +
+  ggtitle(paste("troubleshoot B2L5", b2l5trt[1], "date jump (dotted vert line = break)")) +
+  geom_smooth(aes(fill = portid)) +
+  facet_grid(logger~.) # eyeballing, looks like it lines up around 4200 mark
+
+#  zoom in
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & datorder > 3400) %>%
+  ggplot(aes(datorder, vwc, group = portid)) +
+  geom_vline(data = mutate(subset(adjustdates_p2, grepl(b2l5trt[1], fulltrt)), qa_note2 = ifelse(grepl("correct", qa_note), qa_note, NA)), aes(xintercept = datorder, lty = qa_note2, col = factor(timediff))) +
+  geom_line(alpha = 0.4) +
+  ggtitle(paste("troubleshoot B2L5", b2l5trt[1], "date jump (dotted vert line = break)")) +
+  #geom_smooth(aes(fill = portid)) +
+  facet_grid(logger~.) # eyeballing, looks like it lines up around 4200 mark
+
+# do all ports have the same issue?
+datecheck_p2_b2l5 <- subset(datecheck_p2, logger == "B2L5" & !is.na(qa_note), select = c(logger, port, date_time, date, timediff, intevent, qa_note)) %>%
+  unique()
+View(datecheck_p2_b2l5) # same up thru int event 5. port 5 has more NAs after that.
+
+# try plotting just 2021 dates to see if jump to may 2021 at intevent 2 matches up
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021) %>%
+  ggplot(aes(date_time, vwc, group = portid, col = portid)) +
+  geom_line(alpha = 0.4) # maybe? can try adjusting data from 2021 date_time in intevent 2; subsequent data seem continuous, just timestamps off
+# b2l5 will need some NA added for additional breaks (perhaps?)
+
+b2l5test_thru5 <- subset(datecheck_p2, logger == "B2L5" & intevent <= 5) %>%
+  # create cleanorder where 15Sep datorder is as is, 16Sep datorder is shifted to be the datorder corresponding to +10hrs (5 2-hr timesteps)
+  left_join(distinct(subset(soilmoisture_clean_p2, select = c(date_time, cleanorder))))
+# how off is clean order from the b2l5 datorder (ie., in off period and does it start at same time)
+group_by(b2l5test_thru5, intevent) %>%
+  subset(!is.na(cleanorder)) %>%
+  summarise(diff = datorder - cleanorder) %>%
+  distinct() # interval 1 matches, interval 2 behind by 789 timesteps
+
+# adjust clean order accordingly and proceed
+b2l5test_thru5 <- subset(b2l5test_thru5, select = -cleanorder) %>%
+  mutate(cleanorder2 = ifelse(intevent == 1, datorder, datorder + 789)) %>%
+  rename(raw_datetime = date_time) %>%
+  # rejoin clean datorder and datetime
+  left_join(distinct(subset(soilmoisture_clean_p2, select = c(date_time, cleanorder))), by = c("cleanorder2" = "cleanorder"))
+
+# plot to see how it looks
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5") %>%
+  ggplot(aes(date_time, vwc, group = portid, col = portid)) +
+  geom_line(data = b2l5test_thru5, alpha = 0.5) +
+  geom_line(alpha = 0.5)
+
+int2date <- unique(datecheck_p2_b2l5$date[datecheck_p2_b2l5$intevent == 2])
+# zoom in
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5" & date >= int2date) %>%
+  ggplot(aes(date_time, vwc, group = portid)) +
+  geom_line(data = subset(b2l5test_thru5, date(date_time) >= int2date), aes(col = factor(intevent)), alpha = 0.5) +
+  geom_line(col = "grey30", alpha = 0.5) # not quite right
+
+subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5" & date >= int2date) %>%
+  ggplot(aes(datorder, scale(vwc), group = portid)) +
+  geom_line(data = subset(b2l5test_thru5, date(date_time) >= int2date), aes(cleanorder2, scale(vwc), col = factor(intevent)), alpha = 0.5) +
+  geom_line(col = "grey30", alpha = 0.5) +
+  scale_x_continuous(breaks = seq(4000, 5600, 100)) +
+  facet_wrap(~portid, nrow = 3, scale = "free_y")
+# match events 2-4 on b2l5_4 (can see visual matches best)
+# match event 5 on b2l5_1 (longer record)
+
+b2l5_subtest <- subset(b2l5test_thru5, date(date_time) >= int2date) %>%
+  mutate(cleanorder3 = cleanorder2)
+# try nudging
+b2l5_subtest$cleanorder3[b2l5_subtest$intevent == 2] <- c(b2l5_subtest$cleanorder2[b2l5_subtest$intevent == 2] + 10) #+10 looks good
+b2l5_subtest$cleanorder3[b2l5_subtest$intevent == 3] <- c(b2l5_subtest$cleanorder2[b2l5_subtest$intevent == 3] + 32) #+35 looks good
+b2l5_subtest$cleanorder3[b2l5_subtest$intevent == 4] <- c(b2l5_subtest$cleanorder2[b2l5_subtest$intevent == 4] + 52) #+52 looks good
+b2l5_subtest$cleanorder3[b2l5_subtest$intevent == 5] <- c(b2l5_subtest$cleanorder2[b2l5_subtest$intevent == 5] + 214) #+214 looks good
+
+ggplot(subset(b2l5_subtest, intevent %in% c(2:5)), aes(cleanorder3, scale(vwc), group = paste0(portid,intevent))) +
+  # reference
+  geom_line(data = subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5" & date >= int2date), #& datorder < 4800 
+            aes(datorder, scale(vwc)), col = "grey30", alpha = 0.85) +
+  geom_line(aes(col = factor(intevent))) +
+  scale_x_continuous(breaks = seq(4000, 5600, 100))
+  #facet_grid(portid~., scale = "free_y")
+
+
+# create different dataframe for ports 4 and 5 for intevents 5+
+b2l5test_5up <- subset(datecheck_p2, logger == "B2L5" & port >= 4 & intevent >= 5) %>%
+  mutate(cleanorder2 = ifelse(intevent == 1, datorder, datorder + 789)) %>%
+  rename(raw_datetime = date_time) %>%
+  # rejoin clean datorder and datetime
+  left_join(distinct(subset(soilmoisture_clean_p2, select = c(date_time, cleanorder))), by = c("cleanorder2" = "cleanorder"))
+
+
+# subset port 4 for intervals 6+ (get off at different timestamps)
+b2l5_4 <- subset(b2l5test_5up, port == 4 & intevent >= 5) %>%
+  mutate(cleanorder3 = cleanorder2)
+# try nudging
+b2l5_4$cleanorder3[b2l5_4$intevent == 5] <- c(b2l5_4$cleanorder2[b2l5_4$intevent == 5] + 214) # start with adjustment from above
+b2l5_4$cleanorder3[b2l5_4$intevent == 6] <- c(b2l5_4$cleanorder2[b2l5_4$intevent == 6] + 215) # timediff = 4 from int 5 (1 extra timestep)
+b2l5_4$cleanorder3[b2l5_4$intevent == 7] <- c(b2l5_4$cleanorder2[b2l5_4$intevent == 7] + 216) # timediff = 4 from int 6 (so 2 extra timesteps from 5)
+b2l5_4$cleanorder3[b2l5_4$intevent == 8] <- c(b2l5_4$cleanorder2[b2l5_4$intevent == 8] + 216) # 8 is last run (different file)
+
+ggplot(b2l5_4, aes(cleanorder3, vwc)) +
+  # reference
+  geom_line(data = subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5" & datorder > 4700), #
+            aes(datorder, vwc+0.1), col = "grey70", alpha = 0.5, lwd = 1) +
+  geom_line(col="grey40") +
+  geom_point(aes(col = factor(intevent))) +
+  scale_x_continuous(breaks = seq(4000, 5600, 100)) # looks good
+
+
+# subset port 5 intervals 6+ (get off at different timestamps)
+b2l5_5 <- subset(b2l5test_5up, port == 5 & intevent >= 5) %>%
+  mutate(cleanorder3 = cleanorder2 + 214)
+# try nudging
+b2l5_5$cleanorder3[b2l5_5$intevent == 6] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 6] + 215) # through visual trial and error, diff between each subsequent really is 1 extra time step
+b2l5_5$cleanorder3[b2l5_5$intevent == 7] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 7] + 216) 
+b2l5_5$cleanorder3[b2l5_5$intevent == 8] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 8] + 217) 
+b2l5_5$cleanorder3[b2l5_5$intevent == 9] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 9] + 218)
+b2l5_5$cleanorder3[b2l5_5$intevent == 10] <- c(b2l5_5$cleanorder2[b2l5_5$intevent  == 10] + 219)
+b2l5_5$cleanorder3[b2l5_5$intevent == 11] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 11] + 220)
+b2l5_5$cleanorder3[b2l5_5$intevent == 12] <- c(b2l5_5$cleanorder2[b2l5_5$intevent == 12] + 221)
+b2l5_5$cleanorder3[b2l5_5$intevent == 13] <- c(b2l5_5$cleanorder2[b2l5_5$intevent  == 13] + 222)
+b2l5_5$cleanorder3[b2l5_5$intevent == 14] <- c(b2l5_5$cleanorder2[b2l5_5$intevent  == 14] + 223)
+b2l5_5$cleanorder3[b2l5_5$intevent >= 15] <- c(b2l5_5$cleanorder2[b2l5_5$intevent >= 15] + 224) # 16 is last run (different file)
+
+ggplot(b2l5_5, aes(cleanorder3, scale(vwc))) + #group = factor(intevent)
+  # reference
+  geom_line(data = subset(datecheck_p2, grepl(b2l5trt[1], fulltrt) & year(date)==2021 & logger != "B2L5" & datorder > 4700), #
+            aes(datorder, scale(vwc)), col = "grey70", alpha = 0.5, lwd = 1) +
+  geom_line(col="grey40") +
+  geom_point(aes(col = factor(intevent))) +
+  scale_x_continuous(breaks = seq(4000, 5600, 100)) # looks good
+
+
+
+
+# 4.e. Triage B3L3 16Sep21 -----
+# ports 1, 3, 5 have different number obs (5222,4815,5215 respec.)
+# ports 2, 4 have same number (5210)
+
+
+
+# 4.f. Triage B2L4 15Sep21 -----
+# all ports have different number obs
+# 1 = 5091, 2 = 5493, 3 = 5497, 4 = 5481, 5 = 5504
+# port 1 doesn't have much data from roughly sep 2019-sep 2021
+# all others missing data sometime spring 2021 - sep 2021
+
+
 
 
 
