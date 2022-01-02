@@ -2713,8 +2713,10 @@ all_datetime <- data.frame(clean_datetime = seq.POSIXt(firstdatetime, lastdateti
 # prep data frame to write out
 soilmoisture_master_out <- left_join(soilmoisture_master_all, all_datetime) %>%
   arrange(logger, portid, clean_datetime) %>%
-  mutate(cleanorder = global_cleanorder) %>%
-  subset(select = c(logger:sourcefile)) %>%
+  mutate(cleanorder = global_cleanorder,
+         # also realize I don't have a calendar yr col
+         yr = year(clean_datetime)) %>%
+  subset(select = c(logger:doy, yr, waterYear:sourcefile)) %>%
   data.frame() %>%
   distinct()
 
