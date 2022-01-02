@@ -1104,31 +1104,24 @@ soilmoisture_master_p1 <- soilmoisture_master_p1 %>%
 summary(soilmoisture_master_p1)
 summary(is.na(soilmoisture_master_p1))
 
-# remake plots from initial compilation loop
-logger_plot_clean <- soilmoisture_master_p1 %>%
+# remake plots from initial compilation loop to be sure looks as expected
+logger_plot_clean_p1 <- soilmoisture_master_p1 %>%
   ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
   geom_line(alpha = 0.5) +
   ggtitle(paste0("Compost prelim plot (", Sys.Date(),  "): cleaned soil moisture (VWC),\nby logger, by water year, colored by port")) +
   scale_color_discrete(name = "port") +
   facet_grid(logger~waterYear, scales = "free_x")
-logger_plot_clean
+logger_plot_clean_p1
 
-trt_plot_clean <- soilmoisture_master_p1 %>%
+trt_plot_clean_p2 <- soilmoisture_master_p1 %>%
   ggplot(aes(dowy, vwc, group = portid, col = as.factor(block))) +
   geom_line(alpha = 0.5) +
   ggtitle(paste0("Compost prelim plot (", Sys.Date(),") : cleaned soil moisture (VWC),\nby water year, nutrient x drought treatment, colored by block")) +
   scale_color_discrete(name = "block") +
   facet_grid(fulltrt~waterYear, scales = "free_x")
-trt_plot_clean
+trt_plot_clean_p2
 
 
-# write out clean data preliminary plots to if desired
-# ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bylogger.pdf"),
-#        plot = logger_plot_clean,
-#        width = 8, height = 8, units = "in")
-# ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bytreatment.pdf"),
-#        plot = trt_plot_clean,
-#        width = 8, height = 8, unit = "in")
 
 
 # clean up environment before moving on to period 2
@@ -1222,7 +1215,7 @@ soilmoisture_clean_p2 <- data.frame(date_time = rep(seq.POSIXt(clean_mintime_p2,
   ungroup() %>%
   # join logger/plot trt info
   left_join(distinct(subset(soilmoisture_p2, select = c(logger:comp_trt))))
-  
+
 # review for NAs
 summary(soilmoisture_clean_p2) # good to go
 
@@ -1319,9 +1312,9 @@ subset(datecheck_p2, fulltrt %in% b1l2trt & logger != "B3L3" & date(date_time) >
   geom_line(aes(lty = filename), alpha = 0.4) +
   geom_vline(data = mutate(subset(adjustdates_p2, grepl(b1l2trt[1], fulltrt) & logger != "B3L3" & date(date_time) >= lastrunb1l2), logger = substr(portid, 1,4)), aes(xintercept = date_time, lty = qa_note)) +
   ggtitle(paste("troubleshoot B1L2", b1l2trt[1], "date jump (dotted vert line = break)"))
-  geom_smooth(aes(fill = portid))
+geom_smooth(aes(fill = portid))
 # maybe if shift back interval 2, will connect to interval 3 fine (last interval lines up fine, no need to adjust)
-  
+
 
 # shift sep 15 file back 10 hrs starting at break. the datorder is fine, but the timestamp needs to be corrected. leave sep 16 as is.
 b1l2test <- subset(datecheck_p2, logger == "B1L2") %>%
@@ -1575,13 +1568,13 @@ b2l5_subtest$cleanorder3[b2l5_subtest$intevent == 5] <- c(b2l5_subtest$cleanorde
 ggplot(subset(b2l5_subtest, intevent %in% c(2:5) & cleanorder3 < 4400), aes(cleanorder3, scale(vwc))) + #portid == "B2L5_2"
   # reference
   geom_point(data = subset(soilmoisture_master_p2, fulltrt %in% b2l5trt & date(date_time) >= int2date & cleanorder < 4400), #& datorder < 4800 
-            aes(cleanorder, scale(vwc), group = portid), col = "grey30", alpha = 0.85) +
-  geom_line(data = subset(soilmoisture_master_p2, fulltrt %in% b2l5trt & date(date_time) >= int2date & cleanorder < 4400), #& datorder < 4800 
              aes(cleanorder, scale(vwc), group = portid), col = "grey30", alpha = 0.85) +
+  geom_line(data = subset(soilmoisture_master_p2, fulltrt %in% b2l5trt & date(date_time) >= int2date & cleanorder < 4400), #& datorder < 4800 
+            aes(cleanorder, scale(vwc), group = portid), col = "grey30", alpha = 0.85) +
   geom_point(aes(col = factor(intevent), group = paste0(portid,intevent))) +
   geom_line(aes(col = factor(intevent), group = paste0(portid,intevent))) +
   scale_x_continuous(breaks = seq(4000, 5600, 100))
-  #facet_grid(portid~., scale = "free_y")
+#facet_grid(portid~., scale = "free_y")
 
 # how did they line up before break?
 ggplot(subset(datecheck_p2, logger == "B2L5" & intevent == 1 & datorder %in% 750:1000), aes(datorder, scale(vwc))) +
@@ -1688,25 +1681,27 @@ with(b2l5test, sapply(split(intevent, portid), unique)) # looks good
 
 # correct B2L5 in soilmoisture_clean_p2
 clean_b2l5 <- subset(soilmoisture_clean_p2, grepl("B2L5", portid)) %>%
-  select(date_time:cleanorder, filename) %>%
-  left_join(select(b2l5test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
-  left_join(distinct(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt))
+  left_join(select(b2l5test, portid, cleanorder3, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note, datorder, filename, rowid, raw_datorder), by = c("portid", "cleanorder" = "cleanorder3"))
+
 # check again
 with(clean_b2l5, sapply(split(intevent, portid), length))
 with(clean_b2l5, sapply(split(intevent, portid), unique)) # NAs present for intevent bc NAs are now inserted for blips in data recording
 summary(is.na(clean_b2l5))
+# review
+ggplot(clean_b2l5, aes(date_time, vwc)) +
+  geom_line(data = subset(soilmoisture_master_p2, fulltrt %in% b2l5trt), aes(date_time, vwc, group = portid), col = "grey50") +
+  geom_line(aes(col = portid, lty = intevent %% 2 == 0, group = paste(portid, intevent)))
+# zoom in
+ggplot(subset(clean_b2l5, date(date_time) > as.Date("2021-03-01")), aes(date_time, vwc)) +
+  geom_line(data = subset(soilmoisture_master_p2, fulltrt %in% b2l5trt & date(date_time) > as.Date("2021-03-01")), aes(date_time, vwc+0.05, group = portid), col = "grey50", alpha = 0.7) +
+  geom_line(aes(col = portid, lty = intevent %% 2 == 0, group = paste(portid, intevent)), alpha = 0.7)
 
 # append
-soilmoisture_master_p2 <- subset(soilmoisture_master_p2, !grepl("B2L5", portid)) %>%
-  rbind(clean_b2l5[names(.)])
+soilmoisture_master_p2 <- rbind(soilmoisture_master_p2, clean_b2l5[names(soilmoisture_master_p2)])
 
 # review
 with(soilmoisture_master_p2, sapply(split(vwc, portid), length))
-soilmoisture_master_p2 %>%
-  group_by(logger) %>%
-  summarise(datrange = str_flatten(as.character(range(date_time)), collapse =  " "))
-# some start at 6am and others 8am on 6/11/2020. that's fine. depends on when their period 1 stopped.
-# b3l2 stops early, but in june so it's fine. can add on NA vals for it at the end
+# all there
 
 # clean up environment
 rm(list = ls()[grep("^b2l5", ls())], datecheck_p2_b2l5)
@@ -1808,7 +1803,7 @@ ggplot(subset(b3l3test_1, cleanorder2 %in% 4000:5500), #, cleanorder2 > 4000 & c
   #geom_text(alpha = 0.6, aes (label = rowid)) + # use cleanorder %in% 4200:4260 to check adjustments for interval 7
   geom_point(aes(shape = intevent %% 2 == 0), alpha = 0.6) +
   geom_line(aes(lty = intevent %% 2 == 0), alpha = 0.6)
-  #scale_x_continuous(breaks = seq(4000, 4600, 25))
+#scale_x_continuous(breaks = seq(4000, 4600, 25))
 
 # all dats to see typical relationship
 ggplot(subset(b3l3test_1), #, cleanorder2 > 4000 & cleanorder2 < 4350 
@@ -2097,11 +2092,8 @@ b3l3test_3 <- subset(datecheck_p2, portid == "B3L3_3") %>%
 clean_b3l3 <- data.frame()
 for(i in 1:5){
   tempdat <- subset(soilmoisture_clean_p2, portid == paste0("B3L3_",i)) %>%
-    select(date_time:cleanorder, filename) %>%
-    distinct() %>%
     rename(clean_datetime = date_time) %>%
-    left_join(select(get(paste0("b3l3test_",i)), portid, cleanorder3, vwc, date_time, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
-    left_join(distinct(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt)) %>%
+    left_join(select(get(paste0("b3l3test_",i)), portid, cleanorder3, vwc, date_time, timeinterval, timediff, intevent, qa_note, datorder, filename, rowid, raw_datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
     rename(raw_datetime = date_time, date_time = clean_datetime)
   clean_b3l3 <- rbind(clean_b3l3, tempdat)
 }
@@ -2202,13 +2194,13 @@ b2l4test_2$cleanorder2[b2l4test_2$intevent == 27] <- b2l4test_2$datorder[b2l4tes
 
 # review
 ggplot(subset(b2l4test_2, intevent %in% c(1,b2l4_2_timestamps) & cleanorder2 %in% 4500:5000), #, cleanorder2 > 4000 & cleanorder2 < 4350 
-         aes(cleanorder2, scale(vwc), col = factor(intevent))) + #group = factor(intevent)
-    # reference
-    geom_line(data = subset(soilmoisture_master_p2, logger == "B2L3" & grepl(unique(b2l4test_2$ppt_trt), fulltrt) & cleanorder %in% 4500:5000), # & cleanorder %in% 4000:4350
-              aes(cleanorder, scale(vwc), group = portid), col = "grey50", alpha = 0.4) +
-    # plot adjusted
-    geom_point(aes(shape = intevent %% 2 == 0), alpha = 0.6) +
-    geom_line(aes(), alpha = 0.7) #lty = intevent %% 2 == 0
+       aes(cleanorder2, scale(vwc), col = factor(intevent))) + #group = factor(intevent)
+  # reference
+  geom_line(data = subset(soilmoisture_master_p2, logger == "B2L3" & grepl(unique(b2l4test_2$ppt_trt), fulltrt) & cleanorder %in% 4500:5000), # & cleanorder %in% 4000:4350
+            aes(cleanorder, scale(vwc), group = portid), col = "grey50", alpha = 0.4) +
+  # plot adjusted
+  geom_point(aes(shape = intevent %% 2 == 0), alpha = 0.6) +
+  geom_line(aes(), alpha = 0.7) #lty = intevent %% 2 == 0
 
 # apply NA infill
 b2l4test_2 <- assign_NA(b2l4test_2)
@@ -2423,9 +2415,9 @@ ggplot(subset(b2l4test_5, cleanorder3 %in% 5000:5600), #, cleanorder2 > 4000 & c
   # plot adjusted
   # geom_point(aes(shape = intevent %% 2 == 0), alpha = 0.6) +
   geom_line(aes(col = factor(intevent), lty = intevent %in% c(1,b2l4_2_timestamps)), alpha = 0.7) #lty = intevent %% 2 == 
-  #geom_line(col = "grey30", alpha = 0.7) + #col = "grey30", 
-  #geom_point(aes(col = factor(intevent), shape = intevent %in% c(1,b2l4_5_timestamps)), alpha = 0.6) +
-  scale_linetype_manual(values = c(2, 1))
+#geom_line(col = "grey30", alpha = 0.7) + #col = "grey30", 
+#geom_point(aes(col = factor(intevent), shape = intevent %in% c(1,b2l4_5_timestamps)), alpha = 0.6) +
+#scale_linetype_manual(values = c(2, 1))
 # looks okay
 
 # check diffs between cleanorder to be sure
@@ -2472,11 +2464,8 @@ b2l4test_1 <- rename(b2l4test_1, cleanorder3 = cleanorder2) %>%
 clean_b2l4 <- data.frame()
 for(i in 1:5){
   tempdat <- subset(soilmoisture_clean_p2, portid == paste0("B2L4_",i)) %>%
-    select(date_time:cleanorder, filename) %>%
-    distinct() %>%
     rename(clean_datetime = date_time) %>%
-    left_join(select(get(paste0("b2l4test_",i)), portid, cleanorder3, vwc, date_time, timeinterval, timediff, intevent, qa_note, datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
-    left_join(distinct(soilmoisture_p2, portid, logger, port, block, plotid, fulltrt)) %>%
+    left_join(select(get(paste0("b2l4test_",i)), portid, cleanorder3, vwc, date_time, timeinterval, timediff, intevent, qa_note, datorder, filename, rowid, raw_datorder), by = c("portid", "cleanorder" = "cleanorder3")) %>%
     rename(raw_datetime = date_time, date_time = clean_datetime)
   clean_b2l4 <- rbind(clean_b2l4, tempdat)
 }
@@ -2500,119 +2489,73 @@ rm(list = ls()[grep("^b2l4", ls())], tempdat, i)
 
 
 
-# -- 5. COMPILE PERIOD 2 -----
+# -- 5. Compile period 2 clean  data -----
 # add qa notes for NAs
 # want cleanorder, correct timestamp, treatment info, water year info, vwc, qa notes, raw timestamp, rawdatorder, and sourcefile (filename)
 names(soilmoisture_master_p1)
 names(soilmoisture_master_p2)
 # make copy before proceeding in case need to start over
-copy <- soilmoisture_master_p2
-
-# make master soil moisture df for p2 that matches structure of p1
-# > also reattach logger key and trt key info
-# use datecheck2 to attach global datorder (including p1), raw datorder for p2 (not cleanorder) and rowid for reference
-
-# stack treated loggers to join raw datorder, date_time and QA note info
-treated_p2 <- rbind(clean_b1l2, clean_b3l4, clean_b2l5, clean_b3l3, clean_b3l4, clean_b2l4)# %>%
-  distinct() #%>%
-  left_join(datecheck_p2[c("datorder", "portid", "raw_datorder", "rowid", "filename")])
-# be sure everything got matched
-summary(treated_p2)
-# who doesn't have a match? (could be for NAs inserted)
-with(treated_p2, sapply(split(raw_datetime, portid), function(x)summary(is.na(x))))
-# check each b2l5 have 1004 missing?
-with(clean_b2l5, sapply(split(datorder, portid), summary)) # yep, matches
-
-
-# pull raw datorder for goodref (untreated) loggers
-goodref_datorder <- subset(datecheck_p2, logger %in% goodrefs$logger, select = c(portid, date_time, datorder, raw_datorder, rowid)) %>%
-  distinct()
-
-# cobble all loggers/portids together to before infilling qa notes
-soilmoisture_master_p2 <- left_join(soilmoisture_master_p2, 
-                                      subset(treated_p2, select = c(date_time, cleanorder, portid, logger, datorder, raw_datetime, qa_note, timediff, intevent))) %>%
-  distinct() %>%
-  rename(p2_datorder = datorder) %>%
-  # join datorder for goodref loggers
-  left_join(goodref_datorder[c("portid", "date_time", "datorder")])
-  
-# check all dats that aren't NA in vwc have an original datorder (this should be 0)
-nrow(subset(soilmoisture_master_p2, is.na(datorder) & is.na(p2_datorder) & !is.na(vwc))) # ok 
-# proceed with prep for infilling notes
-soilmoisture_master_p2 <- soilmoisture_master_p2 %>%
-  mutate(datorder = ifelse(is.na(p2_datorder), datorder, p2_datorder)) %>%
-  subset(select = -p2_datorder) %>%
-  # join rowid and global datorder
-  left_join(datecheck_p2[c("datorder", "filename", "portid", "rowid","raw_datorder")]) %>%
-  #rename cols temporarily so can recycle qa infill code from above
-  rename(global_datorder = raw_datorder, raw_datorder = datorder, clean_datetime = date_time) %>%
-  # infill raw_datetime with clean datetime if was a good (untreated) logger
-  mutate(raw_datetime = ifelse(logger %in% goodrefs$logger, as.character(clean_datetime), as.character(raw_datetime)),
-         # create additional qa note col for annotating/so code below runs
-         qa_note2 = as.character(NA))
-# check all looks good
-str(soilmoisture_master_p2)
-summary(soilmoisture_master_p2)
-View(subset(soilmoisture_master_p2, is.na(global_datorder)))
-
-# review b1l2
-reviewb1l2 <- subset(soilmoisture_master_p2, logger == "B1L2" & date(clean_datetime) == as.Date("2021-09-15"))
-rawb1l2 <- subset(soilmoisture_p2, logger == "B1L2" & date(date_time) == as.Date("2021-09-15"))
+#copy <- soilmoisture_master_p2
 soilmoisture_master_p2 <- copy
 
-
-
-
-
-# 
-# To Do 2021-12-29:
-#   
-# Fix b1l2 duplicate logger data overlapping at end of 9/15 9/16 before running rundf loop
-# 
-# suss out how timestamps are diffed (is it hour, days?)
-# switch NA adjustment back to timediff/2hrs (can't diff timestamps)
-
-
-
+# make additional qa_note col for annotations
+soilmoisture_master_p2$qa_note2 <- NA
+class(soilmoisture_master_p2$qa_note2) <- "character" # reclass from logical
 
 
 # infill qa_notes
 # ignore b3l3 port 3 and b2l4 port 1 after intevent 1 (they stopped measuring vwc even tho data records present -- not possible to correct timestamps with no vwc data)
 for(i in unique(adjustdates_p2$portid)){
+  # subset from soilmoisture_master since some things have changed
+  #tempadjust <- subset(soilmoisture_master_p2, portid == i & !is.na(qa_note))
   tempadjust <- subset(adjustdates_p2, portid == i)
+  
   for(r in 1:nrow(tempadjust)){
     # skip b3l3 port 1 and b2l4 port 1 -- will annotate after intevent 1 below
     if(tempadjust$portid[r] %in% c("B3L3_3", "B2L4_1") & tempadjust$intevent[r] > 1){
       next
     }
+    # append qa note dependent on what done
+    ## NA infill
+    if(grepl("NA infill", tempadjust$qa_note[r])){
+      # id where interval event with NA flag starts
+      tempend <- min(with(soilmoisture_master_p2, which(portid == i & intevent == tempadjust$intevent[r] & !is.na(intevent))))
+      # id where previous interval event ends
+      tempstart <- max(with(soilmoisture_master_p2, which(portid == i & intevent == (tempadjust$intevent[r]-1) & !is.na(intevent))))
+      # id NA rows created between the two that needs annotation
+      NArows <- (tempstart+1):(tempend-1)
+      # note only goes to spot before where indicated
+      soilmoisture_master_p2$qa_note2[NArows] <- paste("Data missing, NA added, no timestamp recorded by", i, "for", (length(NArows)), "2hr-timesteps")
+      next
+    }
     # pull interval event to infill
     temp_event <- tempadjust$intevent[r]
     # pull where interval begins
-    tempstart <- with(soilmoisture_master_p2, which(portid == i & raw_datorder == tempadjust$datorder[r]))
+    tempstart <- with(soilmoisture_master_p2, which(portid == i & datorder == tempadjust$datorder[r] & raw_datetime == tempadjust$date_time[r]))
+    # pull clean order of pertinent interval
+    temporder <- soilmoisture_master_p2$cleanorder[tempstart]
+    # pull max clean order of previous interval
+    temp_prevorder <- max(with(soilmoisture_master_p2, cleanorder[portid == i & intevent == (temp_event-1) & !is.na(intevent)]))
     # pull adjustment amount for note
-    tempdiff <- as.numeric(soilmoisture_master_p2$clean_datetime[tempstart] - as.POSIXlt(soilmoisture_master_p2$raw_datetime[tempstart], tz = "UTC"))
+    tempdiff <- soilmoisture_master_p2$date_time[tempstart] - as.POSIXlt(soilmoisture_master_p2$raw_datetime[tempstart], tz = "UTC")
+    temptime <- round(as.numeric(tempdiff),2)
+    tempunit <- units(tempdiff)
     if(length(tempdiff) >1){
       print(paste("tempdiff > 1:", i))
     }
     # pull rows to annotate
     temprows <- with(soilmoisture_master_p2, which(portid == i & intevent == temp_event))
-    # append qa note dependent on what done
-    ## NA infill
-    if(grepl("NA infill", tempadjust$qa_note[r])){
-      # note only goes to spot before where indicated
-      soilmoisture_master_p2$qa_note2[temprows] <- paste("Data missing, NA added, no timestamp recorded by", i, "for", (tempdiff/2), "2hr-timesteps")
-    }
     ## timestamp shift or last run
     if(grepl("timestamp|last", tempadjust$qa_note[r])){
       # annotate
       if(tempdiff <= 0){
-        soilmoisture_master_p2$qa_note2[temprows] <- paste("Timestamp off, data sequence shifted backwards", abs(tempdiff)/2, "2hr-timesteps to correct timestamp")
+        soilmoisture_master_p2$qa_note2[temprows] <- paste("Timestamp off, data-time shifted backwards", paste(temptime, tempunit), paste0("(data sequence shifted ", (temporder - temp_prevorder)-1," 2hr-timesteps from last collection run  before break)"), "to correct timestamp")
       }else{
-        soilmoisture_master_p2$qa_note2[temprows] <- paste("Timestamp off, data sequence shifted forwards", abs(tempdiff)/2, "2hr-timesteps to correct timestamp")
+        soilmoisture_master_p2$qa_note2[temprows] <- paste("Timestamp off, data-time shifted forwards", paste(temptime, tempunit), paste0("(data sequence shifted ", (temporder - temp_prevorder)-1," 2hr-timesteps from last collection run before break)"), "to correct timestamp")
       }
     }
-    
   }
+  
   # annotate b3l3 port 3 and b2l4 port 1 after intevent
   if(tempadjust$portid[1] %in% c("B3L3_3", "B2L4_1")){
     # pull rows to annotate
@@ -2626,40 +2569,180 @@ for(i in unique(adjustdates_p2$portid)){
   
   # annotate first timestamp data recorded for each logger in qa_note for cleanorder == 1
   # grab first timestamp
-  firstdat <- min(with(soilmoisture_master_p2, clean_datetime[portid == i & raw_datorder >= 1 & !is.na(vwc)]))
+  firstdat <- min(with(soilmoisture_master_p2, date_time[portid == i & cleanorder >= 1 & !is.na(vwc)]))
   stopifnot(length(firstdat)==1 & firstdat != Inf)
   # id row in soilmoisture_master_p2
-  firstrow <- with(soilmoisture_master_p2, which(portid == i & cleanorder == 1))
+  firstrow <- with(soilmoisture_master_p2, which(portid == i & date_time == firstdat))
   # annotate
   soilmoisture_master_p2$qa_note2[firstrow] <- paste("First non-NA data recording for", i, "starts", firstdat) 
   
   # annotate last timestep where vwc recorded (whether before project end or at project stop)
-  lastdat <- max(with(soilmoisture_master_p2, clean_datetime[portid == i & raw_datorder >= 1 & !is.na(vwc)]))
+  lastdat <- max(with(soilmoisture_master_p2, date_time[portid == i & cleanorder >= 1 & !is.na(vwc)]))
   stopifnot(length(lastdat)==1 & lastdat != Inf)
   # id row in soilmoisture_master_p2
-  lastrow <- with(soilmoisture_master_p2, which(portid == i & clean_datetime == lastdat))
+  lastrow <- with(soilmoisture_master_p2, which(portid == i & date_time == lastdat))
   # annotate end of logger-port recording for project
   soilmoisture_master_p2$qa_note2[lastrow] <- paste("Last non-NA data recording for", i, "ends", as.character(lastdat)) 
 }
 
+
 # add note for any breaks in data (not first or last clean order, filename, vwc and raw_datorder/raw_datetime will be NA)
-checkNA <- apply(select(soilmoisture_master_p2, filename:qa_note2), 1, function(x) all(is.na(x)))
-View(soilmoisture_master_p2[checkNA,]) # looks okay for infilling
+checkNA <- apply(select(soilmoisture_master_p2, filename:rowid), 1, function(x) all(is.na(x)))
+emptyrows <- soilmoisture_master_p2[checkNA,]
+# review
+sort(with(emptyrows, sapply(split(vwc, portid), length)))
+View(soilmoisture_master_p2[checkNA & is.na(soilmoisture_master_p2$qa_note2),])
+# visualize to see if it seems sensical
+ggplot() +
+  geom_point(data = soilmoisture_master_p2[checkNA,], aes(date_time, 0), alpha = 0.5) +
+  geom_point(data = soilmoisture_master_p2[!checkNA,], aes(date_time, 1), alpha = 0.5, col = "lightblue") +
+  facet_wrap(~portid) 
+# zoom in
+ggplot() +
+  geom_point(data = soilmoisture_master_p2[checkNA & soilmoisture_master_p2$cleanorder > 3000,], aes(cleanorder, 0), alpha = 0.5, position = position_jitter(width=0, height = 0.1)) +
+  geom_point(data = soilmoisture_master_p2[!checkNA& soilmoisture_master_p2$cleanorder > 3000,], aes(cleanorder, 0), alpha = 0.5, col = "lightblue", position = position_jitter(width=0, height = 0.1)) +
+  facet_wrap(~portid)
+with(soilmoisture_master_p2, sapply(split(cleanorder, portid), function(x) sum(duplicated(x)))) # no cleanorder duplicated, so okay to infill as missing
+# infill note as missing/break in data -- will be incorrect for loggers that don't start at cleanorder 1 but can take care of that when rbinding
 soilmoisture_master_p2$qa_note2[checkNA] <- "Missing data, break in data logger recording"
+
+# infill missing filenames
+# write a loop to infill
+soilmoisture_master_p2$sourcefile <- soilmoisture_master_p2$filename
+# who has missing filenames?
+with(distinct(soilmoisture_master_p2[c("sourcefile", "date_time", "logger")]), sapply(split(sourcefile, logger), function(x) sum(is.na(x))))
+
+
+# infill filename, by first not-NA date to next not-NA (or last, as applicable)
+for(p in unique(soilmoisture_master_p2$portid)){
+  tempdat <- subset(soilmoisture_master_p2, portid == p)
+  tempfiles <- unique(subset(tempdat, select = c(portid, date_time, cleanorder, filename, vwc, qa_note2))) %>%
+    group_by(filename) %>%
+    mutate(startorder = min(cleanorder)) %>%
+    ungroup() %>%
+    subset(!is.na(filename) & cleanorder == startorder)
+  if(nrow(tempfiles) == 1){
+    needsfill <- with(soilmoisture_master_p2, which(portid == p & is.na(sourcefile)))
+    soilmoisture_master_p2$sourcefile[needsfill] <- tempfiles$filename
+    next
+  }
+  # set counter
+  i <- 1
+  while(i < nrow(tempfiles)){
+    tempstart <- tempfiles$startorder[i]
+    tempend <- tempfiles$startorder[i+1] -1
+    needsfill <-  with(soilmoisture_master_p2, which(portid == p & is.na(sourcefile) & cleanorder %in% tempstart:tempend))
+    soilmoisture_master_p2$sourcefile[needsfill] <- tempfiles$filename[i]
+    i <- i+1
+  }
+  # for last period infill last filename
+  needsfill <- with(soilmoisture_master_p2, which(portid == p & is.na(sourcefile) & cleanorder >= tempfiles$startorder[nrow(tempfiles)]))
+  # if needsfill is empty, this next line will do nothing; otherwise will infill to last entry correctly
+  soilmoisture_master_p2$sourcefile[needsfill] <- tempfiles$filename[nrow(tempfiles)]
+}
+
+# review (only NAs in sourcename should be if logger didn't start recording at cleanorder 1)
+summary(is.na(soilmoisture_master_p2))
+View(subset(soilmoisture_master_p2, is.na(sourcefile)))
+View(subset(soilmoisture_master_p2, is.na(filename) & !is.na(sourcefile)))
+
+# verify no more than 3 distinct non-NA filenames per logger
+View(distinct(soilmoisture_master_p2[c("logger", "filename", "sourcefile")])) # seems fine
+
+# clean up colnames and append water year for rbinding
+soilmoisture_master_p2_tobind <- mutate(soilmoisture_master_p2, date = date(date_time),
+                                        time = as.character(str_extract(date_time, pattern = "[:digit:]{2}:.*$"))) %>%
+  # drop qa_note and keep qa_note2
+  subset(select = -qa_note) %>%
+  left_join(date_lookup) %>%
+  rename(clean_datetime = date_time, qa_note = qa_note2)
 
 
 
 
 # -- STACK TREATED PERIODS 1 + 2 -----
+# what's missing from p2 to bind with p1?
+names(soilmoisture_master_p2_tobind)[!names(soilmoisture_master_p2_tobind) %in% names(soilmoisture_master_p1)]
+names(soilmoisture_master_p1)[!names(soilmoisture_master_p1) %in% names(soilmoisture_master_p2_tobind)]
 
-soilmoisture_master_all <- rbind(cbind(soilmoisture_master_p1, period = 1), cbind(soilmoisture_master_p2, period = 2)) %>%
-  arrange(logger, port, date_time, period) %>%
+soilmoisture_master_all <- rbind(cbind(soilmoisture_master_p1, period = 1), 
+                                 cbind(soilmoisture_master_p2_tobind[names(soilmoisture_master_p1)], period = 2)) %>%
+  arrange(logger, port, clean_datetime, period) %>%
+  mutate(stacked_rowid = rownames(.)) %>%
   #look for duplicate date_time entries, if present prioritize the one from period 1
   group_by(portid) %>%
-  mutate(checkentry = duplicated(date_time)) %>%
+  mutate(checkentry = duplicated(clean_datetime),
+         checkentry2 = clean_datetime %in% clean_datetime[checkentry]) %>%
   ungroup()
 
+# review
+triage <- subset(soilmoisture_master_all, checkentry2) %>%
+  group_by(portid, clean_datetime) %>%
+  mutate(keep = ifelse(any(!is.na(vwc)), cleanorder[!is.na(vwc)], NA),
+         keep2 = ifelse(is.na(keep) & any(!is.na(raw_datorder)), cleanorder[!is.na(raw_datorder)], keep),
+         keep3 = ifelse(is.na(keep) & is.na(keep2) & any(!is.na(qa_note)), cleanorder[grepl("Last non-NA", qa_note)], keep2),
+         keep_final = cleanorder == keep3) %>%
+  ungroup()
+drop <- triage[!triage$keep_final,]
+# remove rows to drop
+nrow(soilmoisture_master_all)
+soilmoisture_master_all <- soilmoisture_master_all[!soilmoisture_master_all$stacked_rowid %in% drop$stacked_rowid,]
+nrow(soilmoisture_master_all) # applied correctly
 
+# need to clean up notes for "last non-NA" in period 1 when period 2 data are present, and first non-NA in period 2
+soilmoisture_master_all <- soilmoisture_master_all %>%
+  mutate(qa_note3 = ifelse(grepl("First|Last", qa_note), qa_note, NA)) %>%
+  group_by(portid) %>%
+  mutate(NAnote = (grepl("Last", qa_note3) & period == 1 & (any(!is.na(vwc) & period == 2))) | (grepl("First", qa_note3) & period == 2 & (any(!is.na(vwc) & period == 1))),
+         # also note who is missing in p2 (just in case data are lost)
+         npers = length(unique(period)),
+         lastorder = ifelse(npers==1, max(cleanorder), NA),
+         maxdate = ifelse(npers == 1 & cleanorder == lastorder, as.character(max(clean_datetime[!is.na(vwc)])), NA)) %>%
+  ungroup() %>%
+  # clean up notes
+  mutate(qa_note = ifelse(NAnote, NA, qa_note),
+         qa_note = ifelse(!is.na(maxdate), paste("Last non-NA data recording for", portid, maxdate), qa_note))
+
+
+# reassign clean dat order and global rowid
+firstdatetime <- min(soilmoisture_master_all$clean_datetime)
+lastdatetime <- max(soilmoisture_master_all$clean_datetime)
+all_datetime <- data.frame(clean_datetime = seq.POSIXt(firstdatetime, lastdatetime, by = "2 hours")) %>%
+  mutate(global_cleanorder = 1:nrow(.))
+
+# prep data frame to write out
+soilmoisture_master_out <- left_join(soilmoisture_master_all, all_datetime) %>%
+  arrange(logger, portid, clean_datetime) %>%
+  mutate(cleanorder = global_cleanorder) %>%
+  subset(select = c(logger:sourcefile)) %>%
+  data.frame() %>%
+  distinct()
+
+# screen for NAs
+summary(soilmoisture_master_out)
+summary(is.na(soilmoisture_master_out)) # looks good. no NAs present in columns where there shouldn't be NAs
+
+# final pass on date-checking file source
+downloadfiles_df <- distinct(subset(soilmoisture_master_out, select = c(logger, portid, port, sourcefile, clean_datetime, qa_note))) %>%
+  group_by(portid, sourcefile) %>%
+  mutate(firstdate = min(clean_datetime),
+         lastdate = max(clean_datetime)) %>%
+  subset(clean_datetime == firstdate | clean_datetime == lastdate) %>%
+  ungroup() %>%
+  group_by(logger, sourcefile) %>%
+  mutate(logger_firstdate = min(clean_datetime),
+         logger_lastdate = max(clean_datetime)) %>%
+  ungroup() %>%
+  mutate(firstcheck = firstdate == logger_firstdate,
+         lastcheck = lastdate == logger_lastdate )
+
+soilmoisture_master_filecheck <- left_join(soilmoisture_master_out[c("logger", "portid", "clean_datetime", "sourcefile", "cleanorder")], distinct(downloadfiles_df[c("sourcefile", "portid", "logger_firstdate", "logger_lastdate")]))
+soilmoisture_master_filecheck$filecheck <- with(soilmoisture_master_filecheck, clean_datetime >= logger_firstdate & clean_datetime <= logger_lastdate)
+summary(soilmoisture_master_filecheck$filecheck) # good to write out
+
+
+
+# -- FINISHING -----
 # remake plots from initial compilation loop
 logger_plot_clean <- soilmoisture_master_all %>%
   ggplot(aes(dowy, vwc, col = as.factor(port))) + #date_time, 
@@ -2672,22 +2755,21 @@ logger_plot_clean
 trt_plot_clean <- soilmoisture_master_all %>%
   ggplot(aes(dowy, vwc, group = portid, col = as.factor(block))) +
   geom_line(alpha = 0.5) +
-  ggtitle(paste0("Compost prelim plot (", Sys.Date(),") : cleaned soil moisture (VWC),\nby water year, nutrient x drought treatment, colored by block")) +
+  ggtitle(paste0("Compost prelim plot (", Sys.Date(),"): cleaned soil moisture (VWC),\nby water year, nutrient x drought treatment, colored by block")) +
   scale_color_discrete(name = "block") +
   facet_grid(fulltrt~waterYear, scales = "free_x")
 trt_plot_clean
 
 
 # write out clean data preliminary plots to if desired
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bylogger.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Figures/Compost_timecorrectedVWC_bylogger.pdf"),
        plot = logger_plot_clean,
        width = 8, height = 8, units = "in")
-ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_Figures/Compost_cleanVWC_bytreatment.pdf"),
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Figures/Compost_timecorrectedVWC_bytreatment.pdf"),
        plot = trt_plot_clean,
        width = 8, height = 8, unit = "in")
 
-
-# -- FINISHING -----
-write.csv(soilmoisture_master_all, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_time-corrected.csv"), row.names = F)
+# write out dataset
+write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_time-corrected.csv"), row.names = F)
 # also write out as cleaned dataset for time being until other data processing scripts made
-write.csv(soilmoisture_master_all, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
+write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
