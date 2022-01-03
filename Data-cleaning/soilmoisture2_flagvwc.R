@@ -94,7 +94,10 @@ cimis_ppt2hr <- subset(cimis_hrly, date%in% smdat$date, select = c(clean_datetim
          rain = ifelse(rain2, FALSE, rain),
          #rain2 = ifelse()
          rainevent = as.numeric(NA),
-         dryspell = as.numeric(NA))
+         dryspell = as.numeric(NA)) %>%
+  group_by(waterYear) %>%
+  mutate(wY_accumulated_ppt = cumsum(ppt_mm)) %>%
+  ungroup()
 trackrain <- list2DF(rle(cimis_ppt2hr$rain))
 
 r <- 1
@@ -117,13 +120,9 @@ for(i in 1:nrow(trackrain)){
   }
 }
 
-# summarize rain events
-# pull out soilmoisture dat just for QA
-smdat_qa <- mutate(smdat, rowid = rownames(smdat)) %>%
-  left_join(cimis_ppt2hr)
 
 raw_v_ppt <- plot_grid(
-  ggplot(smdat_qa, aes(clean_datetime, vwc)) +
+  ggplot(smdat, aes(clean_datetime, vwc)) +
     geom_line(aes(group = portid), alpha = 0.5) +
     geom_hline(aes(yintercept = 0), col = "red") +
     scale_x_datetime(date_breaks = "2 months", date_labels = "%b-%y") +
@@ -131,7 +130,7 @@ raw_v_ppt <- plot_grid(
     labs(x = NULL) +
     theme(axis.text.x = element_blank()) +
     facet_grid(ppt_trt~.),
-  ggplot(distinct(smdat_qa[c("clean_datetime", "ppt_mm")]), aes(clean_datetime, ppt_mm)) +
+  ggplot(distinct(cimis_ppt2hr[c("clean_datetime", "ppt_mm")]), aes(clean_datetime, ppt_mm)) +
     geom_point(alpha = 0.5) +
     scale_x_datetime(date_breaks = "2 months", date_labels = "%b-%y") +
     # create strip so lines up
@@ -139,6 +138,7 @@ raw_v_ppt <- plot_grid(
   nrow = 2, align = "vh",
   rel_heights = c(1.25, 0.75)
 )
+raw_v_ppt
 
 ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Figures/Compost_timecorrectedVWC_vPrecip.pdf"),
        plot = raw_v_ppt,
@@ -147,19 +147,99 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
 
 
 # -- LOGIC CHECKS -----
-# flag 1 = value outside of plausible range? ([0-1])
-smdat_qa
+# flag 1 = value outside of plausible range? ([0-])
+# > allow for slight dip below 0 that can be shifted to 0 or up (manual says accurate to 0.03 m3/m3 [3% VWC])
+smdat_qa <- subset(smdat, select = c(logger:vwc)) %>%
+  mutate(rowid = rownames(.),
+         range_flag = ifelse(vwc > 0.7, "high warning",
+                             ifelse(vwc < 0 & vwc > -0.04, "low warning", 
+                                    ifelse(vwc <= -0.04, "outside range", NA))),
+         # start qa_vwc
+         qa_vwc = ifelse(grepl("high|outside", range_flag), NA, vwc))
+  
 
 
 # flag 2 = wetup outside of precip event? (and not irrigation)
 
+# track wetup for soilmoisture
+rundf <- data.frame()
+for(p in unique(smdat$portid)){
+  tempdat <- subset(smdat_qa, portid == p) %>%
+    mutate(diffvwc = round(vwc - lag(vwc),2),
+           wetup = diffvwc >= 0.2 | (diffvwc > 0.01 & lead(diffvwc) > 0.15) | (diffvwc >= 0.01 & lag(diffvwc) > 0.15),
+           wetup_event = as.numeric(NA))
+  temprun <- list2DF(rle(tempdat$wetup))
+  
+  # annotate events
+  r <- 1
+  wetupevent <- 0 # ignore the "first" wetup (installation)
+  for(i in 1:nrow(temprun)){
+    # note where to stop
+    tempend <- r+ (temprun$lengths[i] -1)
+    # note event
+    # > if NA or FALSE ignore
+    if((is.na(temprun$values[i]) | !temprun$values[i])){
+      # increment r and dryspell
+      r <- tempend+1
+    }else{
+      tempdat$wetup_event[r:tempend] <- wetupevent
+      # increment r and rainevent
+      r <- tempend+1
+      wetupevent <- wetupevent + 1
+    }
+  }
+  rundf <- rbind(rundf, tempdat)
+}
 
+# clean up first wetup (installation)
+#rundf$wetup_event[which(rundf$wetup_event == 0)] <- NA
+
+
+accumulated <- group_by(rundf, portid, waterYear) %>%
+  mutate(accumulated_sm = cumsum(vwc)) %>% # don't think it sums for portids with missing data
+  ungroup() %>%
+  left_join(cimis_ppt2hr) %>%
+  # screen for wetup events outside of rain events
+  mutate(flagwetup = !is.na(wetup_event) & is.na(rainevent)) %>%
+  # try more conservative wetupflag
+  group_by(date, portid) %>%
+  mutate(dryday = sum(ppt_mm, na.rm = T) < 0.01) %>%
+  ungroup() %>%
+  mutate(flagwetup2 = !is.na(wetup_event) & dryday)
+
+# plot accumulate
+ggplot(accumulated, aes(wY_accumulated_ppt, accumulated_sm)) +
+  geom_line(aes(col = logger, lty = nut_trt, group = portid)) +
+  facet_grid(waterYear~ppt_trt, scales = "free")
+
+# plot soil moisture with flagged values in red (this is not yet taking into account irrigation for wet plots)
+ggplot() +
+  geom_line(data = accumulated, aes(clean_datetime, qa_vwc, group = portid)) +
+  geom_point(data = subset(accumulated, flagwetup), aes(clean_datetime, vwc), col = "red", alpha = 0.5) +
+  geom_point(data = subset(accumulated, flagwetup2), aes(clean_datetime, vwc), col = "yellow", alpha = 0.5) +
+  facet_grid(nut_trt~ppt_trt)
+
+# zoom in on suspect loggers
+ggplot() +
+  geom_line(data = subset(accumulated, portid %in% unique(accumulated$portid[accumulated$flagwetup])), aes(clean_datetime, vwc, group = portid)) +
+  geom_point(data = subset(accumulated, flagwetup), aes(clean_datetime, vwc), col = "red", alpha = 0.5) +
+  geom_point(data = subset(accumulated, flagwetup2), aes(clean_datetime, vwc), col = "yellow", alpha = 0.5) +
+  facet_grid(nut_trt~ppt_trt)
 
 
 # -- CONGRUENCY CHECKS ----
 # flag 3 = deviation from near-in-space sensors
+# > check on a moving average to smooth out tiny differences between timesteps
+# > also screen for absolute spikes
 
+drought_congruency <- subset(smdat, ppt_trt == "D")
+ggplot(drought_congruency, aes(clean_datetime, vwc))+
+  geom_line(aes(group = portid, col = comp_trt)) +
+  geom_hline(aes(yintercept = -0.03)) +
+  facet_grid(block~nut_trt)
+wet_congruency <- subset(smdat, ppt_trt == "W")
 
+control_congruency <- subset(smdat, ppt_trt == "XC")
 # deviation from same treatment sensors
 
 
