@@ -167,8 +167,8 @@ group_by(smdat, portid) %>%
 testcase <- subset(smdat, logger == "B2L1")
 rownames(testcase) <- NULL  # clear rownames
 testcase$rowid <- as.numeric(rownames(testcase))
-  
-  mutate(rowid = as.numeric(rownames(.)))
+
+testcase2 <- subset(smdat, logger %in% c("B2L1", "B3L1"))
 
 # range check
 check_range <- function(dat, id = c("rowid", "portid", "clean_datetime", "cleanorder"), hi = 0.6, low = -0.04){
@@ -189,7 +189,7 @@ ggplot(rangetest, aes(clean_datetime, vwc, group = portid)) +
 
 
 # flatline of 10+ timesteps (don't think there are any but to be sure)
-check_streak <- function(dat, id = c("rowid", "clean_datetime", "cleanorder"), groupvars = c("portid"), steps = 10){
+check_streak <- function(dat, id = c("clean_datetime", "cleanorder"), groupvars = c("portid"), steps = 10){
   tempdat <- subset(dat, select = c(id, groupvars, "vwc")) %>%
     grouped_df(groupvars) %>%
     mutate(diff = vwc == lag(vwc))
@@ -219,35 +219,182 @@ ggplot(subset(streaktest, portid %in% portid[!is.na(flag_streak)] & cleanorder %
   geom_point(data=subset(streaktest, !is.na(flag_streak)), aes(clean_datetime, vwc, col = flag_streak)) +
   facet_wrap(~streak_num, scales = "free")
 
+allstreak <- check_streak(smdat)
 
 # target day exceeds +3 z-score in 30d window
-check_deviance <- function(dat, id = c("rowid", "clean_datetime", "cleanorder"), groupvars = c("portid"), rollwin = (30)){
-  tempdat <- subset(dat, portid == "B2L1_1", select = c(id, groupvars, "vwc")) %>%
-    grouped_df(groupvars)
-  tempdat$rolling <- rollapply(tempdat$vwc, rollwin, fill = NA, function(x) scale(x))
+check_deviance <- function(dat, id = c("clean_datetime", "cleanorder"), groupvars = c("portid", "fulltrt"), rollwin = (30*12)){
+  tempdat <- subset(dat, select = c(id, groupvars, "vwc"))
+  tempdat <- grouped_df(tempdat, groupvars)
+  # calculate moving window mean, sd, and # non-NA observations
+  tempdat$rollmean <- rollmean(tempdat$vwc, rollwin, fill = NA, align = "left", na.rm = T) # look from target forward in time rollwin steps
+  tempdat$rollsd <- rollapply(tempdat$vwc, rollwin, align = "left", fill = NA, function(x) sd(x, na.rm = T))
+  tempdat$rollnobs <- rollapply(tempdat$vwc, rollwin, align = "left", fill = NA, function(x) length(x[!is.na(x)]))
+  tempdat <- ungroup(tempdat)
+  # calculate z score (mean-centered vwc)/(sd)
+  tempdat$rollz <- with(tempdat, (vwc-rollmean)/rollsd)
+  return(tempdat)
 }
+test_deviance <- check_deviance(testcase)
 
-ggplot(tempdat, aes(clean_datetime, vwc)) +
+ggplot(test_deviance, aes(clean_datetime, vwc)) +
   geom_line() +
-  geom_point(data = subset(tempdat, abs(rolling) >=3),aes(clean_datetime, vwc), col = "orchid", size = 2)
-
+  geom_point(data = subset(test_deviance, abs(rollz)>3), aes(size = abs(rollz)), col = "pink", alpha = 0.5) +
+  facet_wrap(~portid)
 
 # target day exceeds +3 z-score in same-day over all years step change
-check_step <- function(dat, id = c("rowid", "clean_datetime", "date", "cleanorder"), groupvars = c("portid"), rollwin = (30)){
-  tempdat <- subset(dat, portid == "B2L1_1", select = c(id, groupvars, "vwc")) %>%
-    grouped_df(groupvars)
-  tempdat$rolling <- rollapply(tempdat$vwc, rollwin, fill = NA, function(x) scale(x))
+check_step <- function(dat, id = c("clean_datetime", "date", "cleanorder"), groupvars = c("portid", "fulltrt"), grouptrt = c("doy", "ppt_trt"), rollwin = (30)){
+  tempdat <- subset(dat, select = c(id, groupvars, grouptrt, "vwc")) %>% #portid == "B2L1_1", 
+    grouped_df(groupvars) %>%
+    # calculate diff
+    mutate(diff = lead(vwc) - vwc) %>% # subtract target from next (forward) so is left-aligned
+    ungroup %>%
+    # calculate scaled val by day of year and precip treatment
+    grouped_df(grouptrt) %>%
+    mutate(meandiff = mean(diff, na.rm = T),
+           sddiff = sd(diff, na.rm = T),
+           nobsdiff = length(diff[!is.na(diff)])) %>%
+    ungroup() %>%
+    # calculate z score (mean centered step change)/(sd step change in window)
+    mutate(zdiff = (diff - meandiff)/sddiff)
+  return(tempdat)
 }
 
+step_test <- check_step(testcase)
+ggplot(step_test, aes(clean_datetime, vwc)) +
+  geom_line(aes(group = portid)) + 
+  geom_point(data = subset(step_test, abs(zdiff) > 3), aes(size = abs(zdiff)), alpha = 0.5, col = "yellow") +
+  facet_wrap(~portid)
+
+# see what was flagged in both
+combine_stepdev <- left_join(step_test, test_deviance) %>%
+  mutate(flag_extreme = (abs(zdiff) > 3 & abs(rollz) > 3)) # any z greater than 3
+# plot
+ggplot(combine_stepdev, aes(clean_datetime, vwc)) +
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(combine_stepdev, flag_extreme),aes(clean_datetime, vwc), col = "orchid", size = 2) +
+  facet_wrap(~portid)
+
+# try it with two loggers
+step_test2 <- check_step(testcase2)
+dev_test2 <- check_deviance(testcase2)
+stepdev2 <-  left_join(step_test2, dev_test2) %>%
+  mutate(flag_extreme = (abs(zdiff) > 3 & abs(rollz) > 3))
+# plot
+ggplot(stepdev2, aes(clean_datetime, vwc)) +
+  geom_line(aes(group = portid), alpha = 0.5) +
+  geom_point(data = subset(stepdev2, flag_extreme),aes(clean_datetime, vwc), col = "orchid", size = 2) +
+  facet_wrap(~fulltrt)
+  #facet_wrap(~gsub("_[1-5]", "", portid))
+
+
 # all 3 criteria must fail to flag
-check_spike <- function(){
+# update: this won't work when NAs present in time series .. need to infill through NA spline in zoo
+check_spike <- function(dat, id = c("clean_datetime", "date", "cleanorder", "portid", "fulltrt", "ppt_trt"), groupvars = c("portid")){
+  tempdat <- subset(dat, select = unique(c(id, groupvars, "vwc")))
+  # > before grouping data to iterate by port, run zoo tasks (for step 2 check)
+  
+  # calculate Savitzky Golay 2nd order derivative (they used 3hrs for filter window.. but that seems small?)
+  # need to make data zoo object and iterate through each portid for this to work..
+  # > first initiate data frame for storing results
+  zoodat <- data.frame()
+  for(i in unique(tempdat$portid)){
+    portdat <- ungroup(subset(tempdat, portid == i, select = unique(c(id, groupvars, "vwc"))))
+    x <- zoo::zoo(portdat$vwc, portdat$clean_datetime)
+    portdat$deriv2 <- pracma::savgol(zoo::na.spline(x), fl = 3, forder = 2, dorder = 2)
+    zoodat <- rbind(zoodat, portdat)
+  }
+  # join 2nd deriv info back to tempdat
+  tempdat <- left_join(tempdat, zoodat[c("clean_datetime", "cleanorder", "portid", "deriv2")])
+  # proceed with checks (via grouping data)
+  tempdat <- grouped_df(tempdat, groupvars)
+  
   # 1. subsequent time step change of 15%
-  
-  # 2. second deriv outside 0.8 to 1.2 (based on calibrated data in doriga et al. 2013)
-  
+  # > ctw also adding abs change of at least 0.01m3^m-3 to avoid low moisture wobbles in summer/dry periods
+  tempdat$stepchange <- abs(tempdat$vwc / lag(tempdat$vwc))
+  tempdat$abschange <- abs(tempdat$vwc - lag(tempdat$vwc))
+  # 2. second deriv outside 0.8 to 1.2 (based on calibrated data in Doriga et al. 2013)
+  # calculate rel change between lag and lead
+  tempdat$step2derv <- abs(lag(tempdat$deriv2) / lead(tempdat$deriv2))
   # 3. 24hr CV exceeds 1
-  
+  # 12 hrs prior to target t, and 12 hours ahead, but *don't* include t
+  tempdat$mu24 <- rollapply(tempdat$vwc, list(c(-6:-1, 1:6)), fill = NA, function(x) mean(x, na.rm = T))
+  tempdat$sd24 <- rollapply(tempdat$vwc, list(c(-6:-1, 1:6)), fill = NA, function(x) sd(x, na.rm = T))
+  tempdat$nobs24 <- rollapply(tempdat$vwc, list(c(-6:-1, 1:6)), fill = NA, function(x) length(x[!is.na(x)]))
+  # calculate cv
+  tempdat <- ungroup(tempdat)
+  tempdat$cv24 <- with(tempdat, sd24/mu24)
+  # flag if all three criteria violated
+  tempdat$spike <- with(tempdat, (stepchange > 1.15 | stepchange < 0.85) & (step2derv < 1.2 & step2derv > 0.8) & cv24 < 1)
+  # return simple tempdat
+  return(tempdat[unique(c(id, groupvars, "vwc", "nobs24", "abschange", "spike"))])
 }
+
+test_spike <- check_spike(testcase2)
+ggplot(test_spike, aes(clean_datetime, vwc))+
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(test_spike, spike & abschange > 0.015), col = "orchid", size = 2, alpha = 0.5)+
+  facet_wrap(~portid)
+# more helpful when add in abschange check
+ggplot(subset(test_spike, portid == "B2L1_1" & cleanorder %in% 3000:4000), aes(cleanorder, vwc))+
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(test_spike, spike & portid == "B2L1_1" & cleanorder %in% 3000:4000), col = "orchid", alpha = 0.5) +
+  geom_point(data = subset(test_spike, spike & portid == "B2L1_1" & cleanorder %in% 3000:4000 & abschange < 0.01), col = "yellow", alpha = 0.75)
+  facet_wrap(~portid)
+# build the break check since easy enough..
+check_break <- function(dat, id = c("clean_datetime", "date", "cleanorder", "portid", "fulltrt", "ppt_trt"), groupvars = c("portid")){
+  tempdat <- subset(dat, select = unique(c(id, groupvars, "vwc")))
+  # > before grouping data to iterate by port, run zoo tasks (for step 2 check)
+  
+  # calculate Savitzky Golay 1st and 2nd order derivatives (they used 3hrs for filter window.. but that seems small?)
+  # need to make data zoo object and iterate through each portid for this to work..
+  # > first initiate data frame for storing results
+  zoodat <- data.frame()
+  for(i in unique(tempdat$portid)){
+    portdat <- ungroup(subset(tempdat, portid == i, select = unique(c(id, groupvars, "vwc"))))
+    x <- zoo::zoo(portdat$vwc, portdat$clean_datetime)
+    portdat$deriv1 <- pracma::savgol(zoo::na.spline(x), fl = 3, forder = 2, dorder = 1)
+    portdat$deriv2 <- pracma::savgol(zoo::na.spline(x), fl = 3, forder = 2, dorder = 2)
+    portdat$vwc_interp <- as.numeric(zoo::na.spline(x))
+    zoodat <- rbind(zoodat, portdat)
+  }
+  # join 2nd deriv info back to tempdat
+  tempdat <- left_join(tempdat, zoodat[c("clean_datetime", "cleanorder", "portid", "deriv1", "deriv2", "vwc_interp")])
+  # proceed with checks (via grouping data)
+  tempdat <- grouped_df(tempdat, groupvars)
+  
+  # 1. rel step change at least 10% and abs change at least 0.01m3^m-3
+  tempdat$relchange <- abs((tempdat$vwc - lag(tempdat$vwc)) / tempdat$vwc)
+  tempdat$abschange <- abs(tempdat$vwc - lag(tempdat$vwc))
+  
+  # 2. first deriv at target t not more than 10x the 24hr average 2nd deriv, centered at t
+  # calculate 24 hr average of 2nd deriv
+  tempdat$mu24_2derv <- rollmean(tempdat$deriv2, 12, align = "center", fill = NA)
+ 
+   # 3. ratios of 2nd derivs (two to crunch)
+  tempdat$rat1 <- with(tempdat, round(abs(deriv2 / lead(deriv2)), 0))
+  tempdat$rat2 <- with(tempdat, round(abs(lead(deriv2) / lead(deriv2,2)), 0))
+ 
+  # ungroup
+  tempdat <- ungroup(tempdat)
+  # flag if all three criteria violated
+  tempdat$cr1 <- with(tempdat, relchange > 0.1 & abschange > 0.01)
+  tempdat$cr2 <- tempdat$deriv1 > (10*tempdat$deriv2)
+  tempdat$cr3 <- with(tempdat, abs(rat1) == 1 & abs(rat2) > 10) # abs to be sure
+  tempdat$flagbreak <- with(tempdat, cr1 & cr2 & cr3)
+  # return simple tempdat
+  return(tempdat[unique(c(id, groupvars, "vwc", "vwc_interp", "flagbreak"))])
+}
+  
+test_break <- check_break(testcase2)
+ggplot(test_break, aes(clean_datetime, vwc))+
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(test_break, flagbreak), col = "orchid", alpha = 0.5, size = 2)+
+  facet_wrap(~portid)
+# okay 
+ggplot(subset(test_break, portid == "B2L1_1" & cleanorder %in% 0:1000), aes(cleanorder, vwc))+
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(test_break, flagbreak & portid == "B2L1_1" & cleanorder %in% 0:1000), col = "orchid", alpha = 0.75, size = 2)+
+  facet_wrap(~portid)
 
 # wetup event and no observed rainfall in the previous 24 hrs
 # > either get irrigation schedule for W plots or only run this on XC and D ppt trts (W in summer okay)
