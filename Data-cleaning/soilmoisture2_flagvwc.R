@@ -145,11 +145,6 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        width = 10, height = 6, units = "in")
 
 
-group_by(smdat, portid) %>%
-  subset(is.na(qa_note)) %>%
-  summarise(nobs = length(vwc)) %>%
-  arrange(nobs) %>%
-  data.frame()
 
 # -- TEST CASE -----
 # apply QA/QC methods from lit
@@ -284,7 +279,7 @@ ggplot(stepdev2, aes(clean_datetime, vwc)) +
   geom_line(aes(group = portid), alpha = 0.5) +
   geom_point(data = subset(stepdev2, flag_extreme),aes(clean_datetime, vwc), col = "orchid", size = 2) +
   facet_wrap(~fulltrt)
-  #facet_wrap(~gsub("_[1-5]", "", portid))
+#facet_wrap(~gsub("_[1-5]", "", portid))
 
 
 # all 3 criteria must fail to flag
@@ -339,7 +334,7 @@ ggplot(subset(test_spike, portid == "B2L1_1" & cleanorder %in% 3000:4000), aes(c
   geom_line(aes(group = portid)) +
   geom_point(data = subset(test_spike, spike & portid == "B2L1_1" & cleanorder %in% 3000:4000), col = "orchid", alpha = 0.5) +
   geom_point(data = subset(test_spike, spike & portid == "B2L1_1" & cleanorder %in% 3000:4000 & abschange < 0.01), col = "yellow", alpha = 0.75)
-  facet_wrap(~portid)
+facet_wrap(~portid)
 # build the break check since easy enough..
 check_break <- function(dat, id = c("clean_datetime", "date", "cleanorder", "portid", "fulltrt", "ppt_trt"), groupvars = c("portid")){
   tempdat <- subset(dat, select = unique(c(id, groupvars, "vwc")))
@@ -369,11 +364,11 @@ check_break <- function(dat, id = c("clean_datetime", "date", "cleanorder", "por
   # 2. first deriv at target t not more than 10x the 24hr average 2nd deriv, centered at t
   # calculate 24 hr average of 2nd deriv
   tempdat$mu24_2derv <- rollmean(tempdat$deriv2, 12, align = "center", fill = NA)
- 
-   # 3. ratios of 2nd derivs (two to crunch)
+  
+  # 3. ratios of 2nd derivs (two to crunch)
   tempdat$rat1 <- with(tempdat, round(abs(deriv2 / lead(deriv2)), 0))
   tempdat$rat2 <- with(tempdat, round(abs(lead(deriv2) / lead(deriv2,2)), 0))
- 
+  
   # ungroup
   tempdat <- ungroup(tempdat)
   # flag if all three criteria violated
@@ -384,7 +379,7 @@ check_break <- function(dat, id = c("clean_datetime", "date", "cleanorder", "por
   # return simple tempdat
   return(tempdat[unique(c(id, groupvars, "vwc", "vwc_interp", "flagbreak"))])
 }
-  
+
 test_break <- check_break(testcase2)
 ggplot(test_break, aes(clean_datetime, vwc))+
   geom_line(aes(group = portid)) +
@@ -398,7 +393,65 @@ ggplot(subset(test_break, portid == "B2L1_1" & cleanorder %in% 0:1000), aes(clea
 
 # wetup event and no observed rainfall in the previous 24 hrs
 # > either get irrigation schedule for W plots or only run this on XC and D ppt trts (W in summer okay)
-outside_precip
+# for this, need a prepped rainfall dataset, the soil moisture data, and will combine both then flag any wetup not preceded by a rainfall event in previous 24hrs
+
+outside_precip <- function(soildat, raindat, keepsoil = c("clean_datetime", "cleanorder", "portid", "fulltrt", "ppt_trt", "nut_trt", "vwc"), groupvars = c("portid")){
+  # subset soildat
+  tempdat <- subset(soildat, select = keepsoil)
+  
+  # 1. track wetup in soilmoisture
+  rundf <- data.frame() # initiate data frame
+  # iterate through each portid in the soil moisture dataset
+  for(p in unique(tempdat$portid)){
+    portdat <- subset(tempdat, portid == p) %>%
+      mutate(diffvwc = round(vwc - lag(vwc),2),
+             # increase of at least 15%, or anticipates a wetup of at least 15%, or is still wetting up in timestep after 0.15 increase
+             wetup = diffvwc >= 0.15 | (diffvwc > 0.01 & lead(diffvwc) >= 0.15) | (diffvwc >= 0.01 & lag(diffvwc) > 0.15),
+             # keep track of events per portid if ever want to plot
+             wetup_event = as.numeric(NA))
+    temprun <- list2DF(rle(portdat$wetup))
+    
+    # annotate events
+    r <- 1
+    wetupevent <- 0 # ignore the "first" wetup (installation)
+    for(i in 1:nrow(temprun)){
+      # note where to stop
+      tempend <- r+ (temprun$lengths[i] -1)
+      # note event
+      # > if NA or FALSE ignore
+      if((is.na(temprun$values[i]) | !temprun$values[i])){
+        # increment r and dryspell
+        r <- tempend+1
+      }else{
+        portdat$wetup_event[r:tempend] <- wetupevent
+        # increment r and rainevent
+        r <- tempend+1
+        wetupevent <- wetupevent + 1
+      }
+    }
+    rundf <- rbind(rundf, portdat)
+  }
+  
+  # 2. join raindat
+  rundf <- left_join(rundf, raindat)
+  
+  # 3. check for wetup events outside of precip events
+  rundf <- grouped_df(rundf, groupvars)
+  # screen previous 24 hours for *any* precip event
+  rundf$rain24 <- rollapply(rundf$rainevent, list(c(-12:0)), fill = NA, function(x) any(!is.na(x)))
+  rundf$flag_wetup <- rundf$wetup & !rundf$rain24
+  
+  # return
+  return(ungroup(rundf))
+}
+
+test_precip <- outside_precip(smdat, cimis_ppt2hr)
+ggplot(test_precip, aes(clean_datetime, vwc)) +
+  geom_line(aes(group = portid)) +
+  geom_point(data = subset(test_precip, flag_wetup), aes(col = month(clean_datetime) %in% 5:9), size = 2, alpha = 0.75) +
+  facet_wrap(nut_trt~ppt_trt)
+
+
 
 # -- LOGIC CHECKS -----
 # flag 1 = value outside of plausible range? ([0-])
@@ -410,40 +463,12 @@ smdat_qa <- subset(smdat, select = c(logger:vwc)) %>%
                                     ifelse(vwc <= -0.04, "outside range", NA))),
          # start qa_vwc
          qa_vwc = ifelse(grepl("high|outside", range_flag), NA, vwc))
-  
+
 
 
 # flag 2 = wetup outside of precip event? (and not irrigation)
 
-# track wetup for soilmoisture
-rundf <- data.frame()
-for(p in unique(smdat$portid)){
-  tempdat <- subset(smdat_qa, portid == p) %>%
-    mutate(diffvwc = round(vwc - lag(vwc),2),
-           wetup = diffvwc >= 0.15 | (diffvwc > 0.01 & lead(diffvwc) > 0.15) | (diffvwc >= 0.01 & lag(diffvwc) > 0.15),
-           wetup_event = as.numeric(NA))
-  temprun <- list2DF(rle(tempdat$wetup))
-  
-  # annotate events
-  r <- 1
-  wetupevent <- 0 # ignore the "first" wetup (installation)
-  for(i in 1:nrow(temprun)){
-    # note where to stop
-    tempend <- r+ (temprun$lengths[i] -1)
-    # note event
-    # > if NA or FALSE ignore
-    if((is.na(temprun$values[i]) | !temprun$values[i])){
-      # increment r and dryspell
-      r <- tempend+1
-    }else{
-      tempdat$wetup_event[r:tempend] <- wetupevent
-      # increment r and rainevent
-      r <- tempend+1
-      wetupevent <- wetupevent + 1
-    }
-  }
-  rundf <- rbind(rundf, tempdat)
-}
+
 
 # clean up first wetup (installation)
 #rundf$wetup_event[which(rundf$wetup_event == 0)] <- NA
