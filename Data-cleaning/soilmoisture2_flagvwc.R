@@ -14,6 +14,8 @@ rm(list=ls())
 library(tidyverse) # for dplyr, tidyr, and ggplot
 library(lubridate)
 library(cowplot)
+library(pracma)
+library(zoo)
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 na_vals <- c(" ", "", NA, "NA")
@@ -120,6 +122,99 @@ for(i in 1:nrow(trackrain)){
   }
 }
 
+# track rainy season start and end each water year (for screening out dry period wetup spikes)
+# 0.5" = amount for first germination (12.7mm)
+# per water year (look at sep too), find first event where total precip is >= 12.7mm
+# find dry period with longest stretch after spring (should correspond to dry period?)
+# > note: sometimes it rains a teensy bit (<5mm) for a day or two in the summer. ignore these events.
+scan_rainseason <- function(dat, threshold = 12.7, groupvars = c("rainevent", "dryspell")){
+  # season start occurs on the day accumulation reaches 12.7 within a given event
+  tempdat <- grouped_df(dat, groupvars) %>%
+    mutate(event_ppt = sum(ppt_mm),
+           event_accum = cumsum(ppt_mm),
+           # within germevent, there has to be another rain event within a certain time, otherwise assume germinates would die
+           # > 2 weeks?
+           n_days = length(unique(date)), # this is just days involved, not actual event length       
+           # grab as character or else R converts to number
+           date_threshold = ifelse(event_ppt >= threshold, as.character(min(clean_datetime[(event_accum >= threshold)])), NA),
+           # convert back to date
+           date_threshold = as.POSIXct(date_threshold, tz = "UTC"),
+           # grab days to next event,
+           start_event = min(clean_datetime),
+           end_event = max(clean_datetime),
+           event_time= end_event - start_event, #in seconds
+           event_hrs = as.numeric(event_time/(60*60)),
+           event_days = round((event_hrs/24),2)) %>% 
+    ungroup()
+  
+  # NOTE TO SELF: can fuss with details later -- events that are short duration (dry or wet) should be folder into larger events
+  # for now just focusing on season demarcation
+  eventdat <- distinct(subset(tempdat, select = c(rainevent, dryspell, event_ppt, n_days:ncol(tempdat)))) %>%
+    gather(event_type, event_num, rainevent, dryspell) %>%
+    mutate(start_mon = month(start_event),
+           start_yr = year(start_event),
+           eco_yr = ifelse(start_mon %in% 9:12, start_yr+ 1, start_yr),
+           eco_mon = ifelse(start_mon %in% 9:12, start_mon - 8, start_mon + 4)) %>%
+    # re-organize df
+    subset(!is.na(event_num), select= c(event_type, event_num, eco_yr, start_yr, eco_mon, start_mon, event_ppt:event_hrs)) %>%
+    group_by(event_type) %>%
+    mutate(next_event = lead(start_event) - end_event,
+           next_event_days = round(as.numeric(next_event/24),2),
+           next_ppt = lead(event_ppt)) %>% # in hours
+    ungroup()
+  
+  # create growing season via for loop
+  seasondat <- distinct(subset(eventdat, !is.na(date_threshold), select = eco_yr))
+  seasondat$season_start <- NA
+  seasondat$season_end <- NA
+  
+  for(y in unique(seasondat$eco_yr)){
+    scandat <- subset(eventdat, eco_yr == y & event_type == "rainevent")
+    startchoices <- as.character(with(scandat, date_threshold[!is.na(date_threshold) & next_event_days < 5]))
+    for(u in startchoices){
+      u <- as.POSIXct(u, tz = "UTC")
+      # check if rain fell the next month also
+      lookahead <- subset(scandat, start_event > u & start_event <= date(u)+30)
+      # if nothing present or it didn't rain in the next month, next
+      # > note: germ rain in sep 2019 and rained several times that month, but then didn't rain until nov 27 (assume germinates died)
+      if(nrow(lookahead) == 0 | !(month(u) +1) %in% lookahead$start_mon){
+        next
+      }
+      # if there are more germinating events start season
+      if(any(!is.na(lookahead$date_threshold)) | sum(lookahead$event_ppt) > 10){
+        seasondat$season_start[seasondat$eco_yr == y] <- as.character(u)
+        break
+      }else{next}
+    }
+    # search for the season end after march
+    endchoices <- as.character(with(scandat, end_event[eco_mon > 7 & (next_event_days > 5 |  next_ppt < 1)]))
+    for(e in endchoices){
+      e <- as.POSIXct(e, tz = "UTC")
+      # check if rain fell the next month also
+      lookahead <- subset(scandat, start_event > e)
+      # these are sort of arbitrary criteria -- just trying to match what I know should be the end date, can improve rules later
+      if(any(!is.na(lookahead$date_threshold)) | any(lookahead$event_ppt > 10) | sum(lookahead$event_ppt) > 10){
+        next
+      }
+      seasondat$season_end[seasondat$eco_yr == y] <- as.character(e)
+      break
+    }
+  }
+  # clean up
+  datout <- subset(eventdat,!is.na(eco_yr), select = c(event_type:start_yr ,start_mon:event_ppt, date_threshold:end_event, event_hrs)) %>%
+    left_join(subset(seasondat))
+  
+  return(datout)
+}
+
+gsdat <- scan_rainseason(cimis_ppt2hr)
+# add end of watering treatments to growing season rain event dat
+gsdat$stopwater <- as.Date(with(gsdat, ifelse(eco_yr == 2021, "2021-04-15",
+                                              ifelse(eco_yr == 2020, "2020-04-15", "2019-04-30"))))
+# extract season dat
+seasondat <- distinct(subset(gsdat, eco_yr < 2022, select = c(eco_yr, season_start:stopwater)))
+# fix 00:00:00 time
+seasondat$season_start <- with(seasondat, ifelse(!grepl(":", season_start), paste(season_start, "00:00:00"), season_start))
 
 raw_v_ppt <- plot_grid(
   ggplot(smdat, aes(clean_datetime, vwc)) +
@@ -144,6 +239,8 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        plot = raw_v_ppt,
        width = 10, height = 6, units = "in")
 
+# clean up environment
+rm(trackrain, i, dryspell, rainevent)
 
 
 # -- TEST CASE -----
@@ -166,7 +263,7 @@ testcase$rowid <- as.numeric(rownames(testcase))
 testcase2 <- subset(smdat, logger %in% c("B2L1", "B3L1"))
 
 # range check
-check_range <- function(dat, id = c("rowid", "portid", "clean_datetime", "cleanorder"), hi = 0.6, low = -0.04){
+check_range <- function(dat, id = c("portid", "clean_datetime", "cleanorder"), hi = 0.6, low = -0.04){
   tempdat <- subset(dat, select = c(id, "vwc"))
   tempdat$flag_range[tempdat$vwc > hi] <- "high warning"
   tempdat$flag_range[tempdat$vwc <= low] <- "outside low"
@@ -446,82 +543,113 @@ outside_precip <- function(soildat, raindat, keepsoil = c("clean_datetime", "cle
 }
 
 test_precip <- outside_precip(smdat, cimis_ppt2hr)
+# add seasoninfo
+test_precip2 <- left_join(test_precip, seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC", season_end = as.POSIXct(season_end, tz = "UTC"))) %>%
+  mutate(irrigated = ifelse(ppt_trt == "W" & flag_wetup & clean_datetime >= season_start & date <= stopwater, 1, NA))
 ggplot(test_precip, aes(clean_datetime, vwc)) +
   geom_line(aes(group = portid)) +
-  geom_point(data = subset(test_precip, flag_wetup), aes(col = month(clean_datetime) %in% 5:9), size = 2, alpha = 0.75) +
+  geom_point(data = subset(test_precip, flag_wetup), col = "red", size = 2, alpha = 0.75) +
+  geom_point(data = subset(test_precip2, irrigated == 1), col = "yellow", size = 1, alpha = 0.75) +
   facet_wrap(nut_trt~ppt_trt)
 
 
 
-# -- LOGIC CHECKS -----
-# flag 1 = value outside of plausible range? ([0-])
-# > allow for slight dip below 0 that can be shifted to 0 or up (manual says accurate to 0.03 m3/m3 [3% VWC])
-smdat_qa <- subset(smdat, select = c(logger:vwc)) %>%
-  mutate(rowid = rownames(.),
-         range_flag = ifelse(vwc > 0.6, "high warning",
-                             ifelse(vwc < 0 & vwc > -0.04, "low warning", 
-                                    ifelse(vwc <= -0.04, "outside range", NA))),
-         # start qa_vwc
-         qa_vwc = ifelse(grepl("high|outside", range_flag), NA, vwc))
+# -- QA/QC ALL DATA -----
+# logic checks:
+# plausible range check
+smdat_qa <- check_range(smdat)
+smdat_qa <- cbind(smdat, flag_range = smdat_qa$flag_range)
+# retain original vwc as raw_vwc
+smdat_qa$raw_vwc <- smdat_qa$vwc
+# NA vwc outside range check
+smdat_qa$vwc[grepl("outside|high", smdat_qa$flag_range)] <- NA
+
+# outside precipitation and irrigation events
+precip_qa <- outside_precip(smdat_qa, cimis_ppt2hr)
+# join irrigation info
+precip_qa <- left_join(precip_qa, seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tz = "UTC")) %>%
+  mutate(irrigated = (ppt_trt == "W" & clean_datetime >= season_start & date <= stopwater))
 
 
+# behavior checks:
+# streak (flatlines) check
+streak_qa <- check_streak(smdat_qa)
 
-# flag 2 = wetup outside of precip event? (and not irrigation)
+# deviance (extreme values) check
+deviance_qa <- check_deviance(smdat_qa)
+# step check
+step_qa <- check_step(smdat_qa)
+# pair deviance and step
+devstep_qa <-  left_join(deviance_qa, step_qa) %>%
+  mutate(flag_extreme = (abs(zdiff) > 4 & abs(rollz) > 4))
 
+# spike check
+spike_qa <- check_spike(smdat_qa)
 
-
-# clean up first wetup (installation)
-#rundf$wetup_event[which(rundf$wetup_event == 0)] <- NA
-
-
-accumulated <- group_by(rundf, portid, waterYear) %>%
-  mutate(accumulated_sm = cumsum(vwc)) %>% # don't think it sums for portids with missing data
-  ungroup() %>%
-  left_join(cimis_ppt2hr) %>%
-  # screen for wetup events outside of rain events
-  mutate(flagwetup = !is.na(wetup_event) & is.na(rainevent)) %>%
-  # try more conservative wetupflag
-  group_by(date, portid) %>%
-  mutate(dryday = sum(ppt_mm, na.rm = T) < 0.02) %>%
-  ungroup() %>%
-  mutate(flagwetup2 = !is.na(wetup_event) & dryday)
-
-# plot accumulate
-ggplot(accumulated, aes(wY_accumulated_ppt, accumulated_sm)) +
-  geom_line(aes(col = logger, lty = nut_trt, group = portid)) +
-  facet_grid(waterYear~ppt_trt, scales = "free")
-
-# plot soil moisture with flagged values in red (this is not yet taking into account irrigation for wet plots)
-ggplot() +
-  geom_line(data = subset(accumulated, !flagwetup2), aes(clean_datetime, qa_vwc, group = portid)) +
-  geom_point(data = subset(accumulated, flagwetup), aes(clean_datetime, vwc), col = "red", alpha = 0.5) +
-  geom_point(data = subset(accumulated, flagwetup2), aes(clean_datetime, vwc), col = "yellow", alpha = 0.5) +
-  facet_grid(nut_trt~ppt_trt)
-
-# zoom in on suspect loggers
-ggplot() +
-  geom_line(data = subset(accumulated, portid %in% unique(accumulated$portid[accumulated$flagwetup])), aes(clean_datetime, vwc, group = portid)) +
-  geom_point(data = subset(accumulated, flagwetup), aes(clean_datetime, vwc), col = "red", alpha = 0.5) +
-  geom_point(data = subset(accumulated, flagwetup2), aes(clean_datetime, vwc), col = "yellow", alpha = 0.5) +
-  facet_grid(nut_trt~ppt_trt)
+# data break check
+break_qa <- check_break(smdat_qa)
 
 
-# -- CONGRUENCY CHECKS ----
+# combine all flags
+smdat_qa_all <- smdat_qa %>%
+  left_join(subset(precip_qa, select = c(cleanorder:portid, flag_wetup, irrigated))) %>%
+  left_join(subset(streak_qa, select = c(cleanorder:portid, flag_streak, streak_num))) %>%
+  left_join(subset(devstep_qa, select = c(cleanorder:portid, flag_extreme))) %>%
+  left_join(subset(spike_qa, select = c(cleanorder:portid, spike))) %>%
+  left_join(subset(break_qa, select = c(cleanorder:portid, flagbreak)))
+
+flagged_data <- subset(smdat_qa_all, ((flag_wetup & !irrigated) | !is.na(flag_streak) | flag_extreme) | spike | flagbreak) %>%
+  mutate(flag_sensor = (flag_extreme & spike) | (flag_extreme & flagbreak) | (spike & flagbreak)) #
+
+
+# -- REVIEW FLAGS -----
+# start with 1 logger
+unique(smdat_qa_all$logger)
+testlog <- unique(smdat_qa_all$logger)
+ggplot(subset(smdat_qa_all, logger %in% testlog), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(alpha =0.5) +
+  # what happens if remove anything flagged?
+  geom_point(data = subset(flagged_data, logger %in% testlog & flag_wetup), col = "blue", alpha = 0.5) +
+  geom_point(data = subset(flagged_data, logger %in% testlog & !is.na(flag_streak)), col = "orchid", alpha = 0.5) +
+  geom_point(data = subset(flagged_data, logger %in% testlog & flag_extreme), col = "orange", alpha = 0.5) +
+  geom_point(data = subset(flagged_data, logger %in% testlog & spike), col = "green", alpha = 0.5) +
+  geom_point(data = subset(flagged_data, logger %in% testlog & flagbreak), col = "red", alpha = 0.5) +
+  facet_wrap(~fulltrt+portid)
+
+# look at outside precip flags only
+ggplot(subset(smdat_qa_all, portid %in% with(flagged_data, portid[flag_wetup | flag_sensor])), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(alpha =0.5) +
+  # what happens if remove anything outside precip event and if had more than 1 unsual behavior flag
+  geom_point(data = subset(flagged_data, flag_wetup), col = "blue", size = 2, alpha = 0.5) +
+  geom_point(data = subset(flagged_data, flag_sensor), col = "orange", size = 2, alpha = 0.5) +
+  facet_wrap(~fulltrt)
+
+# what would I be missing if only removed those?
+ggplot(subset(smdat_qa_all, !portid %in% with(flagged_data, portid[flag_wetup | flag_sensor])), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(alpha =0.5) +
+  # what happens if remove anything outside precip event and if had more than 1 unsual behavior flag
+  #geom_point(data = subset(flagged_data, flag_wetup), col = "blue", size = 2, alpha = 0.5) +
+  #geom_point(data = subset(flagged_data, flag_sensor), col = "orange", size = 2, alpha = 0.5) +
+  facet_wrap(nut_trt~ppt_trt)
+# not perfect but at least looks a little better and treated systematically
+
+# plot streaks
+ggplot(subset(streak_qa, !is.na(flag_streak)), aes(clean_datetime, vwc, col = substr(portid, 6,6))) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~gsub("_[0-9]", "", portid))
+
+
+# -- TREATMENT CONGRUENCY (optional, not coded) ----
 # flag 3 = deviation from near-in-space sensors
 # > check on a moving average to smooth out tiny differences between timesteps
 # > also screen for absolute spikes
 
-drought_congruency <- subset(smdat, ppt_trt == "D")
-ggplot(drought_congruency, aes(clean_datetime, vwc))+
-  geom_line(aes(group = portid, col = comp_trt)) +
-  geom_hline(aes(yintercept = -0.03)) +
-  facet_grid(block~nut_trt)
-wet_congruency <- subset(smdat, ppt_trt == "W")
 
-control_congruency <- subset(smdat, ppt_trt == "XC")
 # deviation from same treatment sensors
 
 
 
 # -- FINISHING -----
-write.csv(smdat_qa_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
+#write.csv(smdat_qa_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
