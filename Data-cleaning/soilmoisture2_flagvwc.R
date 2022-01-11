@@ -616,7 +616,7 @@ ggplot(subset(smdat_qa_all, logger %in% testlog), aes(clean_datetime, vwc, group
   geom_point(data = subset(flagged_data, logger %in% testlog & flag_extreme), col = "orange", alpha = 0.5) +
   geom_point(data = subset(flagged_data, logger %in% testlog & spike), col = "green", alpha = 0.5) +
   geom_point(data = subset(flagged_data, logger %in% testlog & flagbreak), col = "red", alpha = 0.5) +
-  facet_wrap(~fulltrt+portid)
+  facet_wrap(~fulltrt) #+portid
 
 # look at outside precip flags only
 ggplot(subset(smdat_qa_all, portid %in% with(flagged_data, portid[flag_wetup | flag_sensor])), aes(clean_datetime, vwc, group = portid)) +
@@ -641,10 +641,140 @@ ggplot(subset(streak_qa, !is.na(flag_streak)), aes(clean_datetime, vwc, col = su
   facet_wrap(~gsub("_[0-9]", "", portid))
 
 
+
 # -- TREATMENT CONGRUENCY (optional, not coded) ----
-# flag 3 = deviation from near-in-space sensors
-# > check on a moving average to smooth out tiny differences between timesteps
-# > also screen for absolute spikes
+# some particular treatments stood out above for portids that don't follow most profiles
+# first review identity to be sure treatments are labeled correctly (i've reviewed before, but to be quadrupley sure).. and to see where they are in space
+sustrts <- c("ND", "FD", "CW", "FW")
+colorder <- data.frame(plot = 1:36, colorder = rep(1:3, 12))
+trttest <- distinct(subset(smdat_qa_all, select = c(logger:comp_trt)))
+
+# first treatment group (ND)
+ggplot(subset(smdat_qa_all, fulltrt %in% sustrts[1]), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt)) +
+  facet_wrap(~fulltrt+comp_trt, nrow= 2)
+
+# could B1L3 have gotten downhill runoff?? (altho control doesn't respond as seeded does in same subplot)
+ggplot(subset(smdat_qa_all, block == 1 & nut_trt == "N"), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt), alpha = 0.5) +
+  facet_grid(paste(plot, ppt_trt)~nut_trt) # kind of looks like it.. altho both are in seeded and responding differently. i don't know. will document it for AS.
+
+# second treatment group (FD)
+ggplot(subset(smdat_qa_all, fulltrt %in% sustrts[2]), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt), alpha = 0.5) +
+  facet_grid(comp_trt~block)
+
+ggplot(subset(smdat_qa_all, fulltrt %in% sustrts[2] & block == 3), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt), alpha = 0.5) +
+  facet_wrap(~plot) # there are 5 different control lines in block 3 FD. B3L1_3 is different than the rest all three years.. the other four are similar
+
+# plot block
+subset(smdat_qa_all, block == 3) %>%
+  left_join(colorder) %>%
+ggplot(aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = ppt_trt, lty = comp_trt), alpha = 0.5) +
+  facet_grid(colorder~nut_trt)
+# i feel like a line each in F W + D were switched when writing down what was what. they each consistently match the other ppt_trt visually
+# including wetup in W plots when XC does not wetup.. i'm going to switch them and then confirm w AS.
+
+# see who it is:
+subset(smdat_qa_all, block == 3 & nut_trt == "F") %>%
+  left_join(colorder) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = paste(plot, port), lty = ppt_trt), alpha = 0.8) +
+  facet_grid(colorder~nut_trt) # b3l1_3 (plot 22 port 3, currently FD) and b3l1_4 (plot 23 port 4, currently FW)
+
+# third treatment group (CW)
+subset(smdat_qa_all, fulltrt %in% sustrts[3]) %>%
+  left_join(colorder) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt)) +
+  facet_grid(paste(colorder, nut_trt)~block) # issue only in block 1, plot 3 (compost row)
+
+subset(smdat_qa_all, block == 1) %>%
+  left_join(colorder) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = paste(plot, port), lty = ppt_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_grid(colorder~factor(nut_trt, levels = c("C", "N", "F")))
+# i think a line is missing for the XC ppt plot in compost.. there should be one and the one in wet that's different looks more like drought
+# also what's coded as drought in compost looks more like XC..
+# looking at Word doc key, it says block 2 logger 5 ports 4 and 5 go to compost control in block 1 (but mb wet composition-control bc other b2l5 are block 2 compost wet, which is nextdoor)
+
+subset(smdat_qa_all, block == 1 & nut_trt == "C") %>%
+  left_join(colorder) %>%
+  left_join(seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tx = "UTC")) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  # plot ribbons for rain seasondat
+  geom_ribbon(aes(xmin = season_start, xmax = season_end, group = waterYear), fill = "grey50", alpha = 0.25) +
+  geom_line(aes(col = portid, lty = ppt_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_grid(paste(plot, ppt_trt)~comp_trt) # 7 portids in one subplot seems like a lot..
+# what if b1l1_1 and _2 go to XC, B1L1_4 and _5 go to D and B2L5_4 and _5 go to W?
+
+# look at all again to confirm
+subset(smdat_qa_all, block == 1) %>%
+  left_join(colorder) %>%
+  left_join(seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tx = "UTC")) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  # plot ribbons for rain seasondat
+  geom_ribbon(aes(xmin = season_start, xmax = season_end, group = waterYear), fill = "grey50", alpha = 0.25) +
+  geom_line(aes(col = portid, lty = ppt_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_wrap(~nut_trt+ppt_trt +plot) 
+# seems appropriate correction
+
+# last treatment to review (also might as well review block 2 since i've looked at 1 and 3 now)
+ggplot(subset(smdat_qa_all, fulltrt %in% sustrts[4]), aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt)) +
+  facet_wrap(~fulltrt+comp_trt, nrow= 2)
+
+subset(smdat_qa_all, fulltrt %in% sustrts[4]) %>%
+  left_join(colorder) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  geom_line(aes(col = portid, lty = comp_trt)) +
+  facet_grid(paste(colorder, nut_trt)~block) # might be one i've already figured out since in block 3.. b3l1_4. yes. should be switched with with b3l1_3
+
+# review block 2
+subset(smdat_qa_all, block == 2) %>%
+  left_join(colorder) %>%
+  left_join(seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tx = "UTC")) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  # plot ribbons for rain seasondat
+  geom_ribbon(aes(xmin = season_start, xmax = season_end, group = waterYear), fill = "grey50", alpha = 0.25) +
+  geom_line(aes(col = ppt_trt, lty = comp_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_grid(colorder~factor(nut_trt, levels = c("F", "N", "C"))) 
+# looks okay.. maybe some drought plots just got wet in spots in 2020
+# drought shelters here don't seem quite as effective in year 1
+
+# look at drought plots in block 2
+subset(smdat_qa_all, block == 2 & ppt_trt == "D") %>%
+  left_join(colorder) %>%
+  left_join(seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tx = "UTC")) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  # plot ribbons for rain seasondat
+  geom_ribbon(aes(xmin = season_start, xmax = season_end, group = waterYear), fill = "grey50", alpha = 0.25) +
+  geom_line(aes(col = portid, lty = comp_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_grid(paste(plot,nut_trt)~ppt_trt) # shelter doesn't seem effective here? or in year 1
+
+# look at single nut trt
+subset(smdat_qa_all, block == 2 & nut_trt == "F") %>%
+  left_join(colorder) %>%
+  left_join(seasondat, by = c("waterYear" = "eco_yr")) %>%
+  mutate(season_start = as.POSIXct(season_start, tz = "UTC"), season_end = as.POSIXct(season_end, tx = "UTC")) %>%
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
+  # plot ribbons for rain seasondat
+  geom_ribbon(aes(xmin = season_start, xmax = season_end, group = waterYear), fill = "grey50", alpha = 0.25) +
+  geom_line(aes(col = portid, lty = comp_trt), alpha = 0.6) +
+  # array in spatial order
+  facet_grid(paste(plot,ppt_trt)~nut_trt) 
+# i guess fine, just not as effective in this block
 
 
 # deviation from same treatment sensors
