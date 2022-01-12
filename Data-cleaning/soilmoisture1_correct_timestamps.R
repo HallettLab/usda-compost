@@ -1233,7 +1233,7 @@ goodrefs <- unique(subset(datecheck_p2, select = c(logger, qa_note))) %>%
   filter(all(is.na(qa_note)))
 # subset to good ref loggers
 soilmoisture_master_p2 <- subset(soilmoisture_clean_p2, logger %in% goodrefs$logger) %>%
-  left_join(soilmoisture_master_p2[c("portid", "date_time", "filename", "vwc")])
+  left_join(soilmoisture_p2[c("portid", "date_time", "filename", "vwc")])
 # double check NAs
 summary(is.na(soilmoisture_master_p2))
 View(subset(soilmoisture_master_p2, is.na(filename))) # just instances where no data recorded, leaving as is for now
@@ -1312,7 +1312,6 @@ subset(datecheck_p2, fulltrt %in% b1l2trt & logger != "B3L3" & date(date_time) >
   geom_line(aes(lty = filename), alpha = 0.4) +
   geom_vline(data = mutate(subset(adjustdates_p2, grepl(b1l2trt[1], fulltrt) & logger != "B3L3" & date(date_time) >= lastrunb1l2), logger = substr(portid, 1,4)), aes(xintercept = date_time, lty = qa_note)) +
   ggtitle(paste("troubleshoot B1L2", b1l2trt[1], "date jump (dotted vert line = break)"))
-geom_smooth(aes(fill = portid))
 # maybe if shift back interval 2, will connect to interval 3 fine (last interval lines up fine, no need to adjust)
 
 
