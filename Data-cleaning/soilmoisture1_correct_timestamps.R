@@ -30,9 +30,10 @@
 
 # NOTES:
 ## this script does *not* address true missing data (i.e., infilling) or bad data values (e.g., unrealistic values)
+## next script in workflow is:
+## > soilmoisture2_flag_vwc.R (script to flag suspect values: exceed logger sensor range, strongly deviates from trends in other loggers, other suspect values with definable criteria)
 ## additional cleaning script(s) should be written for those (as time/desire allows). CTW's suggested workflow is:
-## > soilmoisture3_flag_soilmoisture.R (script to flag suspect values: exceed logger sensor range, strongly deviates from trends in other loggers, other suspect values with definable criteria)
-## > soilmoisture4_infill_soilmoisture.R (script to infill bad and missing soil moisture values)
+## > soilmoisture3_infill_vwc.R (script to infill missing or removed soil moisture values and adjust slightly sub-0 values up)
 
 
 
@@ -2772,5 +2773,3 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
 
 # write out dataset
 write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_time-corrected.csv"), row.names = F)
-# also write out as cleaned dataset for time being until other data processing scripts made
-write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
