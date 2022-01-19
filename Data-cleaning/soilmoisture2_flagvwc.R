@@ -1430,8 +1430,8 @@ ggplot(smdat_qa_all_goodtrts, aes(clean_datetime, vwc)) +
   theme(legend.title = element_blank(),
         legend.background = element_rect(fill = "transparent"),
         legend.direction = "horizontal",
-        legend.position = c(0.5,1.07),
-        legend.justification = "center") +
+        legend.position = c(0.95,1.07),
+        legend.justification = "right") +
   scale_color_viridis_d() +
   facet_grid(nut_trt~ppt_trt)
 
@@ -1461,14 +1461,89 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        width = 7, height = 4.5, units = "in", scale = 1.5)
 
 
+# -- review values removed due to sensor flag (potentially add back in) ----
+# go by ppt trt
+trt <- "FW"
+ggplot(subset(smdat_qa_all_goodtrts, fulltrt == trt), aes(clean_datetime, vwc)) +
+  geom_line(data = subset(smdat_qa_all_goodtrts, fulltrt == trt), aes(clean_datetime, raw_vwc), col = "orange", alpha = 0.5) +
+  geom_line(aes(group = portid), alpha = 0.5) +
+  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == trt & !is.na(streak_num) & !is.na(flag_note)), aes(clean_datetime, raw_vwc), col = "orange") +
+  geom_point(data = subset(flagged_data,fulltrt == trt & flag_abschange_congruency), aes(clean_datetime, target_vwc), col = "orchid", alpha = 0.5) +
+  geom_point(data = subset(flagged_data,fulltrt == trt & flag_vwc_congruency), aes(clean_datetime, target_vwc), col = "blue") +
+  facet_wrap(~portid)
+
+ggplot(subset(smdat_qa_all_goodtrts, cleanorder > 8000 & portid %in% c("B1L4_4", "B1L4_5")), aes(cleanorder, raw_vwc, group = portid)) +
+  geom_line(col = "orchid") +
+  geom_line(aes(cleanorder, vwc)) +
+  facet_wrap(~portid, nrow = 2)
+
 
 # annotate sensor treatment corrections -----
-# > since cases were not all the same, write portid specific notes
-# > put it in qa_note column, after whatever timestamp correction might be there
+# > note what it was and what it is now
+for(i in 1:nrow(trts2correct_new)){
+  oldrow <- which(trts2correct_raw$portid == trts2correct_new$portid[i])
+  trts2correct_new$logger_note[i] <- paste("treatment for portID", trts2correct_new$portid[i],"corrected from block",trts2correct_raw$block[oldrow], "plot", 
+        trts2correct_raw$plot[oldrow], trts2correct_raw$fulltrt[oldrow], trts2correct_raw$comp_trt[oldrow], "composition to block",
+        trts2correct_new$block[i], "plot",trts2correct_new$plot[i], trts2correct_new$fulltrt[i], trts2correct_new$comp_trt[i], 
+        "composition after soil moisture review")
+}
+# > keep as its own column instead of combining with qa_note
+smdat_qa_out <- left_join(smdat_qa_all_goodtrts, trts2correct_new[c("portid", "corrected", "logger_note")]) %>%
+  # clean up for writing out
+  subset(select= c(logger:raw_datetime, raw_vwc, sourcefile, qa_note, logger_note, flag_note)) %>%
+  arrange(portid, cleanorder)
+
 
 
 # -- FINISHING -----
-# clean up data frame for writing out
-smdat_qa_out <- subset(smdat_qa_all_goodtrts, select= c(logger:raw_datetime, raw_vwc, sourcefile, qa_note, flag_note)) %>%
-  arrange(portid, cleanorder)
+# timestamp-corrected, flagged + NA'd data out as all_clean (until infill/adjustment script created, if that ever happens)
 write.csv(smdat_qa_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
+
+# >> write out intermediate datasets if need/want to revisit
+# growing season (from first germ threshold to last spring rain, dry season [period between], irrigation stop dates)
+write.csv(seasondat, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/growing_season.csv"), row.names = F)
+
+# corrected sensor treatments
+# include spatial order in this as well
+loggerkey_corrected <- distinct(subset(smdat_qa_all_goodtrts, select = c(logger:comp_trt, corrected, colorder))) %>%
+  left_join(trts2correct_new[c("portid", "logger_note")])
+# manually add roworder (1-3 within block)
+loggerkey_corrected$roworder <- 1 # to start numeric col (block 1 C = 1; block 2 F = 1; block 3 C = 1)
+loggerkey_corrected$roworder[loggerkey_corrected$block == 1 & loggerkey_corrected$nut_trt == "N"] <- 2
+loggerkey_corrected$roworder[loggerkey_corrected$block == 1 & loggerkey_corrected$nut_trt == "F"] <- 3
+loggerkey_corrected$roworder[loggerkey_corrected$block == 2 & loggerkey_corrected$nut_trt == "N"] <- 2
+loggerkey_corrected$roworder[loggerkey_corrected$block == 2 & loggerkey_corrected$nut_trt == "C"] <- 3
+loggerkey_corrected$roworder[loggerkey_corrected$block == 3 & loggerkey_corrected$nut_trt == "F"] <- 2
+loggerkey_corrected$roworder[loggerkey_corrected$block == 3 & loggerkey_corrected$nut_trt == "N"] <- 3
+# rearrange cols
+loggerkey_corrected <- subset(loggerkey_corrected, select = c(logger:comp_trt, roworder, colorder, logger_note))
+# plot to be sure it looks correct
+ggplot(loggerkey_corrected, aes(roworder, colorder)) +
+  geom_text(aes(label = plot)) +
+  facet_wrap(~block) # when facetting, this will be arrayed in the correct order
+
+# annotate position so it's clear
+loggerkey_corrected$roworder[loggerkey_corrected$roworder == 1] <- "1 east"
+loggerkey_corrected$roworder[loggerkey_corrected$roworder == 2] <- "2 center"
+loggerkey_corrected$roworder[loggerkey_corrected$roworder == 3] <- "3 west"
+loggerkey_corrected$colorder[loggerkey_corrected$colorder == 1] <- "1 uphill"
+loggerkey_corrected$colorder[loggerkey_corrected$colorder == 2] <- "2 middle"
+loggerkey_corrected$colorder[loggerkey_corrected$colorder == 3] <- "3 downhill"
+ggplot(loggerkey_corrected, aes(1, 1)) +
+  geom_text(aes(label = plot, col = fulltrt)) +
+  facet_grid(colorder~paste(block, roworder)) # ok
+
+write.csv(loggerkey_corrected, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/decagon_loggerkey_corrected.csv"), row.names = F)
+
+# flags (all, not just removed)
+write.csv(flagged_data, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_all_flags.csv"), row.names = F)
+
+## derived raindats to CIMIS subfolder 
+# clean up: ignore rain and rain2 logic cols, add location/station info so provenance clear
+cimis_out <- cbind(distinct(cimis_hrly[c("Stn.Id", "Stn.Name", "CIMIS.Region")]), 
+                   subset(cimis_ppt2hr, select = -c(rain, rain2))) %>%
+  rename(stnId = Stn.Id, stnName = Stn.Name, cimis_region = CIMIS.Region) %>%
+  arrange(clean_datetime)
+# > note to self: add beginning of rainy season to 2018 (even tho project not in the ground yet)
+
+write.csv(cimis_out, paste0(datpath,"SoilMoisture/SoilMoisture_DataQA/CIMIS_084BrownsValley_pptforSoilMoisture.csv"), row.names = F)
