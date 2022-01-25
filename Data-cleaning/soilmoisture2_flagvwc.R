@@ -1,11 +1,45 @@
-# flag sus vwc in usda-compost soil moisture
+# QAQC usda-compost ongoing soil moisture dataset
 # author(s): CTW
 # questions?: caitlin.t.white@colorado
 
+# SCRIPT PURPOSE:
+# read in timestamp-corrected soil moisture data (from soilmoisture1_correct_timestamps.R)
+# process browns valley hourly cimis data to 2-hr timestamp intervals matching the soil moisture dataset 
+# > include start of water year 2019 when project started (cleanorder for those are negative, count backwards from start of soil moisture dataset)
+# > derive rain and dry events over lifetime of project and use to determine start and end of growing season and summer dry seasons 
+# adjust sensor data where bulk of timeseries dropped below 0 so more flagging functions will apply correctly
+# > majority of shifts upwards for summer drops will be done in next workflow script, just coarsely treating substantial drops here
+# create flagging functions based on references (see notes)
+# test flagging functions on a few sensors that have a complete timeseries for the whole project and visually appear reasonable
+# run flagging functions on full dataset
+# screen flagged values to determine rules for removal
+# NA values that meet criteria for removal and annotate flag_note based on reason
+# follow with more manual checks to flag values that were missed by flagging functions
+# > e.g., flagging functions that assess timestep changes will not work for observations preceeded by missing data
+# write out intermediate datasets (e.g., precip, raw flags) and QA'd dataset to DataQA folder
+# > also write out QA'd dataset as cleaned dataset until full workflow developed (e.g., sub-0 adjustments and infilling)
 
-# notes
+
+# NOTES:
 # there's a cimis R package! 'cimir'. CTW isn't using it, but good to know. can read in data dynamically instead of download static files.
 # https://cran.r-project.org/web/packages/cimir/cimir.pdf
+
+# in the process of reviewing flags, visually determined several sensors were labeled with incorrect treatments (it's in the raw field notes)
+# this script corrects those and also writes out the corrected logger key dataset
+# because previous two scripts built on treatments as they were assigned in the raw notes, to be on the safe side (not have to re-write code), will keep raw treatment assignments as is and make the fix here
+
+# REFERENCES (for flagging):
+# Dorigo et al. 2013:
+# Dorigo, W., Xaver, A., Vreugdenhil, M., Gruber, A., Hegyiová, A., Sanchis-Dufau, A., Zamojski, D., Cordes, C., Wagner, W. and Drusch, M. (2013), 
+# Global Automated Quality Control of In Situ Soil Moisture Data from the International Soil Moisture Network. Vadose Zone Journal, 12: 1-21 vzj2012.0097. 
+# https://doi.org/10.2136/vzj2012.0097
+
+# Quiring et al. 2016:
+# Quiring, S. M., Ford, T. W., Wang, J. K., Khong, A., Harris, E., Lindgren, T., Goldberg, D. W., & Li, Z. (2016). 
+# The North American Soil Moisture Database: Development and Applications, Bulletin of the American Meteorological Society, 97(8), 1441-1459. 
+# Retrieved Jan 25, 2022, from https://journals.ametsoc.org/view/journals/bams/97/8/bams-d-13-00263.1.xml
+
+
 
 # -- SETUP -----
 # clear environment
@@ -78,28 +112,50 @@ ggplot(cimis_hrly, aes(clean_datetime, is.na(Precip.mm))) +
   scale_x_datetime(date_breaks = "2 months", date_labels = "%b-%y") # not too bad. comes mostly towards or after end of project
 
 # collapse precip to same temporal resolution as soil moisture
-cimis_ppt2hr <- subset(cimis_hrly, date%in% smdat$date, select = c(clean_datetime, date, time, mon:dowy, Precip.mm)) %>%
-  left_join(distinct(smdat[c("clean_datetime", "date", "cleanorder")])) %>%
+# > project not installed until november 2019, but rain season started before that
+gplot(subset(cimis_hrly, year(date) == 2018)) + geom_point(aes(clean_datetime, Precip.mm)) # okay to start oct 1 2018 (beginning of water year)
+# create smdat clean_datetime back to start of oct 1
+smdat_datetime <- distinct(smdat[c("clean_datetime", "date", "cleanorder")])
+start2018 <- data.frame(clean_datetime = seq.POSIXt(min(smdat_datetime$clean_datetime), as.POSIXct("2018-10-01 00:00:00", tz = "UTC"), -(2*60*60))) %>%
+  mutate(cleanorder = -1:-nrow(.)) %>%
+  arrange(clean_datetime) %>%
+  mutate(date = date(clean_datetime)) %>%
+  dplyr::select(names(smdat_datetime))
+# stack
+smdat_datetime <- rbind(start2018, smdat_datetime) %>%
+  # add waterYear info
+  left_join(distinct(cimis_hrly[c("date", "mon","doy", "waterYear", "dowy")])) %>%
+  mutate(yr = year(date)) %>%
+  dplyr::select(clean_datetime:doy, yr, waterYear, dowy)
+cimis_ppt2hr <- subset(cimis_hrly, date%in% smdat_datetime$date, select = c(clean_datetime, date, time, mon:dowy, Precip.mm)) %>%
+  left_join(smdat_datetime) %>%
   #fill cleanorder upevent to pair hourly data
   fill(cleanorder, .direction = "up") %>%
   #subset to 1 hour before soil moisture dat starts
-  subset(clean_datetime >= min(smdat$clean_datetime) - (60*60)) %>%
+  #subset(clean_datetime >= min(smdat$clean_datetime) - (60*60)) %>%
   # sum precip by cleanorder
   group_by(cleanorder) %>%
-  summarise(ppt_mm = sum(Precip.mm, na.rm = T)) %>%
+  summarise(ppt_mm = sum(Precip.mm, na.rm = T),
+            nobs = length(Precip.mm)) %>%
+  # drop anything that's not 2 obs per step
+  filter(nobs == 2) %>%
   # add clean datetime and water year info back in
-  left_join(distinct(subset(smdat, select = c(cleanorder:dowy)))) %>%
+  left_join(distinct(smdat_datetime)) %>%
   # track wetup events in rainfall
   mutate(rain = ppt_mm > 0 | (ppt_mm == 0 & dplyr::lag(ppt_mm) > 0 & dplyr::lead(ppt_mm > 0)), # if 0 sandwiched between non-zero, count it in same event
          # but if negligible rain sandwiched between zeroes don't count
          rain2 = ppt_mm == 0.1 & dplyr::lag(ppt_mm) == 0  & dplyr::lag(ppt_mm,2) == 0 & dplyr::lead(ppt_mm) == 0 & dplyr::lead(ppt_mm,2) == 0,
+         # adjust whether rain event or not based on rain2
          rain = ifelse(rain2, FALSE, rain),
-         #rain2 = ifelse()
+         # create empty event cols for tracking rain and dry events
          rainevent = as.numeric(NA),
          dryspell = as.numeric(NA)) %>%
   group_by(waterYear) %>%
   mutate(wY_accumulated_ppt = cumsum(ppt_mm)) %>%
-  ungroup()
+  ungroup() %>%
+  # drop nobs
+  dplyr::select(-nobs)
+# track rain events based on rain (T/F) col
 trackrain <- list2DF(rle(cimis_ppt2hr$rain))
 
 r <- 1
@@ -222,10 +278,11 @@ raw_v_ppt <- plot_grid(
     geom_hline(aes(yintercept = 0), col = "red") +
     scale_x_datetime(date_breaks = "2 months", date_labels = "%b-%y") +
     ggtitle("USDA Compost QA: time-corrected soil moisture (by water treatment) vs. observed CIMIS Browns Valley precip") +
-    labs(x = NULL) +
+    labs(x = NULL, subtitle = Sys.Date()) +
     theme(axis.text.x = element_blank()) +
     facet_grid(ppt_trt~.),
-  ggplot(distinct(cimis_ppt2hr[c("clean_datetime", "ppt_mm")]), aes(clean_datetime, ppt_mm)) +
+  # start cimis data at compost project start
+  ggplot(distinct(subset(cimis_ppt2hr, cleanorder >= 1, select = c("clean_datetime", "ppt_mm"))), aes(clean_datetime, ppt_mm)) +
     geom_point(alpha = 0.5) +
     scale_x_datetime(date_breaks = "2 months", date_labels = "%b-%y") +
     # create strip so lines up
@@ -240,10 +297,178 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        width = 10, height = 6, units = "in")
 
 # clean up environment
-rm(trackrain, i, dryspell, rainevent)
+rm(trackrain, i, dryspell, rainevent, star2018, tempend, r)
 
 
-# -- TEST CASE -----
+
+# -- SHIFT SERIES DROPS BEFORE FLAGGING ----
+# there are a few cases where the timeseries dropped and remained at that level
+# to not lose data, try to shift dropped series and note adjustment
+# ID cases first
+ggplot(smdat, aes(clean_datetime, vwc, group = portid)) +
+  geom_line() +
+  facet_wrap(~logger)
+ggplot(smdat, aes(clean_datetime, vwc, group = portid, col = factor(block))) +
+  geom_line(alpha = 0.5) +
+  facet_grid(ppt_trt~nut_trt)
+# three cases in ND, NXC and FW (1 each) -- look at lowest vals in Sep 2021 for who
+drops <- subset(smdat, fulltrt %in% c("ND", "NXC", "FW") & yr == 2021 & mon == 9, select = c(portid, fulltrt, vwc, yr, mon)) %>%
+  distinct() %>%
+  grouped_df("fulltrt") %>%
+  filter(vwc == min(vwc, na.rm = T))
+# confirm correct cases
+ggplot(smdat, aes(clean_datetime, vwc, group = portid, col = factor(block))) +
+  geom_line(alpha = 0.5) +
+  geom_line(data = subset(smdat, portid %in% drops$portid), aes(clean_datetime, vwc, group = portid), col = "black", lty = 2) +
+  facet_grid(ppt_trt~nut_trt) # yep
+
+# go case by case. diff series to look for the breaks
+drops_df <- subset(smdat, portid %in% drops$portid) %>%
+  mutate(adjust_vwc = vwc) %>%
+  # try to ID bigger breaks
+  group_by(portid) %>%
+  mutate(diffvwc = vwc - lag(vwc),
+         breakvwc = vwc < 0 & diffvwc <0 & lag(vwc > 0),
+         absdiff = abs(diffvwc)) %>%
+  arrange(portid, diffvwc) %>%
+  mutate(rankdiff = rank(diffvwc)) %>%
+  ungroup()
+
+# XC, B1L2_5
+drop1 <- drops$portid[1]
+ggplot(subset(smdat, fulltrt %in% drops$fulltrt[1]), aes(cleanorder, vwc, group = portid)) +
+  ggtitle(drops$portid[1])+
+  geom_line(alpha = 0.5) +
+  geom_line(data = subset(smdat, portid == drop1), aes(cleanorder, vwc), col = "red", alpha =.5) +
+  geom_text(data = subset(drops_df, portid == drop1 & rankdiff < 6), aes(label = rankdiff), col = "blue", alpha = 0.7) #diffvwc == min(diffvwc, na.rm = T)
+# 1+2 diffs = adjustment for series drop starting at 2
+adjust5 <- abs(with(drops_df, diffvwc[portid == drop1 & rankdiff == 5]))
+adjust1 <- abs(with(drops_df, diffvwc[portid == drop1 & rankdiff == 1]))
+adjust2 <- abs(with(drops_df, diffvwc[portid == drop1 & rankdiff == 2]))
+break5 <- with(drops_df, cleanorder[portid == drop1 & rankdiff == 5])
+break1 <-  with(drops_df, cleanorder[portid == drop1 & rankdiff == 1])
+break2 <-  with(drops_df, cleanorder[portid == drop1 & rankdiff == 2])
+
+# review 
+suborder <- c(8000:12000)
+ggplot(subset(smdat, fulltrt %in% drops$fulltrt[1] & cleanorder %in% suborder), aes(cleanorder, vwc, col = factor(block), group = portid)) +
+  ggtitle(drops$portid[1])+
+  geom_line(alpha = 0.5) +
+  geom_line(data = subset(smdat, portid == drop1 & cleanorder %in% suborder), aes(cleanorder, vwc), col = "red", alpha =.5) +
+  geom_line(data = subset(drops_df, portid == drop1 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc), col = "orange") +
+  #geom_text(data = subset(drops_df, portid == drop1 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc, label = cleanorder), col = "purple") +
+  geom_text(data = subset(drops_df, portid == drop1 & cleanorder %in% suborder & rankdiff < 6), aes(label = rankdiff), col = "blue", alpha = 0.7)
+# 6358 and 6359 are first drops
+# 6398 and 6399 are next drops
+# 8928 and 8929 are next (ranks 1 and 2)
+# 11000 and 11001 jump up
+# 11028 and 11029 jump up
+# 11243 is last jump up
+adjust6358 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 6358]))
+adjust6359 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 6359]))
+adjust6398 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 6398]))
+adjust6399 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 6399]))
+adjust8928 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 8928]))
+adjust8929 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 8929]))
+adjust11000 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 11000]))*1.5
+adjust11001 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 11001]))*1.5
+# adjust11028 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 11028]))
+# adjust11029 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 11029])) # to 11080
+adjust11243 <- abs(with(drops_df, diffvwc[portid == drop1 & cleanorder == 11243]))
+# need to adjust in order
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 6358] <- (with(drops_df, vwc[portid == drop1 & cleanorder >= 6358]) + adjust6358)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 6359] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 6359]) + adjust6359)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 6398] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 6398]) + adjust6398)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 6399] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 6399]) + adjust6399)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 8928] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 8928]) + adjust8928)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 8929] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 8929]) + adjust8929)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 11000] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 11000]) - adjust11000)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 11001] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 11001]) - adjust11001)
+#drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder %in% c(11029:11080)] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder %in% c(11029:11080)]) - adjust11029)
+drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 11243] <- (with(drops_df, adjust_vwc[portid == drop1 & cleanorder >= 11243]) - adjust11243)
+# as much as I can do with justification
+
+# 2nd -- just need to bring end up
+drop2 <- drops$portid[2]
+suborder <- c(9000:16000)
+ggplot(subset(smdat, fulltrt %in% drops$fulltrt[2] & cleanorder %in% suborder), aes(cleanorder, vwc, col = factor(block), group = portid)) +
+  ggtitle(drops$portid[1])+
+  geom_line(alpha = 0.5) +
+  geom_line(data = subset(smdat, portid == drop2 & cleanorder %in% suborder), aes(cleanorder, vwc), col = "red", alpha =.5) +
+  geom_line(data = subset(drops_df, portid == drop2 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc), col = "orange") +
+  #geom_text(data = subset(drops_df, portid == drop2 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc, label = cleanorder), col = "purple") +
+  geom_text(data = subset(drops_df, portid == drop2 & cleanorder %in% suborder & rankdiff < 6), aes(label = rankdiff), col = "blue", alpha = 0.7)
+
+# how far is lowest point from 0?
+drops_df$adjust_vwc[drops_df$portid == drop2]<- drops_df$vwc[drops_df$portid == drop2] 
+adjustdrop2 <- 0- with(drops_df, min(vwc[cleanorder > 12000 & portid == drop2], na.rm = T))
+drops_df$adjust_vwc[drops_df$portid == drop2 & drops_df$cleanorder >= 10658] <- (with(drops_df, adjust_vwc[portid == drop2 & cleanorder >= 10658]) + adjustdrop2)
+# looks reasonable
+
+# 3rd 
+drop3 <- drops$portid[3]
+suborder <- c(10000:16000)
+ggplot(subset(smdat, fulltrt %in% drops$fulltrt[3] & cleanorder %in% suborder), aes(cleanorder, vwc,lty = comp_trt, col = factor(block), group = portid)) +
+  ggtitle(drops$portid[1])+
+  geom_line(alpha = 0.5) +
+  geom_line(data = subset(smdat, portid == drop3 & cleanorder %in% suborder), aes(cleanorder, vwc, lty = comp_trt), col = "red", alpha =.5) +
+  geom_line(data = subset(drops_df, portid == drop3 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc, lty = comp_trt), col = "orange") +
+  #geom_text(data = subset(drops_df, portid == drop3 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc, label = cleanorder), col = "purple") +
+  geom_text(data = subset(drops_df, portid == drop3 & cleanorder %in% suborder & rankdiff < 6), aes(label = rankdiff), col = "blue", alpha = 0.7)
+
+# fix summer 2020 drop first
+# 6765 and then 6766
+# 6837 then 6838
+drops_df$adjust_vwc[drops_df$portid == drop3]<- drops_df$vwc[drops_df$portid == drop3] 
+adjust6765 <- abs(with(drops_df, diffvwc[portid == drop3 & cleanorder == 6765]))
+adjust6766 <- abs(with(drops_df, diffvwc[portid == drop3 & cleanorder == 6766]))
+# have to diff the last non-NA val for this next adjustment
+adjust6837 <- abs(with(drops_df, vwc[portid == drop3 & cleanorder == 6835] - vwc[portid == drop3 & cleanorder == 6837]))
+adjust6838 <- abs(with(drops_df, diffvwc[portid == drop3 & cleanorder == 6838]))
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder >= 6765] <- (with(drops_df, vwc[portid == drop3 & cleanorder >= 6765]) + adjust6765)
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder >= 6766] <- (with(drops_df, adjust_vwc[portid == drop3 & cleanorder >= 6766]) + adjust6766)
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder >= 6837] <- (with(drops_df, adjust_vwc[portid == drop3 & cleanorder >= 6837]) + adjust6837)
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder >= 6838] <- (with(drops_df, adjust_vwc[portid == drop3 & cleanorder >= 6838]) + adjust6838)
+
+# adjust at the break (timestep at rank 4 and the step before or after (two-step drop))
+# but like above so lowest val after break is at 0
+break4 <- with(drops_df, cleanorder[portid == drop3 & rankdiff == 4])
+adjust4 <- abs(with(drops_df, diffvwc[portid == drop3 & rankdiff == 4]))
+#adjust4next <- abs(with(drops_df, diffvwc[portid == drop3 & cleanorder == (break4+1)]))
+adjustdrop3 <- 0- with(drops_df, min(adjust_vwc[cleanorder > break4 & portid == drop3], na.rm = T))
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder == break4] <- (with(drops_df, adjust_vwc[portid == drop3 & cleanorder == break4]) + adjust4)
+drops_df$adjust_vwc[drops_df$portid == drop3 & drops_df$cleanorder > break4] <- (with(drops_df, adjust_vwc[portid == drop3 & cleanorder > break4]) + adjustdrop3)
+# ok. the end is weird, but not much to do. adjusted the diff from more neg point to 0 so position final vwc vals not negative
+# if adjust by the actual drop, then ends almost as wet as wettest block 1 line
+
+
+# subset out of master and add adjusted vals in with note on adjustment
+smdat_raw <- smdat
+smdat <- subset(smdat, !portid %in% drops$portid)
+smdat$adjust_note <- NA
+smdat$adjust_note <- as.character(smdat$adjust_note)
+
+drops_df$adjustment <- drops_df$adjust_vwc - drops_df$vwc
+drops_toadd <- arrange(drops_df, portid, cleanorder) %>%
+  mutate(adjust_note = ifelse(!is.na(adjustment) & adjustment > 0, paste("vwc adjusted", round(adjustment,4), "for new break in data"), NA)) %>%
+  dplyr::select(-vwc) %>%
+  rename(vwc = adjust_vwc) %>%
+  dplyr::select(names(smdat))
+smdat <- rbind(smdat, drops_toadd)
+smdat <- arrange(smdat, portid, cleanorder)
+
+# all good?
+ggplot(smdat, aes(clean_datetime, vwc)) + 
+  geom_line(aes(group = portid, col = !is.na(adjust_note))) +
+  facet_grid(ppt_trt~nut_trt)
+# ok
+
+# clean up -- keep drop data frames just in case need
+rm(list = ls()[grepl("^adjust|^drop[0-9]|^break", ls())])
+
+
+
+  # -- FLAGGING TEST CASE -----
 # apply QA/QC methods from lit
 # subset dat to a relatively clean/trustworthy line
 # > who has the fewest qa notes?
@@ -338,6 +563,7 @@ check_step <- function(dat, id = c("clean_datetime", "date", "cleanorder"), grou
     grouped_df(groupvars) %>%
     # calculate diff
     mutate(diff = dplyr::lead(vwc) - vwc) %>% # subtract target from next (forward) so is left-aligned
+    #mutate(diff = vwc - dplyr::lag(vwc)) %>% # try other way
     ungroup %>%
     # calculate scaled val by day of year and precip treatment
     grouped_df(grouptrt) %>%
@@ -358,7 +584,7 @@ ggplot(step_test, aes(clean_datetime, vwc)) +
 
 # see what was flagged in both
 combine_stepdev <- left_join(step_test, test_deviance) %>%
-  mutate(flag_extreme = (abs(zdiff) > 3 & abs(rollz) > 3)) # any z greater than 3
+  mutate(flag_extreme = (abs(zdiff) > 5 & abs(rollz) > 5)) # any z greater than 3 in paper (but that flags too many points here)
 # plot
 ggplot(combine_stepdev, aes(clean_datetime, vwc)) +
   geom_line(aes(group = portid)) +
@@ -369,12 +595,12 @@ ggplot(combine_stepdev, aes(clean_datetime, vwc)) +
 step_test2 <- check_step(testcase2)
 dev_test2 <- check_deviance(testcase2)
 stepdev2 <-  left_join(step_test2, dev_test2) %>%
-  mutate(flag_extreme = (abs(zdiff) > 4 & abs(rollz) > 4))
+  mutate(flag_extreme = (abs(zdiff) > 5 & abs(rollz) > 5))
 # plot
 ggplot(stepdev2, aes(clean_datetime, vwc)) +
-  geom_line(aes(group = portid), alpha = 0.5) +
+  geom_line(aes(group = portid, col = substr(portid, 1,2)), alpha = 0.5) +
   geom_point(data = subset(stepdev2, flag_extreme),aes(clean_datetime, vwc), col = "orchid", size = 2) +
-  facet_wrap(~fulltrt)
+  facet_wrap(~portid)
 #facet_wrap(~gsub("_[1-5]", "", portid))
 
 
@@ -403,7 +629,7 @@ check_spike <- function(dat, id = c("clean_datetime", "date", "cleanorder", "por
   # > ctw also adding abs change of at least 0.01m3^m-3 to avoid low moisture wobbles in summer/dry periods
   tempdat$stepchange <- abs(tempdat$vwc / dplyr::lag(tempdat$vwc))
   tempdat$abschange <- abs(tempdat$vwc - dplyr::lag(tempdat$vwc))
-  # 2. second deriv outside 0.8 to 1.2 (based on calibrated data in Doriga et al. 2013)
+  # 2. second deriv outside 0.8 to 1.2 (based on calibrated data in Dorigo et al. 2013)
   # calculate rel change between lag and lead
   tempdat$step2derv <- abs(dplyr::lag(tempdat$deriv2) / dplyr::lead(tempdat$deriv2))
   # 3. 24hr CV exceeds 1
@@ -554,9 +780,8 @@ ggplot(test_precip, aes(clean_datetime, vwc)) +
 
 
 # clean up environment before proceeding
-rm(testcase, testcase2, streaktest, combine_stepdev, dev_test2, rangetest,
-   step_test, step_test2, stepdev2, test_break, test_deviance, test_precip, test_precip2,
-   test_spike, r, tempend)
+rm(testcase, testcase2, streaktest, combine_stepdev, dev_test2, rangetest, step_test, 
+   step_test2, stepdev2, test_break, test_deviance, test_precip, test_precip2, test_spike)
 
 
 
@@ -566,7 +791,7 @@ rm(testcase, testcase2, streaktest, combine_stepdev, dev_test2, rangetest,
 smdat_qa <- check_range(smdat)
 smdat_qa <- cbind(smdat, flag_range = smdat_qa$flag_range)
 # retain original vwc as raw_vwc
-smdat_qa$raw_vwc <- smdat_qa$vwc
+smdat_qa$raw_vwc <- smdat_qa$vwc ## NOTE: will need to add raw unadjusted vwc for three portids with adjusted data
 # NA vwc outside range check
 smdat_qa$vwc[grepl("outside|high", smdat_qa$flag_range)] <- NA
 
@@ -588,7 +813,7 @@ deviance_qa <- check_deviance(smdat_qa)
 step_qa <- check_step(smdat_qa)
 # pair deviance and step
 devstep_qa <-  left_join(deviance_qa, step_qa) %>%
-  mutate(flag_extreme = (abs(zdiff) > 4 & abs(rollz) > 4))
+  mutate(flag_extreme = (abs(zdiff) > 5 & abs(rollz) > 5)) # go with +5 sd outside
 
 # spike check
 spike_qa <- check_spike(smdat_qa)
@@ -606,7 +831,7 @@ smdat_qa_all <- smdat_qa %>%
   left_join(subset(break_qa, select = c(cleanorder:portid, flagbreak)))
 
 flagged_data <- subset(smdat_qa_all, ((flag_wetup & !irrigated) | !is.na(flag_streak) | flag_extreme) | spike | flagbreak) %>%
-  mutate(flag_sensor = (flag_extreme & spike) | (flag_extreme & flagbreak) | (spike & flagbreak)) #
+  mutate(flag_sensor = (flag_extreme & spike) | (flag_extreme & flagbreak) | (spike & flagbreak))
 
 
 
@@ -865,7 +1090,7 @@ rm(updat, sustrts)
 # anything wildly outside of average relationship gets flagged (4 sd seems to catch values that probably are questionable)
 congruency_check <- data.frame()
 congruency_sd_threshold <- 5 # can mod this to play around with flagging outcomes
-congruency_raw_threshold <- 0.15
+congruency_raw_threshold <- 0.2
 # unique(smdat_qa_all_goodtrts$portid)
 for(u in unique(smdat_qa_all_goodtrts$portid)){
   # look at it by full trt and just ppt trt, just in case there aren't enough fulltrt lines for last year because of missing data
@@ -953,27 +1178,29 @@ for(u in unique(smdat_qa_all_goodtrts$portid)){
 }
 
 # testcase plot (run on one target logger only)
-compflags2 <- left_join(compflags, distinct(smdat_qa_all_goodtrts2[c("portid", "fulltrt", "ppt_trt", "nut_trt")])) 
+compflags2 <- left_join(compflags, distinct(smdat_qa_all_goodtrts[c("portid", "fulltrt", "ppt_trt", "nut_trt")])) 
+# will only plot the last ppt trt run in the loop above
 ggplot(compdata) +
   geom_line(aes(cleanorder, ref_vwc, group = portid), alpha = 0.5, col = "grey80") +
   geom_line(aes(cleanorder, target_vwc), alpha = 0.5, col = "blue") +
-  #geom_point(data = compflags, aes(cleanorder, target_vwc, col = check), alpha = 0.5) +
+  geom_point(data = compflags, aes(cleanorder, target_vwc, col = check), alpha = 0.5) +
   #geom_point(data = subset(compflags, flag_ppttrt), aes(cleanorder, target_vwc), col = "pink", alpha = 0.5) +
   #geom_point(data = subset(compflags, flag_fulltrt), aes(cleanorder, target_vwc), col = "green", alpha = 0.5) +
   geom_point(data = subset(compflags2, flag_both), aes(cleanorder, target_vwc, fill = check), pch= 21, alpha = 0.5) +
   facet_wrap(~fulltrt, nrow= 3)
   
 # review each flag type case (3: comparative vwc deviance, comparative absolute change deviance, comparative relative change deviance)
-comp2check <- "comp_vwc_rawdiff" #"comp_vwc"
+unique(congruency_check$check)
+comp2check <- "comp_relchange" # "comp_vwc_rawdiff" "comp_abschange"   "comp_relchange"   "comp_vwc"
 test <- left_join(smdat_qa_all_goodtrts, subset(congruency_check, check == comp2check))
 ggplot(test, aes(clean_datetime, vwc)) +
   geom_line(aes(group = portid, col = factor(block)), alpha = 0.5) +
   #geom_point(data = subset(test, check == comp2check & flag_fulltrt), col = "pink", alpha = 0.7) +
   #geom_point(data = subset(test, check == comp2check & flag_ppttrt), col = "orange", alpha = 0.7) +
-  geom_point(data = subset(test, check == comp2check & flag_both), aes(fill = mean_vwc_rawdiff <0), pch = 21, alpha = 0.7) +
+  geom_point(data = subset(test, check == comp2check & flag_both), pch = 21, alpha = 0.7) + #aes(fill = mean_vwc_rawdiff <0), 
   scale_color_viridis_d() +
   facet_grid(nut_trt ~ ppt_trt)
-  
+ 
 # both for vwc deviance seem like it correctly IDs odd values (maybe also comparing against general ppt trt)
 # abschange seems useful, but not conservative enough? (too many values flagged)
 # whatever in relchange that should be flagged for being an odd value is probably getting flagged for abschange or deviance too
@@ -1014,22 +1241,27 @@ ggplot(subset(test, portid == "B2L3_1" & cleanorder > 10000), aes(cleanorder, vw
 # how many flags per logger? [how many data points potentially removed]
 sort(sapply(split(congruency_check[c("flag_fulltrt", "flag_ppttrt", "flag_both")], congruency_check$portid), function(x) sum(x == TRUE)))
 
-# think it seems reasonable to move forward with using flag_both for comp_vwc and comp_abschange
+# think it seems reasonable to move forward with using flag_both for comp_vwc
+# maybe combine other congruency flags with other flags (e.g., if three flagged, review)
 # keep congruency check df for clean up at the end (ctw added comp_vwc_rawdiff after going through flagging to try to catch spikes during dry periods)
 # make wideformat to join with smdat_qa_all_goodtrts
-comparative_flags <- subset(congruency_check, flag_both & !grepl("relchange|rawdiff", check), select = -c(flag_ppttrt, flag_fulltrt, mean_vwc_rawdiff)) %>%
+comparative_flags <- subset(congruency_check, flag_both, select = -c(flag_ppttrt, flag_fulltrt, mean_vwc_rawdiff)) %>% #& !grepl("relchange|rawdiff", check)
+  distinct() %>%
   spread(check, flag_both) %>%
   rename(flag_abschange_congruency = comp_abschange, 
-         flag_vwc_congruency = comp_vwc)
+         flag_vwc_congruency = comp_vwc,
+         flag_relchange_congruency = comp_relchange,
+         flag_rawdiff_congruency = comp_vwc_rawdiff)
 
 # add to flagged and treatment-corrected dataset
 smdat_qa_all_goodtrts <- left_join(smdat_qa_all_goodtrts, comparative_flags)
 
 # clean up environment -- keep congruency check for later
-rm(test, comp2check, congruency_check2, temp_ppttrt, tempfulltrt, refflag, targetdat, refdata, u, testlog)
+rm(test, comp2check, congruency_check2, temp_ppttrt, tempfulltrt,compdata, compdirection, 
+   refflag, targetdat, refdata, u, testlog, compflags, compflags2)
 
 # remake flagged dataset with congruency flags and new outside precip flags
-flagged_data <- subset(smdat_qa_all_goodtrts, !is.na(flag_range) | (flag_wetup & !irrigated) | !is.na(flag_streak) | flag_extreme | spike | flagbreak | flag_abschange_congruency | flag_vwc_congruency) %>%
+flagged_data <- subset(smdat_qa_all_goodtrts, !is.na(flag_range) | (flag_wetup & !irrigated) | !is.na(flag_streak) | flag_extreme | spike | flagbreak | flag_abschange_congruency | flag_vwc_congruency | flag_relchange_congruency | flag_abschange_congruency) %>%
   mutate(flag_sensor = (flag_extreme & spike) | (flag_extreme & flagbreak) | (spike & flagbreak))
 # be sure at least one flag col as a true or not NA value (sometimes NAs get pulled in T/F subsetting)
 flagged_data$nflags <- apply(flagged_data[names(flagged_data)[grepl("flag|spike", names(flagged_data))]], 1, function(x) sum(x != FALSE & !is.na(x)))
@@ -1041,6 +1273,17 @@ ggplot(smdat_qa_all_goodtrts, aes(clean_datetime, vwc)) +
   geom_point(data = subset(flagged_data, nflags > 2), aes(clean_datetime, vwc, col = factor(nflags))) +
   facet_grid(ppt_trt ~ nut_trt)
 
+# which points have behavior flag + congruency flag?
+ggplot(smdat_qa_all_goodtrts, aes(clean_datetime, vwc)) +
+  geom_line(aes(group = portid), alpha = 0.5) +
+  geom_point(data = subset(flagged_data, flag_extreme & flag_abschange_congruency), aes(clean_datetime, vwc, col = factor(nflags))) +
+  # like what this check pulls
+  #geom_point(data = subset(flagged_data, (flagbreak|flag_extreme) & flag_rawdiff_congruency), aes(clean_datetime, vwc, col = factor(nflags))) + 
+  #geom_point(data = subset(flagged_data, flag_vwc_congruency), aes(clean_datetime, vwc), col = "orange", alpha = 0.5) + 
+  #geom_point(data = subset(flagged_data, flag_sensor), aes(clean_datetime, vwc), col = "orchid", alpha = 0.5) + 
+  facet_grid(ppt_trt ~ nut_trt)
+# don't like using relchange, flags points where sensor drops below 0
+
 
 
 # -- REMOVE VALUES AND ANNOTATE -----
@@ -1048,20 +1291,31 @@ ggplot(smdat_qa_all_goodtrts, aes(clean_datetime, vwc)) +
 # 1. outside plausible range (already done)
 # 2. wetup outside precip event
 # 3. flatlines
-# 4. has flag_sensor (at least two of: flag extreme [flagged stepchange + deviance from quiring et al. 2015], flag break, and flag spike from doriga et al. 2013 )
+# 4. has flag_sensor (at least two of: flag extreme [flagged stepchange + deviance from quiring et al. 2016], flag break, and flag spike from doriga et al. 2013 )
 # 5. congruency flags (outside 5 sd of at least half of the same ppt trt sensors and all but 1 of the same full treatment sensors)
+# > any flag_vwc_congruency
+# combo of (flagbreak|flagextreme) & flag_rawdiff_congruency
 # write some sort of manual code to catch spikes in dry period of summer that isn't caught by outside precip
 # > or can re-run outside precip after NA flagged vals
 
 # id which rows have one of the above conditions
 # > flagging done on vwc with plausible range flagged vals already removed, so annotate those before the rest
-needs_NA <- with(flagged_data, which( (flag_wetup & !irrigated) | !is.na(flag_streak) | flag_sensor | flag_abschange_congruency | flag_vwc_congruency))
+needs_NA <- with(flagged_data, which( (flag_wetup & !irrigated) | flag_sensor | ((flagbreak|flag_extreme) & flag_rawdiff_congruency) | flag_vwc_congruency))
 View(flagged_data[needs_NA,])
+
+# copy data before proceeding
+copy <- smdat_qa_all_goodtrts
+
 # start with flag_range col as flag note col(qa_note col has timestamp adjustments annotated currently)
 smdat_qa_all_goodtrts$flag_note <- smdat_qa_all_goodtrts$flag_range
 smdat_qa_all_goodtrts$flag_note <- with(smdat_qa_all_goodtrts, gsub("high warning", "vwc removed: above 0.6 (unlikely high value)", flag_note))
 smdat_qa_all_goodtrts$flag_note <- with(smdat_qa_all_goodtrts, gsub("outside low", "vwc removed: below -0.05 (impossible value)", flag_note))
 smdat_qa_all_goodtrts$flag_note <- with(smdat_qa_all_goodtrts, gsub("low warning", "vwc needs adjustment: below 0", flag_note))
+
+# add caution for flatline but don't remove data points (too many)
+# do any streaks have notes already? (don't think so but to be sure)
+with(smdat_qa_all_goodtrts, summary(is.na(flag_note[!is.na(streak_num)]))) # all NA
+smdat_qa_all_goodtrts$flag_note[!is.na(smdat_qa_all_goodtrts$streak_num)] <- paste("caution: vwc", smdat_qa_all_goodtrts$flag_streak[!is.na(smdat_qa_all_goodtrts$streak_num)])
 
 # make dataframe with notes to use
 #notes_df <- data.frame(flagname = names(flagged_data)[grep("^flag|spike|congruency", names(flagged_data))])
@@ -1070,20 +1324,20 @@ notes_df <- flagged_data[needs_NA,]
 notes_df$flag_precip <- with(notes_df, flag_wetup & !irrigated)
 # keep only identifying and flag cols for annotations
 notes_df <- subset(notes_df, select = names(notes_df)[grep("clean|portid|ppt_trt|^flag|spike|congruency", names(notes_df))])
-notes_df <- subset(notes_df, select = -c(flag_range, flag_wetup, flag_sensor))
+notes_df <- subset(notes_df, select = -c(flag_range, flag_streak, flag_wetup, flag_sensor, flag_relchange_congruency))
 summary(notes_df)
 # convert flags to notes
-notes_df$flag_streak <- with(notes_df, ifelse(!is.na(flag_streak), paste("vwc", flag_streak), NA))
-notes_df$flag_extreme <- ifelse(notes_df$flag_extreme, "vwc stepchange and spike (Quiring et al. 2015)", NA)
-notes_df$spike <- ifelse(notes_df$spike, "vwc spike (Doriga et al. 2013)", NA)
-notes_df$flagbreak <- ifelse(notes_df$flagbreak, "break in vwc (Doriga et al. 2013)", NA)
+notes_df$flag_extreme <- ifelse(notes_df$flag_extreme, "vwc stepchange and spike (Quiring et al. 2016)", NA)
+notes_df$spike <- ifelse(notes_df$spike, "vwc spike (Dorigo et al. 2013)", NA)
+notes_df$flagbreak <- ifelse(notes_df$flagbreak, "break in vwc (Dorigo et al. 2013)", NA)
 notes_df$flag_abschange_congruency <- ifelse(notes_df$flag_abschange_congruency, "absolute stepchange exceeds 5 sd average difference between sensor and comparable treatment sensors and all but one or all same full treatment sensors", NA)
 notes_df$flag_vwc_congruency <- ifelse(notes_df$flag_vwc_congruency, "vwc exceeds 5 sd average difference between sensor and >50% same ppt treatment sensors and all but one or all same full treatment sensors", NA)
+notes_df$flag_rawdiff_congruency <- ifelse(notes_df$flag_vwc_congruency, "vwc exceeds 0.15 difference between sensor and >50% same ppt treatment sensors and all but one or all same full treatment sensors", NA)
 notes_df$flag_precip <- with(notes_df, ifelse(flag_precip & ppt_trt == "W", "wetup without rainfall or possible irrigation in previous 24 hours", 
                                               ifelse(flag_precip & ppt_trt != "W", "wetup without rainfall in previous 24 hours", NA)))
 
 # arrange flag cols in order of clear error (logic error to questionable)
-notes_df <- subset(notes_df, select = c(portid:clean_datetime, flag_precip, flag_streak, flag_extreme:flag_vwc_congruency))
+notes_df <- subset(notes_df, select = c(portid:clean_datetime, flag_precip, flag_extreme:flag_rawdiff_congruency))
 copy <- smdat_qa_all_goodtrts
 
 # go row by row for other flags (this can take a minute to run)
@@ -1103,31 +1357,35 @@ for(i in 1:nrow(notes_df)){
 
 # look at data
 ggplot(smdat_qa_all_goodtrts) +
-  geom_point(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
-  geom_point(aes(clean_datetime, vwc, group = portid, col = factor(block)), alpha = 0.5) +
+  geom_point(data = subset(smdat_qa_all_goodtrts, !is.na(flag_note) & !grepl("adjustment|caution", flag_note)), aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
+  geom_line(aes(clean_datetime, vwc, group = portid, col = factor(block)), alpha = 0.5) +
   scale_color_viridis_d() +
   facet_wrap(ppt_trt ~ nut_trt)
+# point removed look okay
 
 # look at CXC, FW, and DN to see how to write check to grab orphan outlier points
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "CXC")) +
   geom_point(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
   # overlay raw in pink to see what changed
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
-  facet_wrap(~ portid)
+  facet_wrap(~ portid) # think I'm okay with what's here now that I've tweaked flagging
+# b2l4_3 needs clean up in dry period
 
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "FW")) +
   geom_point(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
   facet_wrap(~ portid)
+# b1l4_4 needs spot clean up at end of series
 
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "ND")) +
   geom_point(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
   facet_wrap(~ portid)
+# could maybe catch some points in dry periods (e.g., b2l3_1, b3l4_3, b3l4_5)
 
 
 
-# dry/Rain-season flagging clean up ------
+# dry/rain-season flagging clean up ------
 # write check for long stretches without rain
 dryseason <- seasondat %>% #[c("eco_yr", "season_end")]
   # add 24 hrs to the end of rain season
@@ -1135,83 +1393,84 @@ dryseason <- seasondat %>% #[c("eco_yr", "season_end")]
          drystart = season_end + (24*60*60))
 # add dry end
 dryseason$dryend <- c(seasondat$season_start[seasondat$eco_yr>2019], as.character(max(smdat_qa_all_goodtrts$clean_datetime)))
+# change dry season end to first germ rain of 2019 in sep (even tho growing season starts in nov)
+dryseason$dryend[dryseason$eco_yr == 2019] <- as.character(min(gsdat$date_threshold[gsdat$eco_yr == 2020], na.rm = T))
 dryseason$dryend <- as.POSIXct(dryseason$dryend)
-# move dry end earlier by 24hrs to be conservative (since season started at when germrain threshold was met)
-dryseason$dryend <- dryseason$dryend - (24*60*60)
-
+# move dry end earlier for 2019 and 2020 by 24hrs to be conservative (since season started at when germain threshold was met)
+# > 2021 ends before start of water year
+dryseason$dryend[dryseason$eco_yr < 2021] <- dryseason$dryend[dryseason$eco_yr < 2021] - (24*60*60)
+dryseason$season_start <- as.POSIXct(dryseason$season_start, tz = "UTC")
 
 # pull flag_vwc_rawdiff when flag_both true
-flag_rawdiff <- subset(congruency_check, check == "comp_vwc_rawdiff") %>%
-  left_join(distinct(smdat_qa_all_goodtrts[c("portid", "fulltrt", "ppt_trt", "nut_trt")])) %>%
-  mutate(yr = year(clean_datetime)) %>%
-  left_join(dryseason[c("eco_yr", "drystart", "dryend")], by = c("yr"= "eco_yr")) %>%
+flag_dryseason <- flagged_data[-needs_NA,] %>% # remove points that have already been flagged
+  subset(flag_rawdiff_congruency | flag_relchange_congruency | flag_vwc_congruency | flag_abschange_congruency) %>%
+  # left_join(distinct(smdat_qa_all_goodtrts[c("portid", "fulltrt", "ppt_trt", "nut_trt")])) %>%
+  # mutate(yr = year(clean_datetime)) %>%
+  left_join(dryseason[c("eco_yr", "drystart", "dryend", "stopwater")], by = c("yr"= "eco_yr")) %>%
   mutate(dryseason = clean_datetime >= drystart & clean_datetime < dryend) %>%
-  left_join(cimis_ppt2hr[c("cleanorder", "dryspell")])
+  left_join(cimis_ppt2hr[c("cleanorder", "dryspell")]) #%>%
+  #subset(dryseason & !is.na(dryspell))
 
 # see if these will catch bad values in dry periods
-ggplot(smdat_qa_all_goodtrts) +
+ggplot(subset(smdat_qa_all_goodtrts, portid %in% unique(flag_dryseason$portid))) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
   geom_line(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
-  geom_point(data= subset(flag_rawdiff, flag_ppttrt & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "green") +
-  geom_point(data= subset(flag_rawdiff, flag_both & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
+  geom_point(data= subset(flag_dryseason, flag_rawdiff_congruency & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "green") +
+  geom_point(data= subset(flag_dryseason, nflags == 3), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
+  #geom_point(data= subset(flag_rawdiff, flag_both & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
   facet_wrap(~ portid) 
-
-# zoom in on b2l4_5 and B1L2_1
-b2l4trt <- unique(smdat_qa_all_goodtrts$fulltrt[smdat_qa_all_goodtrts$portid == "B1L2_1"])
-ggplot(subset(smdat_qa_all_goodtrts, fulltrt == b2l4trt)) +
-  geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
-  geom_point(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
-  geom_point(data= subset(flag_rawdiff, fulltrt == b2l4trt & flag_ppttrt & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "green") +
-  geom_point(data= subset(flag_rawdiff, fulltrt == b2l4trt & flag_both & dryseason & !is.na(dryspell)), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
-  facet_wrap(~ paste(portid, fulltrt)) 
-# manually ignore B2L4_5 flags, using threshold doesn't help
-# ignore b1l2_1 also. legit high value already caught by another flag
+# > just go with flag_rawdiff and dry season 
 
 # does it work for extreme low values in rainy season? 
 ggplot(smdat_qa_all_goodtrts) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
   geom_line(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
-  geom_point(data= subset(flag_rawdiff, flag_both & !dryseason & mean_vwc_rawdiff < -0.3), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
+  geom_point(data= subset(flag_dryseason, flag_rawdiff_congruency & !dryseason), aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
   facet_wrap(~ portid)
-# not well. will need manual clean up on those. not too many
+# yes for b1l4_4 and b2l4_3 but not others. will need manual clean up on those. not too many
 
 # apply dry season non-rain-event raw diff flags, just flag_both only. manual spot clean up to follow for finishing.
-flag_rawdiff <- subset(flag_rawdiff, flag_both & dryseason & !is.na(dryspell)) %>%
-  # portids to ignore
-  subset(!portid %in% c("B1L2_1", "B2L4_5"))
+# > also include points for b1l4_4 and b2l4_3 during non-dry season since catches those points
+flag_dryseason <- subset(flag_dryseason, flag_rawdiff_congruency & dryseason & !is.na(dryspell)| 
+                           flag_rawdiff_congruency & !dryseason & !is.na(dryspell) & portid %in% c("B1L4_4", "B2L4_3"))
 
 # review one more time
-ggplot(smdat_qa_all_goodtrts) +
+ggplot(subset(smdat_qa_all_goodtrts, portid %in% unique(flag_dryseason$portid))) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), col = "orchid", alpha = 0.5) +
   geom_line(aes(clean_datetime, vwc, group = portid), alpha = 0.5) +
-  geom_point(data= flag_rawdiff, aes(clean_datetime, target_vwc), alpha = 0.5, col = "orange") +
-  facet_wrap(~ portid) # looks good to proceed
+  geom_point(data= flag_dryseason, aes(clean_datetime, target_vwc, col = dryseason, shape = clean_datetime < stopwater), alpha = 0.5) +
+  facet_wrap(~ paste(portid, fulltrt)) # ok to proceed
 
 # just in case mess up
 copy <- smdat_qa_all_goodtrts
 drynote <- "vwc differs from comparable treatment sensors and all but one or all same full treatment sensors by >0.15 during dry season"
+wetnote <- "vwc differs from comparable treatment sensors and all but one or all same full treatment sensors by >0.15 during dry spell"
 # annotate
-for(i in 1:nrow(flag_rawdiff)){
+for(i in 1:nrow(flag_dryseason)){
   # id which row in soilmoisture dataset needs annotation
-  temprow <- with(smdat_qa_all_goodtrts, which(portid == flag_rawdiff$portid[i] & cleanorder == flag_rawdiff$cleanorder[i]))
+  temprow <- with(smdat_qa_all_goodtrts, which(portid == flag_dryseason$portid[i] & cleanorder == flag_dryseason$cleanorder[i]))
   vwc_present <- !is.na(smdat_qa_all_goodtrts$vwc[temprow])
   flagnote_empty <- is.na(smdat_qa_all_goodtrts$flag_note[temprow])
+  # assign note whether dry season or outside
+  if(flag_dryseason$dryseason[i]){
+    tempnote <- drynote
+  }else{tempnote <- wetnote}
   #if vwc still there, NA
   if(vwc_present){
     smdat_qa_all_goodtrts$vwc[temprow] <- NA
   }
   # if flag_note empty add new note, otherwise append this flag to list of reasons
   if(flagnote_empty){
-    smdat_qa_all_goodtrts$flag_note[temprow] <- paste("vwc removed, flag(s):", drynote)
+    smdat_qa_all_goodtrts$flag_note[temprow] <- paste("vwc removed, flag(s):", tempnote)
   }else{
     # append
-    smdat_qa_all_goodtrts$flag_note[temprow] <- paste(smdat_qa_all_goodtrts$flag_note[temprow], drynote, sep = "; ")
+    smdat_qa_all_goodtrts$flag_note[temprow] <- paste(smdat_qa_all_goodtrts$flag_note[temprow], tempnote, sep = "; ")
   }
 }
 
 
 # clean up environment before proceeding
-rm(flagnote_empty, i, temprow, compdata, compdirection, drynote, vwc_empty, vwc_present)
+rm(flagnote_empty, i, temprow, tempnote, tempnotes, vwc_present, suborder, drynote, wetnote)
 
 
 
@@ -1219,88 +1478,125 @@ rm(flagnote_empty, i, temprow, compdata, compdirection, drynote, vwc_empty, vwc_
 # manual spot clean up -----
 # which portids still have values that need NA or caution?
 # > go by ppt treatment
-ggplot(subset(smdat_qa_all_goodtrts, ppt_trt == "XC"), aes(clean_datetime, vwc)) +
+## control ppt sensors
+left_join(subset(smdat_qa_all_goodtrts, ppt_trt == "XC"), dryseason, by = c("waterYear" = "eco_yr")) %>%
+  ggplot(aes(clean_datetime, vwc)) +
+  geom_ribbon(aes(xmin = drystart, xmax = dryend, group = waterYear), fill = "chocolate1", alpha = 0.25) +
   geom_line(aes(clean_datetime, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
   geom_point(alpha = 0.2) +
-  facet_wrap(~portid)
-# b1l2_5 need caution -- data need to be adjusted up if use
-ggplot(subset(smdat_qa_all_goodtrts, ppt_trt == "D"), aes(clean_datetime, vwc)) +
-  geom_line(aes(clean_datetime, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
-  geom_point(alpha = 0.2) +
-  facet_wrap(~portid)
-# b2l3_1 in summer 2021, and some high points for b1l1_4 and b1l1_5
-# b1l3_3 should be removed -- all unreliable data
-ggplot(subset(smdat_qa_all_goodtrts, ppt_trt == "W"), aes(clean_datetime, vwc)) +
-  geom_line(aes(clean_datetime, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
-  geom_point(alpha = 0.2) +
-  facet_wrap(~portid)
-# b1l4_4 summer 2021, some b2l2_4 early summer 2019
-# some high points in b3l3_1 rainy season winter 2019/2020
+  facet_wrap(~paste(nut_trt, portid))
+# > b2l4_1 in summer 2020, 
+# > b2l4_3 in summer 2019 (and maybe before start of growing season 2020)
+manual_xc <- casefold(c("b2l4_1", "b2l4_3", "b1l2_5", "b1l3_4"), upper = T)
 
-# > all should have initial november 2018 points below 0.25 removed since rainy season had already started
+## drought ppt sensors
+left_join(subset(smdat_qa_all_goodtrts, ppt_trt == "D"), dryseason, by = c("waterYear" = "eco_yr")) %>%
+  ggplot(aes(clean_datetime, vwc)) +
+  geom_ribbon(aes(xmin = drystart, xmax = dryend, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(clean_datetime, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~paste(nut_trt, portid))
+# > b1l3_3 should be removed -- all unreliable data
+# > b2l3_1 in summer 2021
+# > b3l4_3 summer 2020 and summer 2021
+manual_d <- casefold(c("b1L3_3", "b2l3_1","b3l4_3", "b3l4_5"),upper = T)
 
-manualportids <- c("B1L2_5", "B2L3_1", "B1L1_4", "B1L1_5", "B1L3_3", "B1L4_4", "B2L2_4", "B3L3_1")
-ggplot(subset(smdat_qa_all_goodtrts, portid%in% manualportids), aes(cleanorder, vwc)) +
-  geom_point(aes(cleanorder, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
+## wet ppt sensors
+left_join(subset(smdat_qa_all_goodtrts, ppt_trt == "W"), dryseason, by = c("waterYear" = "eco_yr")) %>%
+  ggplot(aes(clean_datetime, vwc)) +
+  geom_ribbon(aes(xmin = drystart, xmax = dryend, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(clean_datetime, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~paste(nut_trt, portid))
+# b1l4_4 summer 2021
+# b3l3_1 some high points in rainy season winter 2019/2020
+# b2l2_1 summer 2019
+manual_w <- casefold(c("b1l4_4", "b3l3_1", "b2l2_1", "b2l2_4", "b1l2_3"), upper = T)
+
+# create dat of just portids to correct with dry and rain seasons
+dryseason2 <- data.frame(dryseason) %>% 
+  mutate_at(.vars = names(.)[grep("start|end", names(.))], as.character) %>%
+  gather(met, val, season_start:season_end, drystart:dryend) %>%
+  mutate(val = as.POSIXct(val, tz = "UTC")) %>%
+  left_join(smdat_datetime[c("clean_datetime", "cleanorder")], by = c("val"="clean_datetime"))%>%
+  mutate_at(c("val", "cleanorder"), as.character) %>%
+  gather(thing, val, val, cleanorder) %>%
+  mutate(thing = ifelse(thing == "cleanorder", "order", "time")) %>%
+  unite(met, met, thing) %>%
+  spread(met, val) %>%
+  mutate_at(names(.)[grep("_order", names(.))], as.numeric) %>%
+  mutate_at(names(.)[grep("_time", names(.))], function(x) as.POSIXct(x, tz = "UTC"))
+
+# make manual dat with season dat attached
+manualdat <- subset(smdat_qa_all_goodtrts, portid %in% c(manual_xc, manual_d, manual_w)) %>%
+  left_join(dryseason2, by = c("waterYear" = "eco_yr")) %>%
+  mutate(dryseason = clean_datetime > drystart_time & clean_datetime <= dryend_time,
+         dryseason_plus = clean_datetime > (drystart_time + (60*60*24*21)) & clean_datetime <= dryend_time,
+         growseason = clean_datetime >= season_start_time & clean_datetime <= season_end_time)
+
+ggplot(manualdat, aes(cleanorder, vwc)) +
+  geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(cleanorder, raw_vwc, group = portid), color = "orchid", alpha = 0.5) +
   geom_point(alpha = 0.5) +
+  geom_point(data = subset(manualdat, dryseason_plus & vwc > 0.1), col = "red") +
   facet_wrap(~paste(fulltrt, portid))
 
-# in order easy to needs closer review:
-# treat B1L3_3 and B1L2_5 together -- suggest removal, unreliable data
-# treat CDs (B1L1_4 and B1L1_5) together cutoff high values cleanorder 4000 - 6000 somewhere over 0.45 (zoom in)
-# > also catch mismatched dip in first rainy season for B1L1_5 coming out of sensor drop``
-# treat FW B1L4_4 and ND B2L3_1  after cleanorder 6000 but use good FW and ND ref for comparison
-# treat NW B3L3_1 individually pre 2000, use good NW for comparison
-# treat NW B2L2_4 individually 3000-4500, use good NW for comparison (allow september rain)
-# > maybe can look for orphan points that are sandwiched between removed vals
+# go one by one... no quick logic code to catch all
 
-# B1L3_3 and B1L2_5
-b1l33_b1l25 <- with(smdat_qa_all_goodtrts, which(portid %in% c("B1L3_3", "B1L2_5") & !is.na(vwc)  & (is.na(flag_note) | grepl("warning", flag_range))))
-View(smdat_qa_all_goodtrts[b1l33_b1l25,])
-# > note: most of these don't have flags probably because they require a value the timestep before
-
-
-# B1L1_4 and B1L1_5 close up
-ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "CD"), aes(cleanorder, vwc)) + #portid %in% c("B1L1_4", "B1L1_5") #cleanorder %in% 4000:8000 &
+# 1. CXC manual ---- 
+ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "CXC"), aes(cleanorder, vwc)) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "CXC"), aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "CXC"), aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
-  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "CD" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) + #cleanorder %in% 4000:8000 &
-  scale_y_continuous(breaks = seq(0,0.6,.05)) +
+  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "CXC" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) + 
   scale_x_continuous(breaks = seq(0,12000,1000)) +
   facet_wrap(~portid)
-# visually since flag_extreme vals (unremoved) are greater than 0.35, use that as cutoff for b1l1_4 and _5
-# values in b3l2_5 that are flagged as check extreme also stick out as points that should be removed
+# b2l4_1 summer 2020 and high point in rain season 2021
+# b2l4_3 NA summer 2019
 
-# treat drop in b1l1_4 also manually
-b1l1_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L1_4" & !flag_extreme & ((cleanorder %in% c(250:500) & vwc <= 0.25) | (cleanorder %in% c(1400:1750) & vwc > 0.4))))
-ggplot(subset(smdat_qa_all_goodtrts, portid == "B1L1_4" & cleanorder <2000), aes(cleanorder, vwc)) +
+#b2l4_1
+b2l4order <- 4000:11000
+b2l4_1_removal2020 <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_1" & cleanorder %in% c(7200:8700) & is.na(flag_note) & vwc > 0.07))
+b2l4_1_removal2021_1 <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_1" & cleanorder %in% c(9000:9250) & is.na(flag_note) & vwc > 0.35))
+b2l4_1_removal2021_2 <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_1" & cleanorder %in% c(9400:9500) & is.na(flag_note) & vwc > 0.29))
+b2l4_1_removal2021_3 <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_1" & (cleanorder > 10500 & is.na(flag_note) & vwc > 0.13)))
+b2l4_1_removal2021_4 <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_1" & (cleanorder > 10800 & is.na(flag_note) & !is.na(vwc))))
+b2l4_1_removal <- c(b2l4_1_removal2020, b2l4_1_removal2021_1, b2l4_1_removal2021_2, b2l4_1_removal2021_3, b2l4_1_removal2021_4)
+ggplot(subset(manualdat, portid == "B2L4_1" & cleanorder %in% b2l4order), aes(cleanorder, vwc)) +
+  #geom_hline(aes(yintercept = .065), alpha = 0.5, lty = 2, col= "blue") +
+  #geom_vline(aes(xintercept = 10830), lty = 2, col= "purple") +
+  scale_x_continuous(breaks = seq(7000, 12000, 500))+
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
-  geom_line() +
-  geom_point(data = smdat_qa_all_goodtrts[b1l1_4_removal,], aes(col = portid)) +
-  geom_point(data = subset(smdat_qa_all_goodtrts, portid == "B1L1_4" & cleanorder <2000 & flag_extreme), aes(col = flag_extreme), alpha = 0.5)  
-#correct points
+  geom_point(alpha =0.5) +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L4_2" & cleanorder %in% b2l4order), col = "blue", alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l4_1_removal,], col= "red") # ok
 
 
-# ND: B2L3_1
-ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "ND"), aes(cleanorder, vwc)) + 
+#b2l4_3
+b2l4_3order <- 4000:5000
+b2l4_3_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L4_3" & cleanorder %in% c(2500:4500) & is.na(flag_note) & vwc > 0.1))
+ggplot(subset(manualdat, portid == "B2L4_3" & cleanorder %in% b2l4_3order), aes(cleanorder, vwc)) +
+  #geom_hline(aes(yintercept = .065), alpha = 0.5, lty = 2, col= "blue") +
+  #geom_vline(aes(xintercept = 10830), lty = 2, col= "purple") +
+  scale_x_continuous(breaks = seq(1000, 12000, 500))+
+  #geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
-  geom_line() +
-  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "ND" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) +
-  scale_y_continuous(breaks = seq(0,0.6,.05)) +
-  scale_x_continuous(breaks = seq(0,12000,1000)) +
-  facet_wrap(~portid)
-
-# zoom in to b2l3_1
-b2l3_1_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L3_1" & cleanorder >= 11250 & !flag_extreme & vwc > .11))
-ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L3_1" & cleanorder > 11250), aes(cleanorder, vwc)) +
-  geom_hline(aes(yintercept = .10), alpha = 0.5, lty = 2, col= "blue") +
-  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
-  geom_point(data = smdat_qa_all_goodtrts[b2l3_1_removal,], col= "red") +
-  geom_line() # .11 is fine
+  geom_point(alpha =0.5) +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L4_2" & cleanorder %in% b2l4_3order), col = "blue", alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l4_3_removal,], col= "red") # ok
 
 
-# FW: B1L4_4
+
+# 2. FW manual ----  
+# B1L4_4
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "FW"), aes(cleanorder, vwc)) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "FW"), aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "FW"), aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
   geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "FW" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) +
@@ -1309,13 +1605,100 @@ ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "FW"), aes(cleanorder, vwc)) +
   facet_wrap(~portid)
 
 # zoom in to b1l4_4
-ggplot(subset(smdat_qa_all_goodtrts, portid == "B1L4_4" & cleanorder %in% 10300:10500), aes(cleanorder, vwc)) +
-  geom_vline(aes(xintercept = 10315), alpha = 0.5, ty = 2, col= "blue") +
+b1l4_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L4_4" & cleanorder >= 10250 & is.na(flag_note) & !is.na(vwc)))
+b1l4order <- 10000:11000
+ggplot(subset(manualdat, portid == "B1L4_4" & cleanorder %in%  b1l4order), aes(cleanorder, vwc)) +
+  #geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  #geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_vline(aes(xintercept = 10250), alpha = 0.5, lty = 2, col= "blue") +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
-  geom_line() #>=10315 looks good for threshold to exclude data
-b1l4_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L4_4" & cleanorder >= 10315 & !flag_extreme & !is.na(vwc)))
+  geom_line()  +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B1L4_5" & cleanorder %in% b1l4order), col = "blue", alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b1l4_4_removal,], col= "red") #>=10315 looks good for threshold to exclude data
 
-# NW: B3L3_1 and B2L2_4
+# b2l2_1 (summer 2019)
+b2l2order <- 0:4000
+b2l2_1_removal_1 <- with(smdat_qa_all_goodtrts, which(portid == "B2L2_1" & cleanorder %in% 2000:2100 & is.na(flag_note) & vwc > 0.2))
+b2l2_1_removal_2 <- with(smdat_qa_all_goodtrts, which(portid == "B2L2_1" & cleanorder %in% 3000:3500 & is.na(flag_note) & vwc > 0.03))
+b2l2_1_removal <- c(b2l2_1_removal_1, b2l2_1_removal_2)
+ggplot(subset(manualdat, portid == "B2L2_1" & cleanorder %in%  b2l2order), aes(cleanorder, vwc)) +
+  geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  #geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  geom_line()  +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L2_2" & cleanorder %in% b2l2order), col = "blue", alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_1_removal,], col= "red")
+
+
+# 3. ND manual -----
+# B1L3_3
+b1l33_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L3_3" & !is.na(vwc)  & (is.na(flag_note) | grepl("warning", flag_range))))
+View(smdat_qa_all_goodtrts[b1l33,])
+# > note: most of these don't have flags probably because they require a value for the timestep before
+
+# ND: B2L3_1, B3L4_3, B3L4_5
+ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "ND"), aes(cleanorder, vwc)) + 
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  geom_line() +
+  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "ND" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "ND"), aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(data = subset(manualdat, fulltrt == "ND"), aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  scale_y_continuous(breaks = seq(0,0.6,.05)) +
+  scale_x_continuous(breaks = seq(0,12000,1000)) +
+  facet_wrap(~portid)
+
+# zoom in to b2l3_1
+b2l3_1_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L3_1" & cleanorder >= 11100 & !flag_extreme & vwc > .10))
+ggplot(subset(manualdat, portid == "B2L3_1" & cleanorder > 11000), aes(cleanorder, vwc)) +
+  geom_hline(aes(yintercept = .10), alpha = 0.5, lty = 2, col= "blue") +
+  geom_vline(aes(xintercept = 11100), alpha = 0.5, lty = 2, col= "blue") +
+  #geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  geom_point(data = smdat_qa_all_goodtrts[b2l3_1_removal,], col= "red") +
+  geom_line() # .10 is fine
+
+# zoom in to b3l4_3
+b3l4_3_removal2020_1 <- with(smdat_qa_all_goodtrts, which(portid == "B3L4_3" & cleanorder %in% c(6258:6497) & is.na(flag_note) & !is.na(vwc)))
+b3l4_3_removal2020_2 <- with(smdat_qa_all_goodtrts, which(portid == "B3L4_3" & cleanorder %in% c(6900:8000) & is.na(flag_note) & !is.na(vwc)))
+b3l4_3_removal2021_1 <- with(smdat_qa_all_goodtrts, which(portid == "B3L4_3" & cleanorder %in% c(dryseason2$drystart_order[dryseason2$eco_yr == 2021]:10800) & vwc > 0.072 & is.na(flag_note) & !is.na(vwc)))
+b3l4_3_removal2021_2 <- with(smdat_qa_all_goodtrts, which(portid == "B3L4_3" & cleanorder >=10830 & vwc > 0.06 & is.na(flag_note) & !is.na(vwc)))
+b3l4_3_removal <- c(b3l4_3_removal2020_1, b3l4_3_removal2020_2, b3l4_3_removal2021_1, b3l4_3_removal2021_2)
+b3l4order <- 0000:15000
+ggplot(subset(manualdat, portid == "B3L4_3" & cleanorder %in% b3l4order), aes(cleanorder, vwc)) +
+  #geom_hline(aes(yintercept = .065), alpha = 0.5, lty = 2, col= "blue") +
+  #geom_vline(aes(xintercept = dryseason2$drystart_order[dryseason2$eco_yr == 2021]), lty = 2, col= "chocolate") +
+  #geom_vline(aes(xintercept = 10830), lty = 2, col= "purple") +
+  geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L3_2" & cleanorder %in% b3l4order), col = "blue", alpha =0.5) +
+  geom_line(alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b3l4_3_removal,], col= "red") # looks fine
+
+
+#b3l4_5
+b3l4_5_removal <- with(smdat_qa_all_goodtrts, which(portid == "B3L4_5" & cleanorder %in% 8000:8500 & vwc > 0.2 & is.na(flag_note)))
+b3l4order <- 7000:9000
+ggplot(subset(manualdat, portid == "B3L4_5" & cleanorder %in% b3l4order), aes(cleanorder, vwc)) +
+  #geom_hline(aes(yintercept = .065), alpha = 0.5, lty = 2, col= "blue") +
+  #geom_vline(aes(xintercept = dryseason2$drystart_order[dryseason2$eco_yr == 2021]), lty = 2, col= "chocolate") +
+  #geom_vline(aes(xintercept = 10830), lty = 2, col= "purple") +
+  #geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  #geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B3L4_4" & cleanorder %in% b3l4order), col = "blue", alpha =0.5) +
+  geom_line(alpha =0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b3l4_5_removal,], col= "red") # looks fine
+
+
+
+# 4. NW manual -----
+# B3L3_1, B2L2_4, B1L2_3
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "NW"), aes(cleanorder, vwc)) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
@@ -1323,7 +1706,7 @@ ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "NW"), aes(cleanorder, vwc)) +
   scale_y_continuous(breaks = seq(0,0.6,.05)) +
   scale_x_continuous(breaks = seq(0,12000,1000)) +
   facet_wrap(~portid)
-#zoom in
+# zoom in
 ggplot(subset(smdat_qa_all_goodtrts,portid %in% c("B2L2_4", "B3L3_1")), aes(cleanorder, vwc)) + 
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
@@ -1331,91 +1714,146 @@ ggplot(subset(smdat_qa_all_goodtrts,portid %in% c("B2L2_4", "B3L3_1")), aes(clea
   scale_y_continuous(breaks = seq(0,0.6,.05)) +
   scale_x_continuous(breaks = seq(0,12000,1000)) +
   facet_wrap(~portid, scales = "free")
+
 ## b2l2_4
 ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% c(2500:3000, 4000:4250)), aes(cleanorder, vwc)) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
-  geom_hline(aes(yintercept = .13))
-
+  geom_hline(aes(yintercept = .13), lty = 2)
 ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% c(3800:3850)), aes(cleanorder, vwc)) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
   geom_hline(aes(yintercept = .13))
 #  manual pull
-b2L2_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L2_4" & !flag_extreme & ((cleanorder %in% c(2500:3500, 4000:4250) & vwc >= 0.13) | (cleanorder %in% c(3820:3830) & vwc < 0.13))))
-ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% c(2500:4250)), aes(cleanorder, vwc)) +
+b2l2_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L2_4" & is.na(flag_note) & (
+                                                        (cleanorder %in% c(2750:3500, 4100:4200) & vwc >= 0.1) | (cleanorder %in% c(3820:3830) & vwc < 0.13)
+                                                        )))
+# grab dip in both block 2 lines also
+b2l2_5drop <- with(smdat_qa_all_goodtrts, which(portid == c("B2L2_5") & is.na(flag_note) & (cleanorder %in% c(3820:3828) & vwc < 0.13)))
+b2l2_4order <- 2750:4250
+ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% b2l2_4order), aes(cleanorder, vwc)) +
+  geom_vline(aes(xintercept = 4100), lty = 2) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
-  geom_point(data = smdat_qa_all_goodtrts[b2L2_4_removal,], aes(col = portid)) +
-  geom_hline(aes(yintercept = .13))  #correct points
+  # add good line
+  geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L2_5" & cleanorder %in% b2l2_4order), col = "blue", alpha = 0.6) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_4_removal,], aes(col = portid)) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_5drop,], aes(col = portid)) +
+  geom_hline(aes(yintercept = .13), lty = 2)  #correct points
 
-# check others.. (manually swap in different full trts and only keep code for ones that need further clean up)
-ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "CW"), aes(cleanorder, vwc)) +
+# b3l3_1
+b3l3_1_removal <- with(smdat_qa_all_goodtrts, which(portid == "B3L3_1" & is.na(flag_note) & cleanorder %in% 592:676 & !is.na(vwc)))
+ggplot(subset(manualdat, portid == "B3L3_1" & cleanorder %in% 500:1000), aes(cleanorder, vwc, group = portid)) +
+  scale_x_continuous(breaks = seq(100,12000,50)) +
+  geom_vline(aes(xintercept = 592), lty = 2) +
+  geom_vline(aes(xintercept = 676), lty = 2) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
-  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "CW" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) + 
-  scale_x_continuous(breaks = seq(0,12000,1000)) +
-  facet_wrap(~portid)
-#B2L5_3 NA flag_extremes over 0.45 in beginning
+  geom_line(dat = subset(smdat_qa_all_goodtrts, logger == "B3L3" & ppt_trt == "W" & cleanorder %in% 500:1000), col = "blue", alpha = 0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b3l3_1_removal,], aes(col = portid)) # good
 
-ggplot(subset(smdat_qa_all_goodtrts, fulltrt == "CXC"), aes(cleanorder, vwc)) +
+# b1l2_3
+b1l2_3_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L2_3" & is.na(flag_note) & !is.na(vwc) & 
+                                                      ((waterYear == 2020  & flag_extreme) | (cleanorder > 12300 & vwc > 0.043))
+                                                    ))
+b1l2_3order <- 12000:15000
+ggplot(subset(manualdat, portid == "B1L2_3" & cleanorder %in% b1l2_3order), aes(cleanorder, vwc, group = portid)) +
+  #scale_x_continuous(breaks = seq(1000,12000,1000)) +
+  #geom_vline(aes(xintercept = 592), lty = 2) +
+  geom_hline(aes(yintercept = 0.043), lty = 2) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  geom_point() +
+  geom_line(dat = subset(smdat_qa_all_goodtrts, logger == "B3L3" & ppt_trt == "W" & cleanorder %in% b1l2_3order), col = "blue", alpha = 0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b1l2_3_removal[-c(1:2)],], aes(col = portid)) # good
+
+# 5. NXC manual -----
+# need to remove spike in drydown for block 1 adjuted data (B1L2_5)
+# b1l2_5
+b1l2_5_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L2_5" & is.na(flag_note) & !is.na(vwc) & cleanorder %in% 10705:11500 & vwc > 0.085))
+b1l2_5order <- 10000:15000
+ggplot(subset(manualdat, portid == "B1L2_5" & cleanorder %in% b1l2_5order), aes(cleanorder, vwc, group = portid)) +
+  #scale_x_continuous(breaks = seq(1000,12000,1000)) +
+  geom_vline(aes(xintercept = 10705), lty = 2) +
+  geom_vline(aes(xintercept = 11500), lty = 2) +
+  geom_hline(aes(yintercept = 0.085), lty = 2) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
   geom_line() +
-  geom_point(data = subset(smdat_qa_all_goodtrts, fulltrt == "CXC" & flag_extreme), aes(col = flag_extreme), alpha = 0.5) + 
-  scale_x_continuous(breaks = seq(0,12000,1000)) +
-  facet_wrap(~portid)
-# NA B2L4_1 flag_extreme after 9000/over 0.45
+  geom_line(dat = subset(smdat_qa_all_goodtrts, portid == "B1L2_4" & cleanorder %in% b1l2_5order), col = "blue", alpha = 0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b1l2_5_removal[-c(1:2)],], aes(col = portid)) # good
 
-# keep track of all check extreme flags applying
-flag_extremes <- flagged_data[-needs_NA,] %>% # these are already addressed
-  # pull points flagged as meeting quiring et al. 2015 critiria (violates step and deviance checks)
-  subset(flag_extreme) %>%
-  # subset by portid needs
-  subset((portid %in% c("B2L4_1", "B2L5_3") & vwc > .45) | portid %in% c("B1L1_4", "B1L1_5", "B3L2_5") |
-          (portid == "B2L2_4" & cleanorder %in% 3000:4000) | (portid == "B3L3_1" & cleanorder %in% 500:1000))
 
+# 6. FXC manual -----
+# block 1 spike (b1l3_4)
+b1l3_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L3_4" & is.na(flag_note) & !is.na(vwc) & cleanorder >12200 & vwc > 0.07))
+b1l3_4order <- 10000:15000
+ggplot(subset(manualdat, portid == "B1L3_4" & cleanorder %in% b1l3_4order), aes(cleanorder, vwc, group = portid)) +
+  #scale_x_continuous(breaks = seq(1000,12000,1000)) +
+  geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
+  geom_line() +
+  geom_line(dat = subset(smdat_qa_all_goodtrts, portid == "B1L2_4" & cleanorder %in% b1l3_4order), col = "blue", alpha = 0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b1l3_4_removal[-c(1:2)],], aes(col = portid)) # good
+
+
+# 7. combine all manual -----
 # points removed purely due to manual review (not flagged, but in cluster of flagged points)
-unreliable_data <- c(b1l33_b1l25, b1l1_4_removal, b1l4_4_removal, b2L2_4_removal, b2l3_1_removal)
+unreliable_data <- c(b2l4_1_removal, b2l4_3_removal, #CXC
+                     b1l4_4_removal, b2l2_1_removal, #FW
+                     b1l33_removal, b2l3_1_removal, b3l4_3_removal, b3l4_5_removal, #ND
+                     b2l2_4_removal, b2l2_5drop, b3l3_1_removal, b1l2_3_removal, #NW
+                     b1l2_5_removal, #NXC,
+                     b1l3_4_removal #XC
+)
+
 # does this seem right?
-ggplot(subset(smdat_qa_all_goodtrts, portid %in% manualportids), aes(cleanorder, vwc)) +
+ggplot(manualdat, aes(cleanorder, vwc)) +
+  geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
   geom_line(alpha = 0.5) +
-  geom_point(data = flag_extremes, col = "orange", alpha = 0.5) +
-  geom_point(data = smdat_qa_all_goodtrts[unreliable_data,], col = "orchid", alpha = 0.5) +
-  facet_wrap(~portid) # looks fine
+  geom_point(data = smdat_qa_all_goodtrts[unreliable_data,], col = "red", alpha = 0.5) +
+  facet_wrap(~paste(fulltrt, portid)) # looks fine -- only removed 1 point for b2l2_5
 
-# iterate through to NA and annotate
+# see if they have any flags
+View(smdat_qa_all_goodtrts[unreliable_data,]) # yes
+# save copy in case need to redo
 copy <- smdat_qa_all_goodtrts
-# annotate extremes
-extreme_note <- paste(unique(notes_df$flag_extreme[!is.na(notes_df$flag_extreme)]), "[manual review]")
-for(i in 1:nrow(flag_extremes)){
-  # id which row in soilmoisture dataset needs annotation
-  temprow <- with(smdat_qa_all_goodtrts, which(portid == flag_extremes$portid[i] & cleanorder == flag_extremes$cleanorder[i]))
-  vwc_present <- !is.na(smdat_qa_all_goodtrts$vwc[temprow])
-  flagnote_empty <- is.na(smdat_qa_all_goodtrts$flag_note[temprow])
-  #if vwc still there, NA
-  if(vwc_present){
-    smdat_qa_all_goodtrts$vwc[temprow] <- NA
-  }
-  # if flag_note empty add new note, otherwise append this flag to list of reasons
-  if(flagnote_empty){
-    smdat_qa_all_goodtrts$flag_note[temprow] <- paste("vwc removed, flag(s):", extreme_note)
-  }else{
-    # append
-    smdat_qa_all_goodtrts$flag_note[temprow] <- paste(smdat_qa_all_goodtrts$flag_note[temprow], extreme_note, sep = "; ")
-  }
-}
 
-# annotate manual
+# pull just the flag annotations
+flags <- distinct(subset(notes_df, select = flag_precip:flag_rawdiff_congruency)) %>%
+  gather(flag_name, flag_descrip, flag_precip:ncol(.)) %>%
+  distinct()
+# add flag descrip for rawdiff_congruency
+flags$flag_descrip[grep("rawdiff", flags$flag_name)] <- "vwc differs from comparable treatment sensors and all but one or all same full treatment sensors by >0.15"
+flags <- rbind(flags, data.frame(flag_name = names(flagged_data)[grep("relchange", names(flagged_data))],
+                                 flag_descrip = gsub("absolute", "relative", with(flags, flag_descrip[grepl("abschange", flag_name) & !is.na(flag_descrip)]))))
+# remove NAs and wetup flag descrip for irrigated sensors
+flags <- subset(flags, !is.na(flag_descrip) & !grepl("irrigat", flag_descrip))
+# change flag_precip to flag wetup to match
+flags$flag_name[grepl("precip", flags$flag_name)] <- "flag_wetup"
+
+# annotate manual -- can a little time to run
 for(i in unreliable_data){
   # NA vwc
   smdat_qa_all_goodtrts$vwc[i] <- NA
+  # check if other flags present
+  tempflags <- smdat_qa_all_goodtrts[i, flags$flag_name] %>%
+    gather(flag_name, flag_val, 1:ncol(.)) %>%
+    left_join(flags, by = "flag_name") %>%
+    subset(flag_val)
+  # if other flags present, append to manual review reason
+  if(nrow(tempflags)>0){
+    manual_note <- paste0("vwc removed, flag(s): unreliable data (manual review), additional flags: ",
+                          str_flatten(tempflags$flag_descrip, collapse = "; "))
+  }else{
+    manual_note <- "vwc removed, flag(s): unreliable data (manual review)"
+  }
+  # check if flag annotation already present (e.g., flatline or low value warning)
   flagnote_empty <- is.na(smdat_qa_all_goodtrts$flag_note[i])
   # if flag_note empty add new note, prefix this flag to below 0 warning
   if(flagnote_empty){
-    smdat_qa_all_goodtrts$flag_note[i] <- "vwc removed, flag(s): unreliable data [manual review]"
+    smdat_qa_all_goodtrts$flag_note[i] <- manual_note
   }else{
     # append
-    smdat_qa_all_goodtrts$flag_note[i] <- paste0("vwc removed, flag(s): unreliable data [manual review]; ", smdat_qa_all_goodtrts$flag_note[i])
+    smdat_qa_all_goodtrts$flag_note[i] <- paste(manual_note, smdat_qa_all_goodtrts$flag_note[i], sep = "; ")
   }
 }
 
@@ -1443,7 +1881,7 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
 ggplot(smdat_qa_all_goodtrts, aes(clean_datetime, vwc)) +
   # highlight low warning points
   geom_line(aes(group = portid, col = paste(block, comp_trt)), alpha = 0.5) +
-  geom_point(data = subset(smdat_qa_all_goodtrts, !grepl("removed", flag_note) & !is.na(flag_note)), aes(clean_datetime, raw_vwc, group = portid, col = paste(block, comp_trt)), pch = 1, alpha = 0.5) +
+  geom_point(data = subset(smdat_qa_all_goodtrts, !grepl("removed|flatline", flag_note) & !is.na(flag_note)), aes(clean_datetime, raw_vwc, group = portid, col = paste(block, comp_trt)), pch = 1, alpha = 0.5) +
   geom_hline(aes(yintercept = 0), col = "red", lty = 3) +
   labs(title = "USDA Compost QA: VWC data kept post-flagging workflow (points == retained but <0 warning)",
        subtitle = Sys.Date()) +
@@ -1463,7 +1901,7 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
 
 # -- review values removed due to sensor flag (potentially add back in) ----
 # go by ppt trt
-trt <- "FW"
+trt <- "CD"
 ggplot(subset(smdat_qa_all_goodtrts, fulltrt == trt), aes(clean_datetime, vwc)) +
   geom_line(data = subset(smdat_qa_all_goodtrts, fulltrt == trt), aes(clean_datetime, raw_vwc), col = "orange", alpha = 0.5) +
   geom_line(aes(group = portid), alpha = 0.5) +
@@ -1472,10 +1910,59 @@ ggplot(subset(smdat_qa_all_goodtrts, fulltrt == trt), aes(clean_datetime, vwc)) 
   geom_point(data = subset(flagged_data,fulltrt == trt & flag_vwc_congruency), aes(clean_datetime, target_vwc), col = "blue") +
   facet_wrap(~portid)
 
-ggplot(subset(smdat_qa_all_goodtrts, cleanorder > 8000 & portid %in% c("B1L4_4", "B1L4_5")), aes(cleanorder, raw_vwc, group = portid)) +
+# just a handful of portids ID'd to add points back in:
+# FW: B2L2_2, B3L1_5 (rainy season 2020)
+# NW: B1L2_1 (onset of rainy season 2020) 
+plot_grid(
+  ggplot(subset(cimis_ppt2hr, cleanorder >= 0), aes(cleanorder, wY_accumulated_ppt, col = waterYear, group = waterYear)) +
+    geom_line(lwd = 2) +
+    #scale_color_viridis_c() +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = seq(0,12000,1000)),
+  ggplot(subset(smdat_qa_all_goodtrts, portid %in% c("B2L2_2", "B3L1_5", "B1L2_1")), aes(cleanorder, raw_vwc, group = portid)) +
   geom_line(col = "orchid") +
   geom_line(aes(cleanorder, vwc)) +
-  facet_wrap(~portid, nrow = 2)
+  scale_x_continuous(breaks = seq(0,12000,2000))+
+  facet_wrap(~paste(portid, fulltrt), nrow = 3),
+  ggplot(subset(cimis_ppt2hr, cleanorder >= 0), aes(cleanorder, ppt_mm, col = waterYear, group = waterYear)) +
+    geom_line() +
+    #scale_color_viridis_c() +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = seq(0,12000,1000)),
+  rel_heights = c(0.5, 1, 0.5),
+  nrow = 3, align= "vh"
+)
+
+ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_2" & cleanorder %in% 20:30), aes(cleanorder, raw_vwc, group = portid)) +
+  geom_line(col = "orchid") +
+  geom_text(data = subset(smdat_qa_all_goodtrts, portid == "B2L2_2" & cleanorder %in% 20:30 & !is.na(flag_note)), aes(label = cleanorder), col = "orchid") +
+  #geom_text(aes(label = cleanorder), col = "orchid") +
+  geom_line(aes(cleanorder, vwc)) # put back 26
+
+ggplot(subset(smdat_qa_all_goodtrts, portid == "B3L1_5" & cleanorder %in% 6525:6550), aes(cleanorder, raw_vwc, group = portid)) +
+  geom_line(col = "orchid") +
+  geom_text(data = subset(smdat_qa_all_goodtrts, portid == "B3L1_5" & cleanorder %in% 6525:6550 & !is.na(flag_note)), aes(label = cleanorder), col = "orchid") +
+  #geom_text(aes(label = cleanorder), col = "orchid") +
+  geom_line(aes(cleanorder, vwc)) #6538
+
+ggplot(subset(smdat_qa_all_goodtrts, portid == "B1L2_1" & cleanorder %in% 3700:4470), aes(cleanorder, raw_vwc, group = portid)) +
+  geom_line(col = "orchid") +
+  geom_text(data = subset(smdat_qa_all_goodtrts, portid == "B1L2_1" & cleanorder %in% 3700:4470 & !is.na(flag_note)), aes(label = cleanorder), col = "orchid") +
+  geom_line(aes(cleanorder, vwc)) #3760, 4367, 4368
+addback <- with(smdat_qa_all_goodtrts, which((portid == "B2L2_2" & cleanorder %in% 20:30 & !is.na(flag_note)) |
+                                             (portid == "B3L1_5" & cleanorder %in% 6525:6550 & !is.na(flag_note)) |
+                                             (portid == "B1L2_1" & cleanorder %in% 3700:4470 & !is.na(flag_note))
+)) 
+# review
+ggplot(subset(smdat_qa_all_goodtrts, portid %in% c("B2L2_2", "B3L1_5", "B1L2_1")), aes(cleanorder, raw_vwc, group = portid)) +
+  geom_line(col = "orchid") +
+  geom_line(aes(cleanorder, vwc)) +
+  geom_point(data = smdat_qa_all_goodtrts[addback,], aes(col = substr(flag_note, 0, 50))) +
+  scale_x_continuous(breaks = seq(0,12000,2000))+
+  theme(legend.position = "bottom")+
+  facet_wrap(~paste(portid, fulltrt), nrow = 3) #
+smdat_qa_all_goodtrts$flag_note[addback] <- gsub("removed,", "allowed (manual review),", smdat_qa_all_goodtrts$flag_note[addback])
+smdat_qa_all_goodtrts$vwc[addback] <- smdat_qa_all_goodtrts$raw_vwc[addback]
 
 
 # annotate sensor treatment corrections -----
@@ -1493,15 +1980,26 @@ smdat_qa_out <- left_join(smdat_qa_all_goodtrts, trts2correct_new[c("portid", "c
   subset(select= c(logger:raw_datetime, raw_vwc, sourcefile, qa_note, logger_note, flag_note)) %>%
   arrange(portid, cleanorder)
 
+# last check all looks good
+ggplot(smdat_qa_out, aes(clean_datetime, vwc, col = factor(block), group = portid, lty = comp_trt)) +
+  geom_point(data = subset(smdat_qa_out, grepl("removed", flag_note)), aes(clean_datetime, raw_vwc), pch = 1, alpha = 0.5) +
+  geom_line(alpha = 0.5) +
+  facet_grid(nut_trt ~ ppt_trt) # okay
+
 
 
 # -- FINISHING -----
-# timestamp-corrected, flagged + NA'd data out as all_clean (until infill/adjustment script created, if that ever happens)
+# timestamp-corrected, flagged + NA'd data out to DataQA folder as intermediate dataset
+write.csv(smdat_qa_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled2_time-corrected_flagged.csv"), row.names = F)
+# also as all_clean (until infill/adjustment script created, if that ever happens)
 write.csv(smdat_qa_out, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/SoilMoisture_all_clean.csv"), row.names = F)
 
 # >> write out intermediate datasets if need/want to revisit
 # growing season (from first germ threshold to last spring rain, dry season [period between], irrigation stop dates)
-write.csv(seasondat, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/growing_season.csv"), row.names = F)
+# rearrange cols
+dryseason2 <- dplyr::select(dryseason2, eco_yr, season_start_time, season_start_order, season_end_time, season_end_order,
+                            stopwater, drystart_time, drystart_order, dryend_time, dryend_order)
+write.csv(dryseason2, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/growing_season.csv"), row.names = F)
 
 # corrected sensor treatments
 # include spatial order in this as well
@@ -1536,7 +2034,21 @@ ggplot(loggerkey_corrected, aes(1, 1)) +
 write.csv(loggerkey_corrected, paste0(datpath, "SoilMoisture/SoilMoisture_CleanedData/decagon_loggerkey_corrected.csv"), row.names = F)
 
 # flags (all, not just removed)
-write.csv(flagged_data, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_all_flags.csv"), row.names = F)
+# include manual flags in this dataset
+flagged_data_out <- dplyr::select(flagged_data, portid, cleanorder, clean_datetime, raw_vwc, flag_range, flag_wetup, irrigated, flag_streak:flagbreak, flag_abschange_congruency:flag_rawdiff_congruency) %>%
+  full_join(subset(smdat_qa_all_goodtrts, !is.na(flag_note), select = c(names(.),"flag_note"))) %>%
+  left_join(flagged_data[c("portid", "cleanorder", "flag_sensor")]) %>%
+  left_join(smdat_qa_out[c("portid", "cleanorder", "vwc")]) %>%
+  left_join(flag_dryseason[c("portid", "cleanorder", "dryseason", "dryspell")]) %>%
+  left_join(notes_df[c("portid", "cleanorder", "flag_precip")]) %>%
+  distinct() %>%
+  mutate(vwc_allowed = !is.na(vwc)) %>%
+  dplyr::select(portid:irrigated, flag_precip, dryseason:dryspell, flag_streak:flagbreak, flag_sensor, flag_abschange_congruency:flag_note, vwc_allowed) %>%
+  arrange(portid, cleanorder)
+summary(flagged_data_out)
+summary(is.na(flagged_data_out$flag_note))
+write.csv(flagged_data_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_all_flags.csv"), row.names = F)
+write.csv(flags, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_flagkey.csv"), row.names = F)
 
 ## derived raindats to CIMIS subfolder 
 # clean up: ignore rain and rain2 logic cols, add location/station info so provenance clear
@@ -1544,6 +2056,4 @@ cimis_out <- cbind(distinct(cimis_hrly[c("Stn.Id", "Stn.Name", "CIMIS.Region")])
                    subset(cimis_ppt2hr, select = -c(rain, rain2))) %>%
   rename(stnId = Stn.Id, stnName = Stn.Name, cimis_region = CIMIS.Region) %>%
   arrange(clean_datetime)
-# > note to self: add beginning of rainy season to 2018 (even tho project not in the ground yet)
-
 write.csv(cimis_out, paste0(datpath,"SoilMoisture/SoilMoisture_DataQA/CIMIS_084BrownsValley_pptforSoilMoisture.csv"), row.names = F)
