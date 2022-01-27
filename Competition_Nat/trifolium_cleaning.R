@@ -1,1 +1,134 @@
+# starter script to clean and format competition trifolium data 
+
+# notes: 
+# 1/27/22: quick code so NK and CA can begin preliminary data analysis 
+# EAS will clean up and expand code later to integrate with the remaining species' competition data 
+
+# Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
+# "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
+
+
+# -- SETUP ----
+rm(list = ls()) # clean enviroment
+# libraries needed
 library(tidyverse)
+# change default settings
+na_vals <- c("", " ", NA, "NA")
+options(stringsAsFactors = F)
+theme_set(theme_bw())
+
+# specify dropbox pathway (varies by user -- EAS can tweak this)
+if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
+  ## CTW pathway
+  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
+}else{
+  ## LMH and EAS
+  datpath <- "~/Dropbox/USDA-compost/Data/Competition/"
+}
+
+# list files in entered data folder
+datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
+
+# read in raw trifolium data
+trif<- read.csv(paste0(datpath, "Competition_EnteredData/trifolium_seeds_competition_summer2021.csv"), na.strings = na_vals, strip.white = T)
+# read in treatment key
+trtkey <- read.csv(paste0(datpath, "comp_trt_key.csv"), na.strings = na_vals, strip.white = T)
+
+#quick check
+glimpse(trif)
+
+
+# specify plotting cols
+ppt_cols <- c(D = "brown", W = "dodgerblue", XC = "seagreen")
+plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOMU = "blue", 
+                ERBO  = "red", TRHI = "orchid", Control = "grey40")
+
+#### PREP Trifolium data---
+#join trifolium data to trtkey
+trif$phytonum <- as.numeric(trif$phytonum) #convert phytonum to numeric from character
+
+#check range of values for plot (1-36), subplot (1-7), and phytonum (1-6)
+range(trif$plot) #checks out, goes to 36
+range(trif$subplot) #why does this go to 10? should be 7
+trif$subplot[trif$subplot == 10] <- 6  #checking with the treatment key, this is entered wrong and should be subplot 6
+trif$phytonum #NAs present for competitors (when TRHI is background, will fix/replace below with trtkey file) 
+
+#remove notes and phytonum columns (with NA errors)
+trif <- trif %>% select(-survey_date, -survey_init, -notes, -X, -X.1, -X.2, -phytonum) 
+
+trif <- left_join(trif,trtkey, by=c("plot","subplot","phyto"))
+
+trif<- trif %>%
+  #sort by plot - check again if all are present (1-36, no 33)
+  arrange(plot) %>%
+  #specify if competitor or invader
+  mutate(role = "invader", role = if_else(background =="TRHI", "competitor", role)) 
+
+#summarize by summing the total seeds, mass, stems for each phytometer
+trif <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role ) %>% 
+  summarize(tot_seeds=sum(as.numeric(seeds), na.rm = TRUE), tot_seed_mass=sum(as.numeric(seed_mass),na.rm = TRUE), 
+            tot_stems=sum(as.numeric(tot_stems), na.rm = TRUE), tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), 
+            tot_mass=tot_seed_mass + tot_stem_mass, tot_stems=sum(as.numeric(tot_stems),na.rm = TRUE))
+
+#for Nat to do preliminary analyses (temporary file until we combine with full competition dataset)
+write.csv(path = paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
+
+#standardize data to seeds/stem
+trif_sum<-trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
+  summarize(output=tot_seeds/tot_stems)
+trif_sum[trif_sum == "Inf"] <- 0
+
+
+#Visualize data, summarizing mean seed output by treatment and background competitor
+trif_plot1<-trif_sum %>% group_by(nut_trt, ppt_trt, phyto, background, role)%>%
+  summarize(se_output = sd(output, na.rm=T)/sqrt(length(output)),output=mean(output,na.rm=T))
+
+ggplot(data=trif_plot1, aes(nut_trt, output, col = background)) +
+  geom_errorbar(aes(ymax = output + se_output, ymin = output - se_output), width = 0.2, position = position_dodge(width = 0.5)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  scale_color_manual(values = plant_cols) +
+  ggtitle("Mean Trifolium Seeds +- 1SE") +
+  facet_grid(.~ppt_trt) # can also facet by background, trying alltog with colors to compare more directly
+
+#Visualize data, summarizing mean seed output by treatment only (ignore competitor)
+trif_plot2<-trif_sum %>% group_by(nut_trt, ppt_trt)%>%
+  summarize(se_output = sd(output, na.rm=T)/sqrt(length(output)),output=mean(output,na.rm=T))
+
+ggplot(data=trif_plot2, aes(nut_trt, output)) +
+  geom_errorbar(aes(ymax = output + se_output, ymin = output - se_output), width = 0.2, position = position_dodge(width = 0.5)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  ggtitle("Mean Trifolium Seeds +- 1SE") +
+  facet_grid(.~ppt_trt)
+
+
+#### FOR LATER - calculate quantity seeded for densities
+# load seed mass data to crunch qty seeded
+# > reading in others dats for now (do we have our own measurements?)
+# read in J. Larson dry seed mass to screen for overcounts in density (more likely spp present in background seed bank so density enhanced)
+seed_mass <- read.csv("Data-cleaning/Larson_CA_dryseedmass.csv")
+
+
+# -- PREP LOOKUP TABLES ----
+# make lookup table for subsample frame to scale to meter-square
+scale_lt <- data.frame(subsample_cm = c("5x5", "10x10", "25x25", "50x50"),
+                       area_cm2 = c(5*5, 10*10, 25*25, 50*50)) %>%
+  # make half plot scale for reality check with density (i.e. does stems projected for 50x50cm exceed amount seeded?)
+  mutate(scale_half = (50*50)/area_cm2,
+         # full meter scale factor
+         scale_m2 = (100*100)/area_cm2)
+
+# join seed mass data to LUT to project max density possible per species
+# > note: here is where to adjust based on whether seeds weighed out with or without awns/husks/attachments (looking at you ERBO)
+seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>% #start with Julie's seed weights
+  group_by(species) %>%
+  summarise(Seed = mean(perseedwt)) %>%
+  ungroup() %>%
+  rename("ID" = "species") %>%
+  # add jl for source
+  mutate(source = "JL") %>%
+  mutate(ID = casefold(ID, upper = T),
+         ID = paste0(substr(ID, 1,2), substr(ID, 4,5)),
+         # scale to half meter density -- seeded at 8g per m2 (2g per half m2)
+         max_density_halfm2 = 2/Seed) 
+
+
