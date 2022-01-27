@@ -20,7 +20,7 @@ na_vals <- c("", " ", NA, "NA")
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 
-# specify dropbox pathway (varies by user -- EAS can tweak this)
+# specify dropbox pathway (varies by user -- EAS can tweak this for NK use)
 if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
   ## CTW pathway
   datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
