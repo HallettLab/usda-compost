@@ -3,6 +3,9 @@
 # notes: 
 # 1/27/22: quick code so NK and CA can begin preliminary data analysis 
 # EAS will clean up and expand code later to integrate with the remaining species' competition data 
+## MAJOR TO-DO: check and enter TRHI data from the datasheets for the backgrounds and other species phytos  
+#note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
+#TRHI phytometer/invader data missing for plots 21-32
 
 # Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
 # "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
@@ -37,12 +40,6 @@ trtkey <- read.csv(paste0(datpath, "comp_trt_key.csv"), na.strings = na_vals, st
 #quick check
 glimpse(trif)
 
-
-# specify plotting cols
-ppt_cols <- c(D = "brown", W = "dodgerblue", XC = "seagreen")
-plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOMU = "blue", 
-                ERBO  = "red", TRHI = "orchid", Control = "grey40")
-
 #### PREP Trifolium data---
 #join trifolium data to trtkey
 trif$phytonum <- as.numeric(trif$phytonum) #convert phytonum to numeric from character
@@ -70,14 +67,25 @@ trif <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyt
             tot_stems=sum(as.numeric(tot_stems), na.rm = TRUE), tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), 
             tot_mass=tot_seed_mass + tot_stem_mass, tot_stems=sum(as.numeric(tot_stems),na.rm = TRUE))
 
-#for Nat to do preliminary analyses (temporary file until we combine with full competition dataset)
-write.csv(path = paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
+#check for missing data
+check<-trtkey%>% filter(phyto=="TRHI")
+check<-left_join(check,trif) 
+#note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
+#TRHI phytometer/invader data missing for plots 21-32
+
+#for Nat to do preliminary analyses (temporary file until we update data and later combine with full competition dataset)
+write.csv(trif, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
 
 #standardize data to seeds/stem
 trif_sum<-trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
   summarize(output=tot_seeds/tot_stems)
 trif_sum[trif_sum == "Inf"] <- 0
 
+#VISUALIZE ----
+# specify plotting cols
+ppt_cols <- c(D = "brown", W = "dodgerblue", XC = "seagreen")
+plant_cols <- c(AVBA = "darkgreen", HOMU = "lightgreen", TACA = "limegreen", LOMU = "blue", 
+                ERBO  = "red", TRHI = "orchid", Control = "grey40")
 
 #Visualize data, summarizing mean seed output by treatment and background competitor
 trif_plot1<-trif_sum %>% group_by(nut_trt, ppt_trt, phyto, background, role)%>%
