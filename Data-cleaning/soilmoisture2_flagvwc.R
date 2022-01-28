@@ -66,7 +66,7 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
 
 
 # read in time-corrected soil moisture data
-smdat <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_time-corrected.csv"), na.strings = na_vals)
+smdat <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled1_time-corrected.csv"), na.strings = na_vals)
 
 ## prepped hourly CIMIS met data for QA checks after compilation
 cimis_hrly <- list.files(paste0(datpath, "CIMIS"), full.names = T) %>%
@@ -113,7 +113,7 @@ ggplot(cimis_hrly, aes(clean_datetime, is.na(Precip.mm))) +
 
 # collapse precip to same temporal resolution as soil moisture
 # > project not installed until november 2019, but rain season started before that
-gplot(subset(cimis_hrly, year(date) == 2018)) + geom_point(aes(clean_datetime, Precip.mm)) # okay to start oct 1 2018 (beginning of water year)
+ggplot(subset(cimis_hrly, year(date) == 2018)) + geom_point(aes(clean_datetime, Precip.mm)) # okay to start oct 1 2018 (beginning of water year)
 # create smdat clean_datetime back to start of oct 1
 smdat_datetime <- distinct(smdat[c("clean_datetime", "date", "cleanorder")])
 start2018 <- data.frame(clean_datetime = seq.POSIXt(min(smdat_datetime$clean_datetime), as.POSIXct("2018-10-01 00:00:00", tz = "UTC"), -(2*60*60))) %>%
@@ -297,7 +297,7 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        width = 10, height = 6, units = "in")
 
 # clean up environment
-rm(trackrain, i, dryspell, rainevent, star2018, tempend, r)
+rm(trackrain, i, dryspell, rainevent, start2018, tempend, r)
 
 
 
@@ -390,7 +390,7 @@ drops_df$adjust_vwc[drops_df$portid == drop1 & drops_df$cleanorder >= 11243] <- 
 
 # 2nd -- just need to bring end up
 drop2 <- drops$portid[2]
-suborder <- c(9000:16000)
+suborder <- c(10000:15000)
 ggplot(subset(smdat, fulltrt %in% drops$fulltrt[2] & cleanorder %in% suborder), aes(cleanorder, vwc, col = factor(block), group = portid)) +
   ggtitle(drops$portid[1])+
   geom_line(alpha = 0.5) +
@@ -399,9 +399,12 @@ ggplot(subset(smdat, fulltrt %in% drops$fulltrt[2] & cleanorder %in% suborder), 
   #geom_text(data = subset(drops_df, portid == drop2 & cleanorder %in% suborder), aes(cleanorder, adjust_vwc, label = cleanorder), col = "purple") +
   geom_text(data = subset(drops_df, portid == drop2 & cleanorder %in% suborder & rankdiff < 6), aes(label = rankdiff), col = "blue", alpha = 0.7)
 
-# how far is lowest point from 0?
+# adjust drop at the end
 drops_df$adjust_vwc[drops_df$portid == drop2]<- drops_df$vwc[drops_df$portid == drop2] 
-adjustdrop2 <- 0- with(drops_df, min(vwc[cleanorder > 12000 & portid == drop2], na.rm = T))
+# figure out drop at 12000
+adjust12000_drop2 <- abs(with(drops_df, diffvwc[portid == drop2 & cleanorder == 12000]))
+drops_df$adjust_vwc[drops_df$portid == drop2 & drops_df$cleanorder >= 12000] <- (with(drops_df, adjust_vwc[portid == drop2 & cleanorder >= 12000]) + adjust12000_drop2)
+adjustdrop2 <- 0- with(drops_df, min(adjust_vwc[cleanorder > 12000 & portid == drop2], na.rm = T))
 drops_df$adjust_vwc[drops_df$portid == drop2 & drops_df$cleanorder >= 10658] <- (with(drops_df, adjust_vwc[portid == drop2 & cleanorder >= 10658]) + adjustdrop2)
 # looks reasonable
 
@@ -461,6 +464,7 @@ smdat <- arrange(smdat, portid, cleanorder)
 ggplot(smdat, aes(clean_datetime, vwc)) + 
   geom_line(aes(group = portid, col = !is.na(adjust_note))) +
   facet_grid(ppt_trt~nut_trt)
+str(smdat)
 # ok
 
 # clean up -- keep drop data frames just in case need
@@ -468,7 +472,7 @@ rm(list = ls()[grepl("^adjust|^drop[0-9]|^break", ls())])
 
 
 
-  # -- FLAGGING TEST CASE -----
+# -- FLAGGING TEST CASE -----
 # apply QA/QC methods from lit
 # subset dat to a relatively clean/trustworthy line
 # > who has the fewest qa notes?
@@ -902,7 +906,7 @@ ggplot(subset(smdat_qa_all, fulltrt %in% sustrts[2] & block == 3), aes(clean_dat
 # plot block
 subset(smdat_qa_all, block == 3) %>%
   left_join(colorder) %>%
-ggplot(aes(clean_datetime, vwc, group = portid)) +
+  ggplot(aes(clean_datetime, vwc, group = portid)) +
   geom_line(aes(col = ppt_trt, lty = comp_trt), alpha = 0.5) +
   facet_grid(colorder~nut_trt)
 # i feel like a line each in F W + D were switched when writing down what was what. they each consistently match the other ppt_trt visually
@@ -1079,6 +1083,7 @@ precip_qa <- left_join(precip_qa, seasondat, by = c("waterYear" = "eco_yr")) %>%
   mutate(irrigated = (ppt_trt == "W" & clean_datetime >= season_start & date <= stopwater))
 
 smdat_qa_all_goodtrts <- left_join(smdat_qa_all_goodtrts, subset(precip_qa, select = c(cleanorder:portid, flag_wetup, irrigated)))
+glimpse(smdat_qa_all_goodtrts) # looks ok
 # cleanup
 rm(updat, sustrts)
 
@@ -1164,7 +1169,7 @@ for(u in unique(smdat_qa_all_goodtrts$portid)){
     group_by(cleanorder) %>%
     summarise(mean_vwc_rawdiff = mean(comp_vwc_rawdiff, na.rm = T)) %>%
     ungroup() #%>%
-    #mutate(check = "comp_vwc_abs")
+  #mutate(check = "comp_vwc_abs")
   
   # join to compflags
   compflags <- left_join(compflags, compdirection) %>%
@@ -1188,7 +1193,7 @@ ggplot(compdata) +
   #geom_point(data = subset(compflags, flag_fulltrt), aes(cleanorder, target_vwc), col = "green", alpha = 0.5) +
   geom_point(data = subset(compflags2, flag_both), aes(cleanorder, target_vwc, fill = check), pch= 21, alpha = 0.5) +
   facet_wrap(~fulltrt, nrow= 3)
-  
+
 # review each flag type case (3: comparative vwc deviance, comparative absolute change deviance, comparative relative change deviance)
 unique(congruency_check$check)
 comp2check <- "comp_relchange" # "comp_vwc_rawdiff" "comp_abschange"   "comp_relchange"   "comp_vwc"
@@ -1200,7 +1205,7 @@ ggplot(test, aes(clean_datetime, vwc)) +
   geom_point(data = subset(test, check == comp2check & flag_both), pch = 21, alpha = 0.7) + #aes(fill = mean_vwc_rawdiff <0), 
   scale_color_viridis_d() +
   facet_grid(nut_trt ~ ppt_trt)
- 
+
 # both for vwc deviance seem like it correctly IDs odd values (maybe also comparing against general ppt trt)
 # abschange seems useful, but not conservative enough? (too many values flagged)
 # whatever in relchange that should be flagged for being an odd value is probably getting flagged for abschange or deviance too
@@ -1409,7 +1414,7 @@ flag_dryseason <- flagged_data[-needs_NA,] %>% # remove points that have already
   left_join(dryseason[c("eco_yr", "drystart", "dryend", "stopwater")], by = c("yr"= "eco_yr")) %>%
   mutate(dryseason = clean_datetime >= drystart & clean_datetime < dryend) %>%
   left_join(cimis_ppt2hr[c("cleanorder", "dryspell")]) #%>%
-  #subset(dryseason & !is.na(dryspell))
+#subset(dryseason & !is.na(dryspell))
 
 # see if these will catch bad values in dry periods
 ggplot(subset(smdat_qa_all_goodtrts, portid %in% unique(flag_dryseason$portid))) +
@@ -1590,6 +1595,8 @@ ggplot(subset(manualdat, portid == "B2L4_3" & cleanorder %in% b2l4_3order), aes(
   geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L4_2" & cleanorder %in% b2l4_3order), col = "blue", alpha =0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b2l4_3_removal,], col= "red") # ok
 
+# compile vals to remove as you go (too many portids to keep track of with manual cleaning)
+manual_remove <- c(b2l4_1_removal, b2l4_3_removal)
 
 
 # 2. FW manual ----  
@@ -1630,6 +1637,9 @@ ggplot(subset(manualdat, portid == "B2L2_1" & cleanorder %in%  b2l2order), aes(c
   # add good line
   geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L2_2" & cleanorder %in% b2l2order), col = "blue", alpha =0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b2l2_1_removal,], col= "red")
+
+# add to remove
+manual_remove <- c(manual_remove, b1l4_4_removal, b2l2_1_removal)
 
 
 # 3. ND manual -----
@@ -1695,6 +1705,8 @@ ggplot(subset(manualdat, portid == "B3L4_5" & cleanorder %in% b3l4order), aes(cl
   geom_line(alpha =0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b3l4_5_removal,], col= "red") # looks fine
 
+# add to remove
+manual_remove <- c(manual_remove, b1l33_removal, b2l3_1_removal, b3l4_3_removal, b3l4_5_removal)
 
 
 # 4. NW manual -----
@@ -1726,20 +1738,27 @@ ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% c(3800
   geom_hline(aes(yintercept = .13))
 #  manual pull
 b2l2_4_removal <- with(smdat_qa_all_goodtrts, which(portid == "B2L2_4" & is.na(flag_note) & (
-                                                        (cleanorder %in% c(2750:3500, 4100:4200) & vwc >= 0.1) | (cleanorder %in% c(3820:3830) & vwc < 0.13)
-                                                        )))
+  (cleanorder %in% c(2425:2575) & vwc >= 0.15) |
+    (cleanorder %in% c(2460:2500) & vwc >= 0.135) |
+    (cleanorder %in% c(2490:2600) & vwc >= 0.125) |
+    (cleanorder %in% c(2550:3500, 4100:4200) & vwc >= 0.1) |
+    (cleanorder %in% c(2930:3100) & vwc >= 0.085) | 
+    (cleanorder %in% c(3100:3500) & vwc >= 0.075) | 
+    (cleanorder %in% c(3820:3830) & vwc < 0.13)
+)))
 # grab dip in both block 2 lines also
 b2l2_5drop <- with(smdat_qa_all_goodtrts, which(portid == c("B2L2_5") & is.na(flag_note) & (cleanorder %in% c(3820:3828) & vwc < 0.13)))
-b2l2_4order <- 2750:4250
+b2l2_4order <- 2500:4000
 ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_4" & cleanorder %in% b2l2_4order), aes(cleanorder, vwc)) +
-  geom_vline(aes(xintercept = 4100), lty = 2) +
+  geom_vline(aes(xintercept = 2900), lty = 2) +
+  geom_vline(aes(xintercept = 3100), lty = 2) +
   geom_line(aes(cleanorder, raw_vwc), col = "orchid") +
-  geom_line() +
+  geom_line(alpha = 0.5) +
   # add good line
   geom_line(data = subset(smdat_qa_all_goodtrts, portid == "B2L2_5" & cleanorder %in% b2l2_4order), col = "blue", alpha = 0.6) +
-  geom_point(data = smdat_qa_all_goodtrts[b2l2_4_removal,], aes(col = portid)) +
-  geom_point(data = smdat_qa_all_goodtrts[b2l2_5drop,], aes(col = portid)) +
-  geom_hline(aes(yintercept = .13), lty = 2)  #correct points
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_4_removal,], aes(col = paste(portid, fulltrt))) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_5drop,], aes(col = paste(portid, fulltrt))) +
+  geom_hline(aes(yintercept = .08), lty = 2)  #correct points
 
 # b3l3_1
 b3l3_1_removal <- with(smdat_qa_all_goodtrts, which(portid == "B3L3_1" & is.na(flag_note) & cleanorder %in% 592:676 & !is.na(vwc)))
@@ -1755,7 +1774,7 @@ ggplot(subset(manualdat, portid == "B3L3_1" & cleanorder %in% 500:1000), aes(cle
 # b1l2_3
 b1l2_3_removal <- with(smdat_qa_all_goodtrts, which(portid == "B1L2_3" & is.na(flag_note) & !is.na(vwc) & 
                                                       ((waterYear == 2020  & flag_extreme) | (cleanorder > 12300 & vwc > 0.043))
-                                                    ))
+))
 b1l2_3order <- 12000:15000
 ggplot(subset(manualdat, portid == "B1L2_3" & cleanorder %in% b1l2_3order), aes(cleanorder, vwc, group = portid)) +
   #scale_x_continuous(breaks = seq(1000,12000,1000)) +
@@ -1765,6 +1784,11 @@ ggplot(subset(manualdat, portid == "B1L2_3" & cleanorder %in% b1l2_3order), aes(
   geom_point() +
   geom_line(dat = subset(smdat_qa_all_goodtrts, logger == "B3L3" & ppt_trt == "W" & cleanorder %in% b1l2_3order), col = "blue", alpha = 0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b1l2_3_removal[-c(1:2)],], aes(col = portid)) # good
+
+# add NW to remove
+manual_remove <- c(manual_remove, b2l2_4_removal, b2l2_5drop, b3l3_1_removal, b1l2_3_removal)
+
+
 
 # 5. NXC manual -----
 # need to remove spike in drydown for block 1 adjuted data (B1L2_5)
@@ -1781,6 +1805,9 @@ ggplot(subset(manualdat, portid == "B1L2_5" & cleanorder %in% b1l2_5order), aes(
   geom_line(dat = subset(smdat_qa_all_goodtrts, portid == "B1L2_4" & cleanorder %in% b1l2_5order), col = "blue", alpha = 0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b1l2_5_removal[-c(1:2)],], aes(col = portid)) # good
 
+# add NXC to remove
+manual_remove <- c(manual_remove, b1l2_5_removal)
+
 
 # 6. FXC manual -----
 # block 1 spike (b1l3_4)
@@ -1793,6 +1820,9 @@ ggplot(subset(manualdat, portid == "B1L3_4" & cleanorder %in% b1l3_4order), aes(
   geom_line(dat = subset(smdat_qa_all_goodtrts, portid == "B1L2_4" & cleanorder %in% b1l3_4order), col = "blue", alpha = 0.5) +
   geom_point(data = smdat_qa_all_goodtrts[b1l3_4_removal[-c(1:2)],], aes(col = portid)) # good
 
+# add FXC to remove
+manual_remove <- c(manual_remove, b1l3_4_removal)
+
 
 # 7. combine all manual -----
 # points removed purely due to manual review (not flagged, but in cluster of flagged points)
@@ -1804,6 +1834,9 @@ unreliable_data <- c(b2l4_1_removal, b2l4_3_removal, #CXC
                      b1l3_4_removal #XC
 )
 
+# check
+summary(unreliable_data %in% manual_remove)
+
 # does this seem right?
 ggplot(manualdat, aes(cleanorder, vwc)) +
   geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
@@ -1811,6 +1844,13 @@ ggplot(manualdat, aes(cleanorder, vwc)) +
   geom_line(alpha = 0.5) +
   geom_point(data = smdat_qa_all_goodtrts[unreliable_data,], col = "red", alpha = 0.5) +
   facet_wrap(~paste(fulltrt, portid)) # looks fine -- only removed 1 point for b2l2_5
+# check b2l2_4
+ggplot(subset(manualdat,portid == "B2L2_4"), aes(cleanorder, vwc)) +
+  geom_ribbon(aes(xmin = season_start_order, xmax = season_end_order, group = waterYear), fill = "lightblue", alpha = 0.25) +
+  geom_ribbon(aes(xmin = drystart_order, xmax = dryend_order, group = waterYear), fill = "chocolate1", alpha = 0.25) +
+  geom_line(alpha = 0.5) +
+  geom_point(data = smdat_qa_all_goodtrts[b2l2_4_removal,], col = "red", alpha = 0.5) +
+  facet_wrap(~paste(fulltrt, portid))
 
 # see if they have any flags
 View(smdat_qa_all_goodtrts[unreliable_data,]) # yes
@@ -1920,10 +1960,10 @@ plot_grid(
     theme(legend.position = "none") +
     scale_x_continuous(breaks = seq(0,12000,1000)),
   ggplot(subset(smdat_qa_all_goodtrts, portid %in% c("B2L2_2", "B3L1_5", "B1L2_1")), aes(cleanorder, raw_vwc, group = portid)) +
-  geom_line(col = "orchid") +
-  geom_line(aes(cleanorder, vwc)) +
-  scale_x_continuous(breaks = seq(0,12000,2000))+
-  facet_wrap(~paste(portid, fulltrt), nrow = 3),
+    geom_line(col = "orchid") +
+    geom_line(aes(cleanorder, vwc)) +
+    scale_x_continuous(breaks = seq(0,12000,2000))+
+    facet_wrap(~paste(portid, fulltrt), nrow = 3),
   ggplot(subset(cimis_ppt2hr, cleanorder >= 0), aes(cleanorder, ppt_mm, col = waterYear, group = waterYear)) +
     geom_line() +
     #scale_color_viridis_c() +
@@ -1932,6 +1972,7 @@ plot_grid(
   rel_heights = c(0.5, 1, 0.5),
   nrow = 3, align= "vh"
 )
+
 
 ggplot(subset(smdat_qa_all_goodtrts, portid == "B2L2_2" & cleanorder %in% 20:30), aes(cleanorder, raw_vwc, group = portid)) +
   geom_line(col = "orchid") +
@@ -1949,9 +1990,11 @@ ggplot(subset(smdat_qa_all_goodtrts, portid == "B1L2_1" & cleanorder %in% 3700:4
   geom_line(col = "orchid") +
   geom_text(data = subset(smdat_qa_all_goodtrts, portid == "B1L2_1" & cleanorder %in% 3700:4470 & !is.na(flag_note)), aes(label = cleanorder), col = "orchid") +
   geom_line(aes(cleanorder, vwc)) #3760, 4367, 4368
+
+# compile data values to add back
 addback <- with(smdat_qa_all_goodtrts, which((portid == "B2L2_2" & cleanorder %in% 20:30 & !is.na(flag_note)) |
-                                             (portid == "B3L1_5" & cleanorder %in% 6525:6550 & !is.na(flag_note)) |
-                                             (portid == "B1L2_1" & cleanorder %in% 3700:4470 & !is.na(flag_note))
+                                               (portid == "B3L1_5" & cleanorder %in% 6525:6550 & !is.na(flag_note)) |
+                                               (portid == "B1L2_1" & cleanorder %in% 3700:4470 & !is.na(flag_note))
 )) 
 # review
 ggplot(subset(smdat_qa_all_goodtrts, portid %in% c("B2L2_2", "B3L1_5", "B1L2_1")), aes(cleanorder, raw_vwc, group = portid)) +
@@ -1970,22 +2013,64 @@ smdat_qa_all_goodtrts$vwc[addback] <- smdat_qa_all_goodtrts$raw_vwc[addback]
 for(i in 1:nrow(trts2correct_new)){
   oldrow <- which(trts2correct_raw$portid == trts2correct_new$portid[i])
   trts2correct_new$logger_note[i] <- paste("treatment for portID", trts2correct_new$portid[i],"corrected from block",trts2correct_raw$block[oldrow], "plot", 
-        trts2correct_raw$plot[oldrow], trts2correct_raw$fulltrt[oldrow], trts2correct_raw$comp_trt[oldrow], "composition to block",
-        trts2correct_new$block[i], "plot",trts2correct_new$plot[i], trts2correct_new$fulltrt[i], trts2correct_new$comp_trt[i], 
-        "composition after soil moisture review")
+                                           trts2correct_raw$plot[oldrow], trts2correct_raw$fulltrt[oldrow], trts2correct_raw$comp_trt[oldrow], "composition to block",
+                                           trts2correct_new$block[i], "plot",trts2correct_new$plot[i], trts2correct_new$fulltrt[i], trts2correct_new$comp_trt[i], 
+                                           "composition after soil moisture review")
 }
+
 # > keep as its own column instead of combining with qa_note
+# make write-out soil moisture dataset
 smdat_qa_out <- left_join(smdat_qa_all_goodtrts, trts2correct_new[c("portid", "corrected", "logger_note")]) %>%
   # clean up for writing out
-  subset(select= c(logger:raw_datetime, raw_vwc, sourcefile, qa_note, logger_note, flag_note)) %>%
+  subset(select= c(logger:raw_datetime, raw_vwc, sourcefile, qa_note, adjust_note, logger_note, flag_note)) %>%
   arrange(portid, cleanorder)
+# all there?
+summary(smdat_qa_out)
+summary(is.na(smdat_qa_out))
+with(smdat_qa_out, sapply(split(cleanorder, portid), length)) # all there (loggers with fewer obs did not download most recent time)
+# of vwc that is NA and not NA in raw, does everything have a note?
+with(subset(smdat_qa_out, is.na(vwc) & !is.na(raw_vwc)), summary(is.na(flag_note))) # all annotated
 
 # last check all looks good
 ggplot(smdat_qa_out, aes(clean_datetime, vwc, col = factor(block), group = portid, lty = comp_trt)) +
-  geom_point(data = subset(smdat_qa_out, grepl("removed", flag_note)), aes(clean_datetime, raw_vwc), pch = 1, alpha = 0.5) +
+  #geom_point(data = subset(smdat_qa_out, grepl("removed", flag_note)), aes(clean_datetime, raw_vwc), pch = 1, alpha = 0.5) +
   geom_line(alpha = 0.5) +
   facet_grid(nut_trt ~ ppt_trt) # okay
+summary(smdat_qa_out)
+# look at NW
+ggplot(subset(smdat_qa_out, fulltrt == "NW"), aes(clean_datetime, vwc, col = factor(block), group = portid, lty = comp_trt)) +
+  #geom_point(data = subset(smdat_qa_out, grepl("removed", flag_note)), aes(clean_datetime, raw_vwc), pch = 1, alpha = 0.5) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(~ portid)
+# look at B2L2_4 and _5
+ggplot(subset(smdat_qa_out, portid %in%  c("B2L2_4", "B2L2_5")), aes(clean_datetime, vwc, col = factor(portid), group = portid, lty = comp_trt)) +
+  geom_point(data = subset(smdat_qa_out, grepl("removed", flag_note) & portid %in%  c("B2L2_4", "B2L2_5")), aes(clean_datetime, raw_vwc), pch = 1, alpha = 0.5) +
+  geom_line(alpha = 1)
 
+# make on more QA fig to show examples of W, D, and XC vs. ppt to ask about 2nd and 3rd yr shifts
+plot_grid(
+  ggplot(subset(cimis_ppt2hr, cleanorder >= 0), aes(cleanorder, wY_accumulated_ppt, col = waterYear, group = waterYear)) +
+    geom_line(lwd = 2) +
+    #scale_color_viridis_c() +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = seq(0,12000,1000)),
+  ggplot(subset(smdat_qa_all_goodtrts, portid %in% c("B2L3_3", "B2L5_1", "B2L3_4")), aes(cleanorder, raw_vwc, group = portid)) +
+    #geom_line(col = "orchid") +
+    geom_line(aes(cleanorder, vwc)) +
+    scale_x_continuous(breaks = seq(0,12000,2000))+
+    facet_wrap(~paste(portid, fulltrt), nrow = 3),
+  ggplot(subset(cimis_ppt2hr, cleanorder >= 0), aes(cleanorder, ppt_mm, col = waterYear, group = waterYear)) +
+    geom_line() +
+    #scale_color_viridis_c() +
+    theme(legend.position = "none") +
+    scale_x_continuous(breaks = seq(0,12000,1000)),
+  rel_heights = c(0.5, 1, 0.5),
+  nrow = 3, align= "vh"
+)
+
+# write fig out to ask about water saturation (e.g. drops in soil moisture in some sensors by not all by yr 3)
+ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Figures/Compost_vwc_ppt_accumulated_examples.pdf"),
+       width = 5, height = 4.5, units = "in", scale = 1.5)
 
 
 # -- FINISHING -----
