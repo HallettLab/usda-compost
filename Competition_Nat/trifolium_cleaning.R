@@ -82,25 +82,25 @@ trif<- trif %>%
                                           if_else(background=="Control","control",role))) 
 
 #summarize by summing the total seeds, mass, stems for each phytometer
-trif <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role ) %>% 
+trif_clean <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role ) %>% 
   summarize(tot_seeds=sum(as.numeric(seeds), na.rm = TRUE), tot_seed_mass=sum(as.numeric(seed_mass),na.rm = TRUE), 
             tot_stems=max(as.numeric(spr2020_stems), na.rm = TRUE), #change this to tot_stems from spr2020_stems?
             tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), tot_mass=tot_seed_mass + tot_stem_mass)
 
 #check for missing data
 check<-trtkey%>% filter(phyto=="TRHI")
-trif<-left_join(check,trif) 
+trif_clean<-left_join(check,trif_clean) 
 #note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
 #TRHI phytometer/invader data missing for plots 21-32
 
 
 #for Nat to do preliminary analyses (temporary file until we update data and later combine with full competition dataset)
-write.csv(trif, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
+write.csv(trif_clean, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
 
 #standardize data to seeds/stem
 #NOTE: decide what to do with NAs 
-trif_sum<-trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
-  summarize(output=tot_seeds/tot_stems)
+trif_sum<-trif_clean %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
+  summarize(output=tot_seeds/tot_stems) #need to check NaNs for when there are 0 stems
 
 
 #VISUALIZE ----
