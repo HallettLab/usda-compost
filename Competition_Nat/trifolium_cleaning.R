@@ -16,14 +16,14 @@ rm(list = ls()) # clean enviroment
 # libraries needed
 library(tidyverse)
 # change default settings
-na_vals <- c("", " ", NA, "NA")
-options(stringsAsFactors = F)
-theme_set(theme_bw())
+na_vals <- c("", " ", NA, "NA") #tells it what to call NA
+options(stringsAsFactors = F) #setting for strings of characters 'abc'
+theme_set(theme_bw()) #for plotting graphs later
 
 # specify dropbox pathway (varies by user -- EAS can tweak this for CA or NK use)
 if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
   ## CTW pathway
-  datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
+ datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
 }else{
   ## LMH and EAS
   datpath <- "~/Dropbox/USDA-compost/Data/Competition/"
@@ -37,7 +37,6 @@ datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT
 datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
 
 
-
 # read in raw trifolium data
 trif<- read.csv(paste0(datpath, "Competition_EnteredData/trifolium_seeds_competition_summer2021.csv"), na.strings = na_vals, strip.white = T)
 # read in treatment key
@@ -47,7 +46,7 @@ clip_phyto<- read.csv(paste0(datpath, "Competition_EnteredData/competition_sprin
 clip_back<- read.csv(paste0(datpath, "Competition_EnteredData/competition_spring2020_background_clipped.csv"), na.strings = na_vals, strip.white = T)
 
 #quick check
-glimpse(trif)
+glimpse(trif) #check if anything looks weird, check which data are numeric vs characters
 
 #### PREP Trifolium data---
 trif$phytonum <- as.numeric(trif$phytonum) #convert phytonum to numeric from character
