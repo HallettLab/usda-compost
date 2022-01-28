@@ -36,12 +36,14 @@ datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.
 trif<- read.csv(paste0(datpath, "Competition_EnteredData/trifolium_seeds_competition_summer2021.csv"), na.strings = na_vals, strip.white = T)
 # read in treatment key
 trtkey <- read.csv(paste0(datpath, "comp_trt_key.csv"), na.strings = na_vals, strip.white = T)
+#read in field clip data to check total stems
+clip_phyto<- read.csv(paste0(datpath, "Competition_EnteredData/competition_spring2020_phytometers_clipped.csv"), na.strings = na_vals, strip.white = T)
+clip_back<- read.csv(paste0(datpath, "Competition_EnteredData/competition_spring2020_background_clipped.csv"), na.strings = na_vals, strip.white = T)
 
 #quick check
 glimpse(trif)
 
 #### PREP Trifolium data---
-#join trifolium data to trtkey
 trif$phytonum <- as.numeric(trif$phytonum) #convert phytonum to numeric from character
 
 #check range of values for plot (1-36), subplot (1-7), and phytonum (1-6)
@@ -53,33 +55,48 @@ trif$phytonum #NAs present for competitors (when TRHI is background, will fix/re
 #remove notes and phytonum columns (with NA errors)
 trif <- trif %>% select(-survey_date, -survey_init, -notes, -X, -X.1, -X.2, -phytonum) 
 
-trif <- left_join(trif,trtkey, by=c("plot","subplot","phyto"))
+#bring in data recorded for how many stems were clipped in the field
+clip_phyto<- clip_phyto %>% rename(background = comp., subplot=sub.plot) %>% 
+  filter(phyto=="TRHI") %>% select(-page,-jan2020_stems,-jan2020_notes,-spr2020_notes,-clip_init,-date_clip)
+
+clip_back<- clip_back %>% rename(background = competitor, spr2020_stems = count_clipped) %>% 
+  filter(background=="TRHI") %>% select(-page,-clip_init,-clip_date, -order, -notes)
+
+clip_check<-bind_rows(clip_phyto,clip_back)
+clip_check <- clip_check %>% select(-phyto_num,-phyto) 
+clip_check<-left_join(clip_check,trtkey)
+
+trif <- left_join(trif, clip_check) #compare tot_stems data with spr2020_stems data
+#use spr2020_stems data for future analyses?  this is what was recorded as clipped in the field
 
 trif<- trif %>%
   #sort by plot - check again if all are present (1-36, no 33)
   arrange(plot) %>%
   #specify if competitor or invader
-  mutate(role = "invader", role = if_else(background =="TRHI", "competitor", role)) 
+  mutate(role = "invader", role = if_else(background =="TRHI", "competitor", 
+                                          if_else(background=="Control","control",role))) 
 
 #summarize by summing the total seeds, mass, stems for each phytometer
 trif <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role ) %>% 
   summarize(tot_seeds=sum(as.numeric(seeds), na.rm = TRUE), tot_seed_mass=sum(as.numeric(seed_mass),na.rm = TRUE), 
-            tot_stems=sum(as.numeric(tot_stems), na.rm = TRUE), tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), 
-            tot_mass=tot_seed_mass + tot_stem_mass, tot_stems=sum(as.numeric(tot_stems),na.rm = TRUE))
+            tot_stems=max(as.numeric(spr2020_stems), na.rm = TRUE), #change this to tot_stems from spr2020_stems?
+            tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), tot_mass=tot_seed_mass + tot_stem_mass)
 
 #check for missing data
 check<-trtkey%>% filter(phyto=="TRHI")
-check<-left_join(check,trif) 
+trif<-left_join(check,trif) 
 #note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
 #TRHI phytometer/invader data missing for plots 21-32
+
 
 #for Nat to do preliminary analyses (temporary file until we update data and later combine with full competition dataset)
 write.csv(trif, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
 
 #standardize data to seeds/stem
+#NOTE: decide what to do with NAs 
 trif_sum<-trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
   summarize(output=tot_seeds/tot_stems)
-trif_sum[trif_sum == "Inf"] <- 0
+
 
 #VISUALIZE ----
 # specify plotting cols
