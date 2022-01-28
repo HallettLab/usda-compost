@@ -4,8 +4,8 @@
 # 1/27/22: quick code so NK and CA can begin preliminary data analysis 
 # EAS will clean up and expand code later to integrate with the remaining species' competition data 
 ## MAJOR TO-DO: check and enter TRHI data from the datasheets for the backgrounds and other species phytos  
-#note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
-#TRHI phytometer/invader data missing for plots 21-32
+#From background datasheet: TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
+#From main competition datasheets: TRHI phytometer/invader data missing for plots 21-32
 
 # Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
 # "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
@@ -20,7 +20,7 @@ na_vals <- c("", " ", NA, "NA")
 options(stringsAsFactors = F)
 theme_set(theme_bw())
 
-# specify dropbox pathway (varies by user -- EAS can tweak this for NK use)
+# specify dropbox pathway (varies by user -- EAS can tweak this for CA or NK use)
 if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
   ## CTW pathway
   datpath <- "~/DropboxCU/Dropbox/USDA-compost/Data/Competition/"
@@ -29,8 +29,14 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
   datpath <- "~/Dropbox/USDA-compost/Data/Competition/"
 }
 
+# -- DATA IMPORT (NAT) ----
+#1. set data pathway 
+datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT 
+
 # list files in entered data folder
 datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
+
+
 
 # read in raw trifolium data
 trif<- read.csv(paste0(datpath, "Competition_EnteredData/trifolium_seeds_competition_summer2021.csv"), na.strings = na_vals, strip.white = T)
