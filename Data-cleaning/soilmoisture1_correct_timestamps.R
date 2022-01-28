@@ -63,7 +63,7 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/")){
 
 # read in datasets
 ## compiled raw soil moisture data
-soilmoisture_all <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_raw.csv"), na.strings = na_vals, strip.white = T)
+soilmoisture_all <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled0_raw.csv"), na.strings = na_vals, strip.white = T)
 ## table noting what's off overall
 adjustdates_all <- read.csv(paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_raw_timestampbreaks.csv"), na.strings = na_vals, strip.white = T)
 
@@ -753,7 +753,7 @@ b2l2early_test <- subset(datecheck_p1, logger == "B2L2" & intevent %in% unique(w
   rename(raw_datetime = date_time) %>%
   left_join(subset(soilmoisture_clean_p1, grepl("B2L2", portid), c(date_time, portid, cleanorder)), by = c("cleanorder", "portid"))
 
-# correct B3L4 in soilmoisture_clean_p1
+# correct B2L2 in soilmoisture_clean_p1
 clean_b2l2_early <- subset(soilmoisture_clean_p1, grepl("B2L2", portid)) %>%
   select(date_time:cleanorder, filename) %>%
   left_join(select(b2l2early_test, portid, cleanorder, vwc, raw_datetime, timeinterval, timediff, intevent, qa_note), by = c("portid", "cleanorder")) %>%
@@ -958,19 +958,27 @@ ggplot(subset(searchdata_b2l2.5, intevent %in% 5:6), aes(cleanorder, vwc)) +
 ## 2.e.6 Compile all B2L2 ports -----
 masterb2l2_clean <- rbind(searchdata_b2l2.1, searchdata_b2l2.2) %>%
   rbind(rbind(searchdata_b2l2.3, searchdata_b2l2.4)) %>% 
-  rbind(searchdata_b2l2.5)
+  rbind(searchdata_b2l2.5) %>%
+  arrange(portid, cleanorder)
 unique(masterb2l2_clean$portid)
+# check all expected date-times present
+with(masterb2l2_clean, sapply(split(cleanorder, portid), range))
+with(masterb2l2_clean, sapply(split(cleanorder, portid), length))
+with(masterb2l2_clean, sapply(split(cleanorder, portid), function(x) summary(2:6836 %in% x))) # missing some timestamps
 # attach all possible timestamps
-masterb2l2_clean2 <- subset(soilmoisture_clean_p1, grepl("B2L2", portid), c(date_time, cleanorder, portid)) %>%
+masterb2l2_clean <- subset(soilmoisture_clean_p1, grepl("B2L2", portid), c(date_time, cleanorder, portid)) %>%
   left_join(masterb2l2_clean)
-
-
+# all timestamps present?
+with(masterb2l2_clean, sapply(split(cleanorder, portid), range))
+with(masterb2l2_clean, sapply(split(cleanorder, portid), length))
+with(masterb2l2_clean, sapply(split(cleanorder, portid), function(x) summary(2:6836 %in% x))) 
 # plot everything
-ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = paste(portid, intevent), col = as.factor(port))) +
+ggplot(masterb2l2_clean, aes(cleanorder, vwc, group = portid, col = as.factor(port))) + #paste(portid, intevent)
   geom_line() +
+  geom_line(data = clean_b2l2_early, aes(cleanorder, vwc, col = as.factor(port)), lwd = 2, lty = 2, alpha = 0.5) +
   ggtitle("Timestamp-corrected B2L2 soil moisture data") +
   facet_grid(gsub("[0-9]", "", fulltrt)~., scales = "free_y")
-
+# NAs present for port treatment info when no vwc recorded at that timestamp, will correct when compile all
 
 
 # -- 3. Compile period 1 clean data ------
@@ -1005,6 +1013,11 @@ soilmoisture_master_p1 <- select(soilmoisture_clean_p1, date_time:cleanorder, fi
   rbind(rename(masterb2l2_clean, clean_datetime = date_time)[names(.)]) %>%
   rename(raw_datorder = datorder) %>%
   mutate(qa_note2 = NA)
+# check all ports have same # cleanorder
+with(soilmoisture_master_p1, sapply(split(cleanorder, portid), length)) # yes
+#to be sure, there should only be 1 length
+unique(with(soilmoisture_master_p1, sapply(split(cleanorder, portid), length))) #yes
+summary(soilmoisture_master_p1) # looks okay
 
 # infill qa_notes
 for(i in unique(adjustdates_p1$portid)){
@@ -1117,13 +1130,13 @@ logger_plot_clean_p1 <- soilmoisture_master_p1 %>%
   facet_grid(logger~waterYear, scales = "free_x")
 logger_plot_clean_p1
 
-trt_plot_clean_p2 <- soilmoisture_master_p1 %>%
+trt_plot_clean_p1 <- soilmoisture_master_p1 %>%
   ggplot(aes(dowy, vwc, group = portid, col = as.factor(block))) +
   geom_line(alpha = 0.5) +
   ggtitle(paste0("Compost prelim plot (", Sys.Date(),") : cleaned soil moisture (VWC),\nby water year, nutrient x drought treatment, colored by block")) +
   scale_color_discrete(name = "block") +
   facet_grid(fulltrt~waterYear, scales = "free_x")
-trt_plot_clean_p2
+trt_plot_clean_p1
 
 
 
@@ -1133,7 +1146,7 @@ rm(searchdata_b2l2.1, searchdata_b2l2.2, searchdata_b2l2.3, searchdata_b2l2.4, s
    tempadjust, checkNA, b2l2trt, clean_maxtime_p1, clean_mintime_p1, end_raworder, event, firstdat, firstrow,
    firstWY, i, lastdat, lastrow, lastWY, notelast, r, start_raworder, startorder_b2l4, startorder3_b2l4,
    t, tempbreaks, tempdiff, tempend, tempnote, tempstart, b2l2dates, b2l2early_test, clean_b2l2_early, clean_b2l4,
-   clean_b3l4, masterb2l2_clean, masterb2l2_clean2, refdata_b2l2, refdata_b2l4_p1, refdata_b2l4_p2, temphr,
+   clean_b3l4, masterb2l2_clean, refdata_b2l2, refdata_b2l4_p1, refdata_b2l4_p2, temphr,
    b2l2dates_1, b2l2dates_2, b2l2dates_3, b2l2dates_4, b2l2dates_5)
 
 
@@ -2853,7 +2866,11 @@ soilmoisture_master_out <- left_join(soilmoisture_master_all, all_datetime) %>%
 
 # screen for NAs
 summary(soilmoisture_master_out)
+summary(is.na(soilmoisture_master_out)) # ok
 summary(is.na(soilmoisture_master_out)) # looks good. no NAs present in columns where there shouldn't be NAs
+# check all cleanorders present for all portids
+with(soilmoisture_master_out, sapply(split(cleanorder, portid), length))
+unique(with(soilmoisture_master_out, sapply(split(cleanorder, portid), length))) # ok. loggers that didn't download last time will only have data through period 1
 
 # final pass on date-checking file source
 downloadfiles_df <- distinct(subset(soilmoisture_master_out, select = c(logger, portid, port, sourcefile, clean_datetime, qa_note))) %>%
@@ -2903,4 +2920,4 @@ ggsave(filename = paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/PrelimQA_Fig
        width = 8, height = 8, unit = "in")
 
 # write out dataset
-write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled_time-corrected.csv"), row.names = F)
+write.csv(soilmoisture_master_out, paste0(datpath, "SoilMoisture/SoilMoisture_DataQA/SoilMoisture_compiled1_time-corrected.csv"), row.names = F)
