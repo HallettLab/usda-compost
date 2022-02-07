@@ -1,4 +1,5 @@
 ## Initial data exploration - trifolium
+# making changes!
 
 ## read in data -> this part will need to be different depending on where you store your data.
 dat <- read.csv("competition_trifolium_seeds_2021.csv")
