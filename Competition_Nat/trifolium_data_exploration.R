@@ -1,8 +1,13 @@
 ## Initial data exploration - trifolium
-# making changes!
+# -- DATA IMPORT (NAT) ----
+#1. set data pathway 
+datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT 
 
-## read in data -> this part will need to be different depending on where you store your data.
-dat <- read.csv("competition_trifolium_seeds_2021.csv")
+# list files in entered data folder
+datfiles <- dats <- list.files(paste0(datpath, "Competition_CleanedData"), full.names = T)
+
+# read in raw trifolium data
+dat<- read.csv(paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"), strip.white = T)
 
 ## load packages
 library(tidyverse)
