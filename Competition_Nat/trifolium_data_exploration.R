@@ -122,5 +122,33 @@ ggplot(dat, aes(x=background, y=tot_mass)) +
   facet_wrap(~nut_trt)
 
 ## Nat Exploration D
-## how do I compare seeds_per_stem to total mass? 
+## how do I compare seeds_per_stem to total mass? comparison of control vs. intraspecific (Trif)
+## per precip.treatment
+## per nutrient.treatment
+
+### x-axis (1) Trif  vs. Control, (2) treatment (precip or nutrient), y-axis 0-2, legend for seed_per_stem (blue) and total mass (red) 
+(stacked bar chart)
+
+#example code: https://stackoverflow.com/questions/53454787/comparing-multiple-categorical-variables-in-r
+
+##tried to figure it out, but having trouble...the two lines of code below I couldn't comprehend, I kind of understood the chunk below but also got stuck
+
+breaks = sort(c(unique(dat$x), seq(min(dat$x) + .5, max(dat$x) + .5, length(unique(dat$action)))))
+labels = unlist(lapply(unique(dat$race), function(i) c("civil", paste0("\n", i), "state")))
+
+sps_tm <- dat(table(???))
+names(sps_tm) <- c("TRHI", "Control")
+
+ggplot(dat=sps_tm, aes(x = x, y = n, fill = factor(claim))) +
+  geom_col(show.legend = T) + 
+  ggthemes::theme_few() +
+  scale_fill_manual(name = NULL,
+                    values = c("gray75", "gray25"),
+                    breaks= c("0", "1"),
+                    labels = c("Seeds Per Stem", "Total Mass")
+  ) +
+  scale_x_continuous(breaks = breaks, labels = labels) +
+  theme(axis.title.x = element_blank(), axis.ticks.x = element_blank()) +
+  labs(title = "Effect of Precip on Trifolium hirtum", y = "Count")
+
 
