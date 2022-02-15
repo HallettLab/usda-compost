@@ -152,3 +152,28 @@ ggplot(dat=sps_tm, aes(x = x, y = n, fill = factor(claim))) +
   labs(title = "Effect of Precip on Trifolium hirtum", y = "Count")
 
 
+## Nat Exploration E
+#use data simulation to compare the data I collected to simulated data 
+#instead, compare to other NutNet sites?
+
+##Step 1: simulate seeds and stems of TRIF based on treatment (only Control, no background)
+##Step 2: simulate seeds and stems of TRIF based on treatment (in addition to background) 
+
+
+tot_seed_mean <- mean(dat$tot_seeds,na.rm=TRUE)
+tot_seed_sd <- sd(dat$tot_seeds,na.rm=TRUE)
+
+tot_stem_mean <- mean(dat$tot_stems,na.rm=TRUE)
+tot_stem_sd <- sd(dat$tot_stems,na.rm=TRUE)
+
+Seeds <- rnorm(252, tot_seed_mean, tot_seed_sd)
+Stems <- rnorm(252, tot_stem_mean, tot_stem_mean)
+
+#I lost the reference source for this part...
+simulated_dat <- data.frame(
+  sub_condition = rep( c("Seeds", "Stems"), c(A_sub_n, B_sub_n) ),
+  score = c(Seeds, Stems)
+)
+
+
+
