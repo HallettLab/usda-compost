@@ -39,10 +39,11 @@ ggplot(dat, aes(x=background, y=seeds_per_stem)) +
 ppt <- aov(seeds_per_stem~ppt_trt, data = dat)
 tests <- summary(ppt)
 str(tests)
+tests # Pr(>F) = p-value 
 
 ## Tukey's Honest significant difference test; I like to use this when I have a lot of categories
 ## you can see the differences between each pair of categories
-TukeyHSD(ppt)
+TukeyHSD(ppt) # p adj is p-values 
 
 
 ## A few potential next steps (and some pseudo-code just for an example): 
@@ -83,11 +84,12 @@ ggplot(dat, aes(x=background, y=seeds_per_stem)) +
   geom_boxplot() +
   facet_wrap(~nut_trt)
 
-nut_trt <- aov(seeds_per_stem~ppt_trt, data = dat)
+nut_trt <- aov(seeds_per_stem~nut_trt, data = dat)
 summary(nut_trt)
-summary(nut_trt)[[1]][["Pr(>F)"]][1] #It's the same p-value as ppt? 
-tests <- summary(nut_trt) #Alternative way to see p-value...it's still the same  
-str(tests)
+summary(nut_trt)[[1]][["Pr(>F)"]][1] 
+tests <- summary(nut_trt) 
+tests #easiest way to see p-value
+
 
 ## Nat Exploration B
 ## want to visualize total mass by precipitation treatment
@@ -131,25 +133,31 @@ ggplot(dat, aes(x=background, y=tot_mass)) +
 
 #example code: https://stackoverflow.com/questions/53454787/comparing-multiple-categorical-variables-in-r
 
-##tried to figure it out, but having trouble...the two lines of code below I couldn't comprehend, I kind of understood the chunk below but also got stuck
+# find if there is relationship between the variables (seed_per_stem vs. total mass); scatterplot
+ggplot(dat, aes(x=tot_mass, y=seeds_per_stem, color = ppt_trt))+
+  geom_point() +
+  facet_wrap(~background)
 
-breaks = sort(c(unique(dat$x), seq(min(dat$x) + .5, max(dat$x) + .5, length(unique(dat$action)))))
-labels = unlist(lapply(unique(dat$race), function(i) c("civil", paste0("\n", i), "state")))
+#comparison of background 
+ggplot(dat, aes(x=tot_mass, y=seeds_per_stem, color = background))+
+  geom_point()+
+  geom_smooth(method="lm")
+#this is testing whether total mass is affecting seed per stem...background nor treatment is affecting relationships
 
-sps_tm <- dat(table(???))
-names(sps_tm) <- c("TRHI", "Control")
+ggplot(dat, aes(x=tot_mass, y=seeds_per_stem, color = ppt_trt))+
+  geom_point()+ #when total mass increases, seeds per stem increase = positive correlation 
+  geom_smooth(method="lm")
+#similar relationship for all precip treatments 
 
-ggplot(dat=sps_tm, aes(x = x, y = n, fill = factor(claim))) +
-  geom_col(show.legend = T) + 
-  ggthemes::theme_few() +
-  scale_fill_manual(name = NULL,
-                    values = c("gray75", "gray25"),
-                    breaks= c("0", "1"),
-                    labels = c("Seeds Per Stem", "Total Mass")
-  ) +
-  scale_x_continuous(breaks = breaks, labels = labels) +
-  theme(axis.title.x = element_blank(), axis.ticks.x = element_blank()) +
-  labs(title = "Effect of Precip on Trifolium hirtum", y = "Count")
+ggplot(dat, aes(x=tot_mass, y=seeds_per_stem))+
+  geom_point()+ #when total mass increases, seeds per stem increase = positive correlation 
+  geom_smooth(method="lm") #shadowed area is estimate of error
+
+# linear model for significance? 
+seeds_totmass <- lm(seeds_per_stem~tot_mass, data =dat)
+summary(seeds_totmass) 
+
+# more helpful to used stacked bar chart to compare seed mass and stem mass as a percent of total mass
 
 
 ## Nat Exploration E
@@ -163,8 +171,8 @@ ggplot(dat=sps_tm, aes(x = x, y = n, fill = factor(claim))) +
 tot_seed_mean <- mean(dat$tot_seeds,na.rm=TRUE)
 tot_seed_sd <- sd(dat$tot_seeds,na.rm=TRUE)
 
-tot_stem_mean <- mean(dat$tot_stems,na.rm=TRUE)
-tot_stem_sd <- sd(dat$tot_stems,na.rm=TRUE)
+tot_stem_mean <- mean(dat$tot_stems,na.rm=TRUE) #issues with -Inf in raw data?
+tot_stem_sd <- sd(dat$tot_stems,na.rm=TRUE) #could probably set to 1 because we had min of 1 max of 3
 
 Seeds <- rnorm(252, tot_seed_mean, tot_seed_sd)
 Stems <- rnorm(252, tot_stem_mean, tot_stem_mean)
@@ -175,5 +183,8 @@ simulated_dat <- data.frame(
   score = c(Seeds, Stems)
 )
 
+simulated_dat <- simulated_dat %>%
+  mutate(Seeds_Per_Stem = Seeds/Stems)
 
+#then compare seeds per stem of dat and simulated_dat using scatterplot? 
 
