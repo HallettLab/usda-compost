@@ -44,6 +44,9 @@ trtkey <- read.csv(paste0(datpath, "comp_trt_key.csv"), na.strings = na_vals, st
 #read in field clip data to check total stems
 clip_phyto<- read.csv(paste0(datpath, "Competition_EnteredData/competition_spring2020_phytometers_clipped.csv"), na.strings = na_vals, strip.white = T)
 clip_back<- read.csv(paste0(datpath, "Competition_EnteredData/competition_spring2020_background_clipped.csv"), na.strings = na_vals, strip.white = T)
+#read in background density
+dens<- read.csv(paste0(datpath, "Competition_CleanedData/competitor_meandensity_jan2020.csv"), na.strings = na_vals, strip.white = T)
+
 
 #quick check
 glimpse(trif) #check if anything looks weird, check which data are numeric vs characters
@@ -87,20 +90,46 @@ trif_clean <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum
             tot_stems=max(as.numeric(spr2020_stems), na.rm = TRUE), #change this to tot_stems from spr2020_stems?
             tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), tot_mass=tot_seed_mass + tot_stem_mass)
 
+# -- PREP LOOKUP TABLES ----
+# make lookup table for subsample frame to scale to meter-square
+scale_lt <- data.frame(subsample_cm = c("5x5", "10x10", "25x25", "50x50"),
+                       area_cm2 = c(5*5, 10*10, 25*25, 50*50)) %>%
+  # make half plot scale for reality check with density (i.e. does stems projected for 50x50cm exceed amount seeded?)
+  mutate(scale_half = (50*50)/area_cm2,
+         # full meter scale factor
+         scale_m2 = (100*100)/area_cm2)
+
+# join seed mass data to LUT to project max density possible per species
+# > note: here is where to adjust based on whether seeds weighed out with or without awns/husks/attachments (looking at you ERBO)
+seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>% #start with Julie's seed weights
+  group_by(species) %>%
+  summarise(Seed = mean(perseedwt)) %>%
+  ungroup() %>%
+  rename("background" = "species") %>%
+  #mutate(source = "JL") %>%  # add jl for source
+  mutate(background = casefold(background, upper = T),
+         background = paste0(substr(background, 1,2), substr(background, 4,5)),
+         # scale to half meter density -- seeded at 8g per m2 (2g per half m2)
+         max_density_halfm2 = 2/Seed) 
+
 #check for missing data
 check<-trtkey%>% filter(phyto=="TRHI")
 trif_clean<-left_join(check,trif_clean) 
 #note that TRHI background/competitor data missing for plots 1-6,9,10,12,17,26,28
 #TRHI phytometer/invader data missing for plots 21-32
 
-
-#for Nat to do preliminary analyses (temporary file until we update data and later combine with full competition dataset)
-write.csv(trif_clean, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
+#add competitor/background density
+trif_clean<-merge(trif_clean,dens) 
+trif_clean<-left_join(trif_clean, seed_lt[, c("background", "max_density_halfm2")], by="background")
+trif_clean <- trif_clean %>% select(-nobs,-mean_density_1m2)
 
 #standardize data to seeds/stem
 #NOTE: decide what to do with NAs 
 trif_sum<-trif_clean %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum, phyto, background, role)%>%
   summarize(output=tot_seeds/tot_stems) #need to check NaNs for when there are 0 stems
+
+#for Nat to do preliminary analyses (temporary file until we update data and later combine with full competition dataset)
+write.csv(trif_clean, paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"))  
 
 
 #VISUALIZE ----
