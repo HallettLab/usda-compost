@@ -6,6 +6,7 @@
 ## MAJOR TO-DO: check and enter TRHI data from the datasheets for the backgrounds and other species phytos  
 #From background datasheet: #note that TRHI background/competitor data STILL missing for plot 12
 #From main competition datasheets: TRHI phytometer/invader data missing for plots 21-32
+#TO-DO: check stem density cleaning script - treatments are missing from cleaned data?
 
 # Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
 # "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
@@ -142,7 +143,7 @@ trif_clean<- trif_clean %>%
 #TRHI phytometer/invader data missing for plots 21-32
 
 #add competitor/background density
-trif_clean<-left_join(trif_clean,dens) 
+trif_clean<-left_join(trif_clean,dens) # Note density data are missing data
 trif_clean<-left_join(trif_clean, seed_lt[, c("background", "max_density_halfm2")], by="background")
 trif_clean <- trif_clean %>% select(-nobs,-mean_density_1m2)
 
