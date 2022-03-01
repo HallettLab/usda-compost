@@ -15,7 +15,7 @@ datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT
 datfiles <- dats <- list.files(paste0(datpath, "Competition_CleanedData"), full.names = T)
 
 # read in raw trifolium data
-dat<- read.csv(paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021_updated.csv"), strip.white = T)
+dat<- read.csv(paste0(datpath, "Competition_CleanedData/competition_trifolium_seeds_2021.csv"), strip.white = T)
 
 
 
@@ -32,7 +32,7 @@ dat_actual <- dat %>%
 
 ## check each background to see how many rows there are for each.
 trhi_avba <- dat_actual %>%
-  filter(background == "AVBA")
+  filter(background == "AVBA") ##changed AVBA to TACA to test NaN issues 
 ## AVBA has the most rows, so it might be best to use this for the purposes of your project. 
 ## Otherwise I think we will be struggling to fit models with not enough data
 
@@ -51,8 +51,8 @@ trhi_erbo <- dat_actual %>%
 
 ## get data ready for modeling
 trhi_avba_m <- trhi_avba %>%
-  filter(background == "AVBA") %>% ## filter for avba background
-  mutate(TRseedin = tot_stems, ## doing this by the # phytometer stems as seeds in (3 in every case, is not enough info for model)
+  filter(background == "AVBA") %>% ## filter for avba background ##I changed AVBA to TACA to see if max_density_halfm2 is the problem...I get an error I think has to do with the fact TACA has 10 rows and AVBA has 9 rows...
+  mutate(TRseedin = as.numeric(tot_stems), ## doing this by the # phytometer stems as seeds in (3 in every case, is not enough info for model)
          TRseedout = tot_seeds, ## total seeds out for phytometers
          AVseedin = max_density_halfm2, ## seeds in for avena
          AVstemdens = mean_density_halfm2) ## avena STEM density
@@ -101,6 +101,7 @@ for (i in 1:length(treatments)){
 
 
 
+#### It seems to be estimating the growth rate (lambda) for all precipitation conditions but is giving back competition coefficients (alphas) of 0 or 1. Is the model fitting well or are there other tweaks that should be made to it.
 
 
 ################################################################################
