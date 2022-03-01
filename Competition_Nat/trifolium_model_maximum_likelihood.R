@@ -5,6 +5,8 @@ library(nlstools)
 library(grid)
 library(gridExtra)
 
+#Inter Species: ERBO, LOMU, TACA
+
 ## READ IN THE DATA ##
 #set data pathway 
 datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT 
@@ -22,7 +24,7 @@ dat<- read.csv(paste0(datpath, "Competition_CleanedData/competition_trifolium_se
     ## keep only the no nutrient treatment (N) and only TRHI (Control) and LOMU (another background species for comparison)
     ## Also filter out wet treatment so we are left with drought and control treatments
 dat_ppt <- dat %>%
-  filter(nut_trt == "N", background == "Control" | background == "TRHI") %>%
+  filter(nut_trt == "C", background == "TRHI") %>%
   select(-nut_trt) ## get rid of the nutrient treatment column
 
 ## need seeds in seeds out columns
