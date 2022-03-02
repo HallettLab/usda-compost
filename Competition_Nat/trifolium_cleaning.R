@@ -6,6 +6,7 @@
 ## MAJOR TO-DO: check and enter TRHI data from the datasheets for the backgrounds and other species phytos  
 #From background datasheet: #note that TRHI background/competitor data STILL missing for plot 12
 #From main competition datasheets: TRHI phytometer/invader data missing for plots 21-32
+#TO-DO: check stem density cleaning script - treatments are missing from cleaned data?
 
 # Important note about seed weights and seeding weights from repo wiki ("2019 10_07_seeding expt setup" page):
 # "All seeds were pre-weighed to 8g/m2, which is 2g per half meter squared of raw seed weight (not including husk or awns)"
@@ -31,7 +32,7 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/")){
 
 # -- DATA IMPORT (NAT) ----
 #1. set data pathway 
-datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT 
+#datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT 
 
 # list files in entered data folder
 datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
@@ -91,6 +92,7 @@ trif <- left_join(trif, clip_check) #compare tot_stems data with spr2020_stems d
 #get any trifolium data from full competition data sheets
 comp <- comp %>% mutate(tot_seeds=as.numeric(seeds), tot_stems=as.numeric(tot_stems)) %>% 
   filter(background=="TRHI"&tot_seeds!="NA") %>% select(-seeds)
+comp$tot_stems<-3 #from clip_back all had 3 stems
 
 
 #summarize by summing the total seeds, mass, stems for each phytometer
@@ -98,6 +100,10 @@ trif_clean <- trif %>% group_by(nut_trt, ppt_trt, block, plot, subplot, phytonum
   summarize(tot_seeds=sum(as.numeric(seeds), na.rm = TRUE), tot_seed_mass=sum(as.numeric(seed_mass),na.rm = TRUE), 
             tot_stems=max(as.numeric(spr2020_stems), na.rm = TRUE), #change this to tot_stems from spr2020_stems?
             tot_stem_mass=sum(as.numeric(stem_mass),na.rm = TRUE), tot_mass=tot_seed_mass + tot_stem_mass)
+
+#check for missing data
+check<-trtkey%>% filter(phyto=="TRHI")
+trif_clean<-left_join(check,trif_clean) 
 
 #add missing trifolium background data
 trif_clean2<-left_join(trif_clean, comp[, c("plot", "subplot", "tot_seeds","tot_stems")], by=c("plot", "subplot"))
@@ -132,10 +138,6 @@ seed_lt <- subset(seed_mass, grepl("avef|erob|lolm|taec|trih", species)) %>% #st
          # scale to half meter density -- seeded at 8g per m2 (2g per half m2)
          max_density_halfm2 = 2/Seed) 
 
-#check for missing data
-check<-trtkey%>% filter(phyto=="TRHI")
-trif_clean<-left_join(check,trif_clean) 
-
 trif_clean<- trif_clean %>%
   #sort by plot - check again if all are present (1-36, no 33)
   arrange(plot) %>%
@@ -147,7 +149,7 @@ trif_clean<- trif_clean %>%
 #TRHI phytometer/invader data missing for plots 21-32
 
 #add competitor/background density
-trif_clean<-merge(trif_clean,dens) 
+trif_clean<-left_join(trif_clean,dens) # Note density data are missing data
 trif_clean<-left_join(trif_clean, seed_lt[, c("background", "max_density_halfm2")], by="background")
 trif_clean <- trif_clean %>% select(-nobs,-mean_density_1m2)
 
