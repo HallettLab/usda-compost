@@ -37,6 +37,12 @@ datpath <- "~/Desktop/USDA-compost/Data/Competition/"  ##NAT TO EDIT
 datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
 
 
+# Data import (Carmen)
+datpath <- "~/Research/Nat_Thesis/USDA-compost/Data/Competition/" 
+datfiles <- dats <- list.files(paste0(datpath, "Competition_EnteredData"), full.names = T)
+
+
+
 # read in raw trifolium data
 trif<- read.csv(paste0(datpath, "Competition_EnteredData/trifolium_seeds_competition_summer2021.csv"), na.strings = na_vals, strip.white = T)
 comp<-read.csv(paste0(datpath, "Competition_EnteredData/competition_seeds_summer2021_comp.csv"), na.strings = na_vals, strip.white = T)
