@@ -12,9 +12,9 @@ if(file.exists("~/DropboxCU/Dropbox/USDA-compost/Data/Competition/Competition_En
   datpath <- "~/Dropbox/USDA-compost/Data/Competition/Competition_EnteredData"
 }
 
-cover_master_wide <- read_csv(paste0(datpath,"Cover_CleanedData/Compost_Cover_WideClean.csv"))
+cover_master_wide <- read_csv(paste0(datpath,"Cover/Cover_CleanedData/Compost_Cover_WideClean.csv"))
 
-cover_master_long <- read_csv(paste0(datpath, "Cover_CleanedData/Compost_Cover_LongClean.csv"))
+cover_master_long <- read_csv(paste0(datpath, "Cover/Cover_CleanedData/Compost_Cover_LongClean.csv"))
 
 
 dat <- cover_master_wide %>%
@@ -130,6 +130,12 @@ ggplot(dat, aes(y = LOMU, x=ppt_trt, color = site)) + geom_point() + facet_grid(
 ggplot(dat, aes(y = LOMU, x=ppt_trt)) + geom_boxplot() + facet_grid(~site*yr)
 ggplot(dat, aes(y = LOMU, x=nut_trt)) + geom_boxplot() + facet_grid(~yr)
 
+# taca loves fertilizer
+ggplot(dat, aes(y = TACA, x=interaction(ppt_trt))) + geom_boxplot() + facet_grid(nut_trt~yr)
+ggplot(dat, aes(y = TACA, x=ppt_trt, color = site)) + geom_point() + facet_grid(~nut_trt*yr)
+ggplot(dat, aes(y = TACA, x=ppt_trt)) + geom_boxplot() + facet_grid(~site*yr)
+ggplot(dat, aes(y = TACA, x=nut_trt)) + geom_boxplot() + facet_grid(~yr)
+
 
 # avba doesn't seem to like the compost much, especially under wet conditions
 # not much at the lower sites
@@ -201,7 +207,7 @@ ggplot(dat, aes(y = VUBR, x=interaction(ppt_trt))) + geom_boxplot() + facet_grid
 
 dat_may <- cover_master_wide %>%
   tbl_df() %>%
-  filter(date=="2019-05-09"|date=="2019-05-08"|date=="2019-05-07"|date=="2020-04-28"|date=="2020-04-29"|date=="2020-04-30")%>%
+  filter(date=="2019-05-09"|date=="2019-05-08"|date=="2019-05-07"|date=="2020-04-28"|date=="2020-04-29"|date=="2020-04-30"|date=="2021-05-13")%>%
   mutate(site = "high", 
          site = ifelse(block == 1 | block == 2, "low", site)) %>%
   mutate(ppt_trt=ordered(ppt_trt, levels = c(D="D", XC="XC", W="W"))) 
@@ -212,9 +218,9 @@ dat_may<-dat_may%>%mutate(site=ordered(site, levels = c(low="low", high="high"))
   mutate(ppt_trt=ordered(ppt_trt, levels = c(D="D", XC="XC", W="W")))
   
 
-cover_ord_may <- dat_may %>% dplyr::select(17:84)
+cover_ord_may <- dat_may %>% dplyr::select(18:92)
 
-cover_ord_all <- dat %>% dplyr::select(17:84)
+cover_ord_all <- dat %>% dplyr::select(18:92)
 
 dat<-dat%>%mutate(site=ordered(site, levels = c(low="low", high="high")))%>%
   mutate(nut_trt=ordered(nut_trt, levels = c(C="C", F="F", N="N")))
@@ -241,9 +247,9 @@ legend2<-data.frame("date"=c("April19", "May19", "April20"))
 legend2<-legend2 %>%mutate(date=ordered(date, levels = c(April19="April19", May19="May19", April20="April20" )))
 
 bio.plot <- ordiplot(spp.mds,choices=c(1,2), type = "none")   #Set up the plot
-colsT1 <- rep(c("indianred4",  "dodgerblue1", "darkgoldenrod"), each = 6) #color based on amendment
+colsT1 <- rep(c("indianred4",  "dodgerblue1", "darkgoldenrod"), each = 9) #color based on amendment
 Lcols <- rep(c("indianred4",  "dodgerblue1", "darkgoldenrod"))
-shapes <- rep(c(15, 3, 17), each=2) #shapes on rainfall
+shapes <- rep(c(15, 3, 17), each=1) #shapes on rainfall
 Lshapes <- rep(c(15,3,17))
 points(spscoresall$NMDS1,spscoresall$NMDS2,col=colsT1,pch=shapes) 
 text(spp.mds, display = "species", cex=0.5, col="grey30") #label species
