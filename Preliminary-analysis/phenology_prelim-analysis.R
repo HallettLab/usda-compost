@@ -95,6 +95,48 @@ ggplot(data=pheno_gf, aes(x=date, y=meanPG, color=nut_trt))+
   theme_bw()+
   scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))
 
+#show phenology for 2019 by ppt_trt and elevation
+pheno_19<-pheno %>% filter(plot!="NA"&yr==2019)%>%
+  mutate(site = "high", 
+         site = ifelse(block == 1 | block == 2, "low", site),
+         date = as.Date(date, format = "%Y-%m-%d")) %>%
+  mutate(ppt_trt=ordered(ppt_trt, levels = c(D="D", XC="XC", W="W"))) %>%
+  group_by(date, site, ppt_trt) %>%
+  summarize(meanPG=mean(pct_green), sePG=sd(pct_green)/sqrt(length(pct_green))) %>%
+  ungroup()
+
+ggplot(data=pheno_19, aes(x=date, y=meanPG, color=ppt_trt))+
+  facet_wrap(~site)+
+  geom_point(cex=1.5)+
+  geom_errorbar(aes(ymax = meanPG+sePG, ymin = meanPG-sePG), width=.25)+
+  geom_line()+
+  labs(x="Date", y="Percent Green") +
+  theme(text = element_text(size=15))+
+  theme_bw()#+
+
+#show phenology for 2019 by nut_trt and elevation
+pheno_19<-pheno %>% filter(plot!="NA"&yr==2019)%>%
+  mutate(site = "high", 
+         site = ifelse(block == 1 | block == 2, "low", site),
+         date = as.Date(date, format = "%Y-%m-%d")) %>%
+  mutate(ppt_trt=ordered(ppt_trt, levels = c(D="D", XC="XC", W="W"))) %>%
+  group_by(date, nut_trt) %>%
+  summarize(meanPG=mean(pct_green), sePG=sd(pct_green)/sqrt(length(pct_green))) %>%
+  ungroup()
+
+ggplot(data=pheno_19, aes(x=date, y=meanPG, color=nut_trt))+
+  #facet_wrap(~site)+
+  geom_point(cex=1.5)+
+  geom_errorbar(aes(ymax = meanPG+sePG, ymin = meanPG-sePG), width=.25)+
+  geom_line()+
+  labs(x="Date", y="Percent Green") +
+  theme(text = element_text(size=15))+
+  theme_bw()+
+  scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))
+
+
+  
+
 #show phenology for 2019 by nut_trt, ppt_trt and elevation
 pheno_19<-pheno %>% filter(plot!="NA"&yr==2019)%>%
   mutate(site = "high", 
@@ -247,4 +289,20 @@ distinct(dplyr::select(pheno_jan20, plot:pct_bare, block:ppt_trt)) %>%
   scale_color_manual(name = NULL, values = c(pct_litter = "burlywood3", pct_green = "chartreuse4", pct_bare = "brown", pct_brown = "pink")) +
   theme_bw() +
   facet_grid(fxnl_grp ~ nut_trt)
+
+# plot means by nut_trt and ppt_trt
+distinct(dplyr::select(pheno_jan20, plot:pct_bare, block:ppt_trt)) %>%
+  gather(met, val, pct_litter:pct_bare) %>%
+  group_by(nut_trt, ppt_trt, met) %>%
+  summarise(meancov = mean(val),
+            secov = sd(val)/sqrt(length(val)),
+            nobs = length(val)) %>%
+  ungroup() %>%
+  ggplot(aes(ppt_trt, meancov, col = met)) +
+  geom_errorbar(aes(ymax = meancov+secov, ymin = meancov - secov), position = position_dodge(width = 0.2), width = 0.1) +
+  geom_point( position = position_dodge(width = 0.2)) +
+  labs(y = "Percent cover") +
+  scale_color_manual(name = NULL, values = c(pct_litter = "burlywood3", pct_green = "chartreuse4", pct_bare = "brown", pct_brown = "pink")) +
+  theme_bw() +
+  facet_grid(~ nut_trt)
 
