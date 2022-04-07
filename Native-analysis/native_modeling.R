@@ -139,13 +139,20 @@ simplecov$fxnlgrp <- with(simplecov, ifelse(grepl("Forb", fullgrp), "Forb", "Gra
 simplecov$fxnlgrp <- factor(simplecov$fxnlgrp, levels = c("Forb", "Grass"))
 
 # plot to check it looks right
-ggplot(simplecov, aes(herbicide, totcov, fill = fullgrp)) + #interaction(fullgrp, seedtrt, herbicide)
-  geom_boxplot(aes(group = interaction(fullgrp, herbicide)), position = position_dodge(width = 0.5), alpha = 0.5) +
+simplecov %>%
+  mutate(totcov = ifelse(grepl("Native", fullgrp) & seedtrt == "Unseeded", NA, totcov)) %>%
+  ggplot(aes(herbicide, totcov, fill = fullgrp)) + #interaction(fullgrp, seedtrt, herbicide)
+  geom_boxplot(aes(group = interaction(fullgrp, herbicide)), varwidth = T, position = position_dodge(width = 0.5), alpha = 0.5) +
   geom_point(aes(col = fullgrp), position = position_dodge(width = 0.5)) +
-  facet_grid(seedtrt ~ fulltrt) +
-  theme(axis.text.x = element_text(angle = 90),
+  scale_fill_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
+  scale_color_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
+  #facet_grid(seedtrt ~ fulltrt) +
+  facet_wrap(~ nut_trt + seedtrt +ppt_trt, ncol = 6) +
+  #facet_grid(fulltrt ~ seedtrt) #+
+  theme(#axis.text.x = element_text(angle = 90))
         legend.position = "top",
-        legend.direction = "horizontal")
+        legend.direction = "horizontal",
+        strip.background = element_rect(fill = "transparent"))
 
 # compare background exotics in seeded vs. unseeded plots to see if any diff
 lm_exotics <- lmerTest::lmer(totcov ~ fxnlgrp * ppt_trt + nut_trt + herbicide + seedtrt + (1|hillpos), data = subset(simplecov, grepl("Back", fullgrp))) # & seedtrt == "Unseeded"
@@ -190,7 +197,12 @@ seededspp <- dplyr::select(natwide, plot:date, all_of(nats)) %>%
 gather(seededspp, spp, cov, BRCA:TRCI) %>%
   ggplot(aes(spp, cov, fill = herbicide, group = paste(herbicide, spp))) +
   geom_boxplot(position = position_dodge(width = 0.75), alpha = 0.5) +
-  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75), pch = 21)
+  geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75), pch = 21) +
+  labs(y = "Abundance (%)", x = "Seeded native species") +
+  theme(legend.position = c(0.95, 0.95),
+        legend.justification = c("right", "top"),
+        legend.title = element_blank())
+
 # mostly just FEMI, BRCA, and maybe NEMA that did ok-ish?
 # look at it by treatment
 gather(seededspp, spp, cov, BRCA:TRCI) %>%
@@ -199,10 +211,13 @@ gather(seededspp, spp, cov, BRCA:TRCI) %>%
   group_by(ppt_trt, nut_trt, herbicide, spp) %>%
   summarise(present = sum(present)) %>%
   ungroup() %>%
+  mutate(ppt_trt = factor(ppt_trt, levels = c("W", "XC", "D"))) %>%
   ggplot(aes(nut_trt, present, fill = herbicide, group = paste(herbicide, spp))) +
   #geom_boxplot(position = position_dodge(width = 0.75), alpha = 0.5) +
   geom_point(position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75), pch = 21)+
-  facet_grid(ppt_trt~spp)
+  labs(y = "# plots present", x = "Nutrient treatment") +
+  facet_grid(ppt_trt~spp) +
+  theme(legend.position = "none")
 # what are counts of non-0?
 sapply(seededspp[nats], function(x) sum(x >0))
 # pct recruitment:
