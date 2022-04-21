@@ -84,8 +84,20 @@ ggplot(dat_sum, aes(x=SurfArea.cm2., y=uptake_hr, color=Code))+
   geom_hline(yintercept=0, color = "red")+
   geom_point()+
   labs(y = "Water Uptake (g/hr)") +
+  xlim(125,200)+
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(dat_sum, aes(x=Length.cm., y=uptake_hr, color=Code))+
+  #geom_errorbar(aes(ymax = per_germ+se, ymin = per_germ - se), position = position_dodge(width = 0.5), width = 0.1) +
+  #geom_point( position = position_dodge(width = 0.5)) +
+  geom_hline(yintercept=0, color = "red")+
+  geom_point()+
+  labs(y = "Water Uptake (g/hr)") +
+  #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
+  theme_bw() +
+  #xlim(1000,2000)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 ggplot(dat_sum, aes(x=RootVolume.cm3., y=uptake_hr, color=Code))+
@@ -96,13 +108,14 @@ ggplot(dat_sum, aes(x=RootVolume.cm3., y=uptake_hr, color=Code))+
   labs(y = "Water Uptake (g/hr)") +
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
+  #xlim(2,3)+
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 ggplot(dat_sum, aes(x=AvgDiam.mm., y=uptake_hr, color=Code))+
   #geom_errorbar(aes(ymax = per_germ+se, ymin = per_germ - se), position = position_dodge(width = 0.5), width = 0.1) +
   #geom_point( position = position_dodge(width = 0.5)) +
   geom_hline(yintercept=0, color = "red")+
-  geom_point()+
+  geom_boxplot()+
   labs(y = "Water Uptake (g/hr)") +
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
@@ -112,7 +125,7 @@ ggplot(dat_sum, aes(x=Tips, y=uptake_hr, color=Code))+
   #geom_errorbar(aes(ymax = per_germ+se, ymin = per_germ - se), position = position_dodge(width = 0.5), width = 0.1) +
   #geom_point( position = position_dodge(width = 0.5)) +
   geom_hline(yintercept=0, color = "red")+
-  geom_point()+
+  geom_boxplot()+
   labs(y = "Water Uptake (g/hr)") +
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
