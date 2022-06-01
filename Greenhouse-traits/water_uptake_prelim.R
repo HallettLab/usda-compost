@@ -113,9 +113,9 @@ ggplot(dat_sum, aes(x=RootVolume.cm3., y=uptake_hr, color=Code))+
 
 ggplot(dat_sum, aes(x=AvgDiam.mm., y=uptake_hr, color=Code))+
   #geom_errorbar(aes(ymax = per_germ+se, ymin = per_germ - se), position = position_dodge(width = 0.5), width = 0.1) +
-  #geom_point( position = position_dodge(width = 0.5)) +
+  geom_point( position = position_dodge(width = 0.5)) +
   geom_hline(yintercept=0, color = "red")+
-  geom_boxplot()+
+  #geom_boxplot()+
   labs(y = "Water Uptake (g/hr)") +
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
