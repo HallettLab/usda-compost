@@ -61,6 +61,7 @@ dat <- left_join(dat, sum_control, by="date_dry")
 dat <- dat %>% mutate(uptake_hr=loss_hr-mean_evap_hr)
 
 #join with prelim root scan data
+root$Rep<-as.integer(root$Rep)
 dat <- left_join(dat, root, by=c("Code", "Rep"))
 
 
@@ -123,14 +124,17 @@ ggplot(dat_sum, aes(x=AvgDiam.mm., y=uptake_hr, color=Code))+
 
 ggplot(dat_sum, aes(x=Tips, y=uptake_hr, color=Code))+
   #geom_errorbar(aes(ymax = per_germ+se, ymin = per_germ - se), position = position_dodge(width = 0.5), width = 0.1) +
-  #geom_point( position = position_dodge(width = 0.5)) +
+  geom_point( position = position_dodge(width = 0.5)) +
   geom_hline(yintercept=0, color = "red")+
-  geom_boxplot()+
+  #geom_boxplot()+
   labs(y = "Water Uptake (g/hr)") +
   #scale_color_manual(values = c( "indianred4",  "dodgerblue1", "darkgoldenrod"), guide = guide_legend(title = "Treatment"))+
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
+library(plotly)
+plot_ly(dat_sum,x=~AvgDiam.mm., y=~uptake_hr, z=~RootVolume.cm3.) %>%
+  add_markers(color=~uptake_hr)
 
 #clean species list
 spp<- read.csv(paste0(datpath, "GH_EnteredData/species_list_master.csv"), na.strings = na_vals, strip.white = T)
