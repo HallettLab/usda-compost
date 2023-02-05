@@ -15,6 +15,16 @@ library(multcomp)
 library(MASS)
 library(cowplot)
 library(pscl)
+library(glmmTMB) # for random effects in ZINF model
+
+# gjam packages and functions
+library(gjam)
+# for gjamTime
+library(devtools)
+# source supplemental functions for gjamTime
+d <- "https://github.com/jimclarkatduke/gjam/blob/master/gjamTimeFunctions.R?raw=True"
+source_url(d)
+
 # modify default settings
 options(stringsAsFactors = F)
 theme_set(theme_test())
@@ -52,7 +62,8 @@ natwide$date <- as.Date(natwide$date, format = "%Y-%m-%d")
 coverlong$date <- as.Date(coverlong$date, format = "%Y-%m-%d")
 
 # climvar natives (not sure if clean)
-climvar_nats <- read.csv("", na.strings = na_vals)
+#climvar_nats <- read.csv("", na.strings = na_vals)
+
 
 # -- DATA PREP ----
 # want to know..
@@ -157,7 +168,7 @@ simplecov %>%
 # compare background exotics in seeded vs. unseeded plots to see if any diff
 lm_exotics <- lmerTest::lmer(totcov ~ fxnlgrp * ppt_trt + nut_trt + herbicide + seedtrt + (1|hillpos), data = subset(simplecov, grepl("Back", fullgrp))) # & seedtrt == "Unseeded"
 summary(lm_exotics)
-Anova(lm_exotics)
+Anova(lm_exotics) # similar if use type III
 ls_means(lm_exotics, pairwise = T)
 lmerTest::ranova(lm_exotics)
 # herbicide makes a difference, forb v. grass, ppt, and interaction between fnxl group x ppt_trt, and fxnlgrp x nut_trt
@@ -234,6 +245,7 @@ sapply(seededspp[seededspp$herbicide != "Herbicided",nats], function(x) sum(x >0
 neighborhood <- merge(neighborhood, seededspp)
 neighborhood_counts <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x %in% c(1:9), x+1, ifelse(x > 0 & x<1, 1, x)))
 neighborhood_PA <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x>0, 1, 0))
+# grams look like they needed herbicide conditions, forbs less affected
 
 # start with lmers on abundance
 ## FEMI ----
@@ -355,6 +367,14 @@ summary(all_glm_pos)
 pchisq(2 * (logLik(all_glm_nb_simple) - logLik(all_glm_pos)), df =1, lower.tail = F) #nb is better fit
 
 
+# glmers 
+# simple
+all_glmer_nb <- glmer.nb(cov ~ herbicide + ppt_trt + spp + (1| block), data = neighborhood_counts_long)
+summary(all_glmer_nb)
+isSingular(all_glmer_nb) # when species is included in model, singular fit
+# interactive
+all_glmer_nb3x <- MASS::glm.nb(cov ~ spp * herbicide * ppt_trt + nut_trt, data = neighborhood_counts_long)
+
 # -- CLEANED UP NB GLM MODELS ----
 # make hillpos factor
 neighborhood_counts
@@ -439,10 +459,10 @@ neighborhood_counts_long$gram_prop <- (neighborhood_counts_long$grass/neighborho
 # try all spp in one model w zeroinf or hurdle
 all_zinf <- zeroinfl(cov ~ spp + herbicide + ppt_trt + nut_trt, data = neighborhood_counts_long, dist = "negbin")
 summary(all_zinf)
-all_zinf_x <- zeroinfl(cov ~ spp + nut_trt + ppt_trt + neighbors | spp + herbicide, data = neighborhood_counts_long, dist = "negbin")
+all_zinf_x <- zeroinfl(cov ~ spp + nut_trt + ppt_trt + neighbors, data = neighborhood_counts_long, dist = "negbin")
 summary(all_zinf_x) # won't run w zeroinfl
 # w gram prop
-all_zinf_full <- zeroinfl(cov ~ spp * neighbors * ppt_trt + nut_trt | spp + herbicide, data = neighborhood_counts_long, dist = "negbin")
+all_zinf_full <- zeroinfl(cov ~ spp * neighbors * ppt_trt + nut_trt, data = neighborhood_counts_long, dist = "negbin")
 summary(all_zinf_full)
 
 predict_zinf_x <- cbind(all_zinf_x$model, 
@@ -454,8 +474,11 @@ predict_zinf_x <- cbind(all_zinf_x$model,
 # hurdle
 all_hurdle <- hurdle(cov ~ spp + herbicide + ppt_trt + nut_trt, data = neighborhood_counts_long, dist = "negbin")
 summary(all_hurdle)
-all_hurdle_x <- hurdle(cov ~ spp * neighbors * nut_trt + ppt_trt | spp * herbicide * ppt_trt, data = neighborhood_counts_long, dist = "negbin")
+all_hurdle_x <- hurdle(cov ~ spp * neighbors * nut_trt + ppt_trt , data = neighborhood_counts_long, dist = "negbin")
 summary(all_hurdle_x) # will run w hurdle
+all_hurdle_x_p <- hurdle(cov ~ spp * neighbors * nut_trt + ppt_trt , data = neighborhood_counts_long, dist = "poisson")
+summary(all_hurdle_x_p)
+
 # w gram prop
 all_hurdle_full <- hurdle(cov ~ spp * neighbors + herbicide + ppt_trt + nut_trt , data = neighborhood_counts_long, dist = "negbin")
 summary(all_hurdle_full) # 
@@ -466,6 +489,12 @@ predict_hurdle_x <- cbind(all_hurdle_x$model,
                         pred_count = predict(all_hurdle_x, type = "count"),
                         pred_zero = predict(all_hurdle_x, type = "zero"),
                         res = all_hurdle_x$residuals)
+
+# test if hurdle or zinf superior to nb glm
+vuong(all_glm_nb_simple, all_zinf) # not by BIC corrected
+vuong(all_glm_nb_simple, all_hurdle) # not by AIC corrected
+
+glmmTMB()
 
 
 # -- MULTIVARIATE TO ASSESS NEIGHBORHOOD RESPONSE TO SEEDING ----- 
@@ -604,3 +633,115 @@ sp::proj4string(boulder_coords) <- latlong_proj
 sfrec_coords <- sp::SpatialPoints(coords = data.frame(lat = 39.253229939065406, long = -121.31334268578593))
 sp::proj4string(boulder_coords) <- latlong_proj
 sp::spDists(boulder_coords, sfrec_coords, longlat = T)
+
+
+# -- GJAM ----
+# try coarse functional group to assess overall response to mgmt
+# > note seeded natives are split from background natives here
+
+# 4 types of cover groups per plot
+natcoarse_ydata <- subset(natcoarse_all, select = c(plot, seedtrt, herbicide, coarse_fxnl, totcov)) %>%
+  # clean up fxnl group names for spreading as colnames
+  mutate(coarse_fxnl = gsub(" |-", "", coarse_fxnl)) %>%
+  # make cover count data (trace amounts --> 1)
+  # decimals = str_extract(totcov, "(?<=[.])[0-9]+"),
+  # tenths = as.numeric(substr(decimals, 1, 1)),
+  # hundredths = as.numeric(substr(decimals, 2, 2)),
+  # addct = ifelse(tenths == 5 & !is.na(tenths), 1+ hundredths, hundredths))
+  spread(coarse_fxnl, totcov, fill = 0) %>%
+  mutate(abbrv_herb = ifelse(grepl("^Herbi", herbicide), "Herbi", "NoHerbi"),
+         abbrv_seed2 = ifelse(grepl("Native", seedtrt), "NatSeed", "Unseed")) %>%
+  unite(rowid, abbrv_herb, abbrv_seed2, sep = "", remove = T) %>%
+  mutate(rowid = paste(rowid, plot, sep = "_")) %>%
+  data.frame()
+
+natcoarse_xdata <- subset(natcoarse_ydata, select = c(rowid, plot, seedtrt, herbicide)) %>%
+  left_join(trtkey) %>%
+  # convert env vars to factors
+  mutate(seedtrt = factor(seedtrt, levels = c("Unseeded", "Native seeded")),
+         herbicide = gsub("Non-herb", "NonHerb", herbicide),
+         herbicide = factor(herbicide,ordered = T,  levels = c("NonHerbicided", "Herbicided")),
+         nut_trt = factor(nut_trt, ordered = T, levels = c("N", "F", "C")),
+         ppt_trt = factor(ppt_trt, ordered = T, levels = c("XC", "D", "W")),
+         block = factor(block))
+rownames(natcoarse_xdata) <- natcoarse_xdata$rowid
+# clean up colnames
+colnames(natcoarse_xdata) <- gsub("_trt", "Trt", colnames(natcoarse_xdata))
+
+# assign rownames and check colsums on fxnl grps
+rownames(natcoarse_ydata) <- natcoarse_ydata$rowid 
+natcoarse_ydata <- subset(natcoarse_ydata, select = -c(plot, seedtrt, herbicide, rowid))  
+sumcheck <- sapply(natcoarse_ydata, function(x) sum(x > 0))
+sort(sumcheck)
+natcoarse_ydata <- natcoarse_ydata[,sumcheck > 10]
+
+# make effort
+# effort is the sum of all % cover
+natcoarse_effort_sum <- subset(natcoarse_all, select = c(plot, seedtrt, herbicide, coarse_fxnl, totcov)) %>%
+  mutate(herbicide = gsub("Non-herb", "NonHerb", herbicide)) %>%
+  group_by(plot, seedtrt, herbicide) %>%
+  summarise(effort = sum(totcov)) %>%
+  ungroup() %>%
+  left_join(natcoarse_xdata[c("rowid", "plot", "seedtrt", "herbicide")]) %>%
+  data.frame()
+rownames(natcoarse_effort_sum) <- natcoarse_effort_sum$rowid
+natcoarse_effort_sum <- natcoarse_effort_sum["effort"]
+# assign total cover to all fxnl groups
+natcoarse_effort <- natcoarse_ydata
+natcoarse_effort[names(natcoarse_effort)] <- natcoarse_effort_sum$effort
+
+# make effort and ydata matrices
+natcoarse_ydata <- as.matrix(natcoarse_ydata)
+natcoarse_effort <- as.matrix(natcoarse_effort)
+# still not accepting controls, rename to alphabetize order
+#natcoarse_xdata <- natcoarse()
+# build model
+
+# remake factors because still not working
+natcoarse_xdata <- natcoarse_xdata %>%
+  mutate(seedtrt = recode_factor(seedtrt, Unseeded = "0unseed", `Native seeded` = "1seed"),
+         herbicide = recode_factor(herbicide, NonHerbicided = "0noHerb", Herbicided = "1herb"),
+         pptTrt = recode_factor(pptTrt, XC = "0xc", D = "1d", W = "2w"),
+         nutTrt = recode_factor(nutTrt, N = "0noNut", F = "1fert", C = "2comp")
+         )
+summary(natcoarse_xdata)
+glimpse(natcoarse_xdata)
+natcoarse_model <- as.formula(~ seedtrt + herbicide + pptTrt * nutTrt)
+# build dimension reduction list (using same as in shown in tutorial)
+#rlist <- list(r = 8, N = 10)
+
+#make sure levels are set correctly (model output is alphabetizing ppt and nut trts)
+#natcoarse_xdata$pptTrt <- relevel(natcoarse_xdata$pptTrt, ref = "XC")
+#natcoarse_xdata$nutTrt <- relevel(natcoarse_xdata$nutTrt, ref = "N")
+# build priors
+natcoarse_prior <- gjamPriorTemplate(formula = natcoarse_model, 
+                           xdata =  natcoarse_xdata,
+                           ydata = natcoarse_ydata,
+                           lo = -Inf, 
+                           hi = Inf
+                           ) # not setting hi or lo limit, going with default setting ([-Inf, Inf]) for all spp
+
+# build model list (same as in tutorial)
+natcoarse_mlist <- list(ng=6000, burnin=1000, typeNames = 'CA')
+#betaPrior = prior, effort = elist <- these were used in tutorial, but looking at j clark's vignette doesn't look like I have to use them
+
+# run model
+natcoarse_gjam <- gjam(formula = natcoarse_model, 
+                       xdata = natcoarse_xdata,
+                       ydata = natcoarse_ydata,
+                       modelList = natcoarse_mlist)
+summary(natcoarse_gjam)
+gjamPlot(natcoarse_gjam, plotPars = list(PLOTALLY = T, GRIDPLOTS = T, SAVEPLOTS = T, 
+                                         outFolder = "/Users/scarlet/Documents/suding_lab/Compost/gjam_analyses/fxnl_group_pptxnut/"))
+
+str(natcoarse_xdata)
+
+# try to plot interaction
+xWC <- xWF <- xDC <- xDF <- natcoarse_gjam$inputs$xUnstand[1,]
+xWC[c("pptTrt2w", "nutTrt1fert", "nutTrt2comp", "pptTrt2w:nutTrt2comp")]<- c(1,0,1,0)
+xWC
+xDC[c("pptTrt1d", "nutTrt1fert", "nutTrt2comp", "pptTrt1d:nutTrt2comp")] <- c(1,0,1,0)
+testfit <- gjamIIE(natcoarse_gjam, xDC)
+gjamIIEplot(testfit,response = "BackgroundExoticForb", 
+            effectMu = c("main", "direct", "ind"), effectSd = c("main", "direct", "ind"))
+natcoarse_xdata
