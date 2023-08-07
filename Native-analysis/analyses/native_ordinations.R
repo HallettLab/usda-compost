@@ -8,7 +8,9 @@
 library(tidyverse)
 library(vegan)
 
-
+# source prepped data
+# > this should set default settings for datpath, plot theme, no factors by default
+source("Native-analysis/native_prep_cover.R", )
 
 
 
@@ -161,7 +163,48 @@ mds_nats_df <- subset(natlong, seedtrt != "Unseeded", select = c(plot:mon, code4
   mutate(natplotid = 1:nrow(.))
 
 mds_nats_nmds <- metaMDS(subset(mds_nats_df, select = -c(plot:seedtrt, natplotid)), k = 2, trymax = 100)
+mds_nats_nmds
 plot(mds_nats_nmds)
+
+# create bc matrix of all spp, only seededplots
+allspp_bc <- vegdist(subset(mds_nats_df, select = -c(plot:seedtrt, natplotid)), method = "bray")
+seeded_env <- subset(mds_nats_df, select = c(plot:seedtrt, natplotid)) %>%
+  left_join(distinct(natlong[natlong$seedtrt != "Unseeded",], plot, block, ppt_trt, nut_trt, herbicide))
+# check signif of treatments
+adonis2(allspp_bc ~ herbicide * ppt_trt *nut_trt, data = seeded_env, permutations = how(blocks = seeded_env$block))
+
+# Permutation test for adonis under reduced model
+# Terms added sequentially (first to last)
+# Blocks:  seeded_env$block 
+# Permutation: free
+# Number of permutations: 199
+
+adonis2(formula = allspp_bc ~ herbicide * nut_trt * ppt_trt, data = seeded_env, permutations = how(blocks = seeded_env$block))
+adonis2(formula = allspp_bc ~nut_trt * ppt_trt *herbicide, data = seeded_env, permutations = how(blocks = seeded_env$block))
+# > doesn't matter if change order of terms
+# Df SumOfSqs      R2      F Pr(>F)   
+# herbicide                  1   0.8831 0.04454 3.2606  0.005 **
+# nut_trt                    2   1.4821 0.07475 2.7361  0.005 **
+# ppt_trt                    2   0.6851 0.03455 1.2648  0.035 * 
+# herbicide:nut_trt          2   0.6313 0.03184 1.1654  0.040 * 
+# herbicide:ppt_trt          2   0.5236 0.02641 0.9667  0.125   
+# nut_trt:ppt_trt            4   0.9785 0.04935 0.9032  0.170   
+# herbicide:nut_trt:ppt_trt  4   0.5601 0.02825 0.5170  0.870   
+# Residual                  52  14.0833 0.71031                 
+# Total                     69  19.8270 1.00000                 
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+adonis2(formula = allspp_bc ~ herbicide + nut_trt * ppt_trt, data = seeded_env, permutations = how(blocks = seeded_env$block))
+
+# Df SumOfSqs      R2      F Pr(>F)   
+# herbicide          1   0.8831 0.04454 3.3910  0.005 **
+# nut_trt            2   1.4821 0.07475 2.8456  0.005 **
+# ppt_trt            2   0.6851 0.03455 1.3154  0.025 * 
+# herbicide:nut_trt  2   0.6313 0.03184 1.2121  0.035 * 
+# Residual          62  16.1455 0.81432                 
+# Total             69  19.8270 1.0000
+
 mds_nats_results <- left_join(mds_nats_df[c("plot", "herbicide", "seedtrt")], trtkey) %>%
   cbind(mds_nats_nmds$points)
 
@@ -188,6 +231,99 @@ ggplot(data = mds_nats_results, aes(MDS1, MDS2)) +
   scale_color_manual(name = NULL, values = c('Exotic Forb' = "red", 'Native Forb' = "purple", 'Exotic Grass' = "forestgreen", 'Native Grass' = "dodgerblue", "Exotic N-fixer" = "orange")) +
   facet_grid(ppt_trt~nut_trt)
 ggsave("/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/compost_natdiv_spp_mds.pdf")
+
+# make hulls (quickplot.. spider will be easier on eyes to show maybe)
+hulldat <- data.frame()
+for(h in unique(mds_nats_results$herbicide)){
+  for(f in unique(mds_nats_results$fulltrt)){
+    grphull <- mds_nats_results[mds_nats_results$fulltrt == f & mds_nats_results$herbicide == h, ][chull(mds_nats_results[mds_nats_results$fulltrt == f & mds_nats_results$herbicide == h, 
+                                                                                                                          c("MDS1", "MDS2")]), ]
+    # add to df
+    hulldat <- rbind(hulldat, grphull)  
+  }
+}
+
+# kns says show species in one panel, treatments in other
+
+# make pretty names for spp nmds
+mds_nats_spp <- mutate(mds_nats_spp, 
+                       pretty_name = ifelse(code4 %in% nats, paste(paste0(substr(genus,1,1), "."), epithet),paste(nativity, fxnl_grp)),
+                       pretty_name = gsub("Exotic", "Non-native", pretty_name),
+                       pretty_name = gsub("Grass", "grasses", pretty_name),
+                       pretty_name = gsub("Forb", "forbs", pretty_name),
+                       pretty_name = gsub("N-fixer", "N-fixers", pretty_name),
+                       pretty_name = gsub("Native fo", "Background native fo", pretty_name),
+                       pretty_name = factor(pretty_name, 
+                                            levels = c("Non-native forbs", "Non-native grasses", "Non-native N-fixers",
+                                                       "Background native forbs", "E. californica", "N. maculata", 
+                                                       "B. carinatus", "F. microstachys"))
+                       )
+unique(mds_nats_spp$pretty_name)
+#mds_nats_spp$pretty_name <- with(mds_)
+
+mds_spp <- ggplot(data = mutate(mds_nats_results, 
+                                ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W"))
+                                #ppt_trt = relevel(ppt_trt, "D")
+                                ), aes(MDS1, MDS2)) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  #geom_polygon(data=hulldat, aes(fill=ppt_trt,group=ppt_trt, col = ppt_trt), alpha=0.35) +
+  #geom_point(aes(shape = block<3), col = "grey30", alpha = 0.7, size = 3) +
+  #geom_point(data = subset(mds_nats_spp, !code4 %in% nats), aes(MDS1, MDS2, color = pretty_name)) +
+    geom_point(data = mds_nats_spp, aes(MDS1, MDS2, fill = pretty_name), pch = 21, col = "grey30", alpha = 0.85, size = 3) +
+  #geom_text(data = subset(mds_nats_spp, !code4 %in% nats), aes(MDS1, MDS2, color = paste(nativity,fxnl_grp), label = code4), size = 3) +
+  ggrepel::geom_text_repel(data = subset(mds_nats_spp, code4 %in% nats), 
+                           aes(MDS1, MDS2, color = pretty_name, label = pretty_name), show.legend = FALSE, size = 4) +
+  scale_color_manual(name = NULL, values = plant_cols2) +
+    scale_fill_manual(name = NULL, values = plant_cols2) +
+  #theme( legend.text = element_text(size = 10))
+  #scale_color_manual(name = NULL, values = c("orchid", "seagreen2", "red", "purple4", "seagreen4")) +
+  theme(legend.position = c(0.01,0.99),
+        legend.text = element_text(size = 10),
+        legend.justification = c("left", "top"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.key.size = unit(0.1, "pt"))
+                       #c('Exotic Forb' = "red", 'Native Forb' = "purple", 'Exotic Grass' = "forestgreen", 'Native Grass' = "dodgerblue", "Exotic N-fixer" = "orange"))
+
+# plot hulls
+mds_plots <- ggplot(data = mutate(mds_nats_results, 
+                                  herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided")),
+              ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W")),
+              #ppt_trt = relevel(ppt_trt, "D"),
+              nut_trt = factor(nut_trt, levels = c("C", "F", "N"), labels = c("Compost", "Fertilizer", "No amendment"))),
+       aes(MDS1, MDS2, col = ppt_trt, fill = ppt_trt)) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  geom_polygon(data=mutate(hulldat, 
+                           herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided")),
+                           ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W")),
+                           nut_trt = factor(nut_trt, levels = c("C", "F", "N"), labels = c("Compost", "Fertilizer", "No amendment"))
+                           ), 
+               aes(fill=ppt_trt,group=ppt_trt, col = ppt_trt), alpha=0.35) +
+  geom_point(aes(shape = block<3), col = "grey30", alpha = 0.7, size = 3) + #col = "grey30",
+  geom_point(aes(shape = block<3), alpha = 0.7, size = 3) + #col = "grey30",
+  #geom_point(alpha = 0.7, size = 3) +
+  scale_shape_manual(name = "Hillslope", values = c(24, 25), labels = c("Up", "Down"), guides(color = "none")) +
+  #scale_color_manual(name = NULL, values = c('Exotic Forb' = "red", 'Native Forb' = "purple", 'Exotic Grass' = "forestgreen", 'Native Grass' = "dodgerblue", "Exotic N-fixer" = "orange")) +
+  scale_color_manual(name = "Precipitation\ntreatment", 
+                     labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+                     values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  scale_fill_manual(name = "Precipitation\ntreatment", 
+                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"), 
+                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  #guides( = "none") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        strip.text = element_text(size = 12),
+        legend.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10)) +
+  facet_grid(herbicide~nut_trt)
+
+cowplot::plot_grid(mds_plots, mds_spp,
+                   nrow = 1,
+                   rel_widths = c(1.1,0.9))
+
+ggsave(paste0(figpath,"natfxnl_seededspp_nmds2.pdf"), units = "in", width = 10.2, height = 5)
+
 
 # check on abundance of each nat per treatment
 left_join(seededspp, trtkey) %>%

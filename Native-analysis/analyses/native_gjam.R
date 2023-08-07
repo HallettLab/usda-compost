@@ -198,7 +198,7 @@ left_join(seededspp, trtkey) %>%
   ggplot(aes(fulltrt, cover, group = paste(fulltrt, herbicide), col = herbicide)) +
   #geom_jitter(aes(shape = herbicide), width = 0.2,height = 0, alpha = 0.5, size = 2) +
   stat_summary(aes(shape = nut_trt), position = position_dodge(width = 0.4), alpha = 0.9) +
-  scale_shape_manual(name = "Amendment", values = c(C = 16, F = 15, N = 4), labels = c("Compost", "Fert", "None")) +
+  scale_shape_manual(name = "Amendment", values = c(C = 16, F = 15, XC = 4), labels = c("Compost", "Fert", "None")) +
   #scale_shape_manual(name = "Subplot", values = c(21,22)) +
   #scale_color_brewer(name = "Amendment", palette = "Set2", labels = c("Compost", "Fert", "None")) +
   scale_color_brewer(name = "Subplot", palette = "Set2") +
@@ -215,7 +215,7 @@ left_join(seededspp, trtkey) %>%
   ggplot(aes(fulltrt, cover, group = paste(fulltrt, herbicide), col = herbicide)) +
   #geom_jitter(aes(shape = herbicide), width = 0.2,height = 0, alpha = 0.5, size = 2) +
   stat_summary(aes(shape = nut_trt), position = position_dodge(width = 0.4), alpha = 0.9) +
-  scale_shape_manual(name = "Amendment", values = c(C = 16, F = 15, N = 4), labels = c("Compost", "Fert", "None")) +
+  scale_shape_manual(name = "Amendment", values = c(C = 16, F = 15, XC = 4), labels = c("Compost", "Fert", "None")) +
   #scale_shape_manual(name = "Subplot", values = c(21,22)) +
   #scale_color_brewer(name = "Amendment", palette = "Set2", labels = c("Compost", "Fert", "None")) +
   scale_color_brewer(name = "Subplot", palette = "Set2") +
@@ -460,13 +460,13 @@ str(natcoarse_xdata)
 xWC <- xWF <- xDC <- xDF <- natcoarse_gjam$inputs$xUnstand[1,]
 xWC[c("pptTrt2w", "nutTrt1fert", "nutTrt2comp", "pptTrt2w:nutTrt2comp")]<- c(1,0,1,0)
 xWC
-xDC[c("pptTrt1d", "nutTrt1fert", "nutTrt2comp", "pptTrt1d:nutTrt2comp")] <- c(1,0,1,0)
+xDC[c("herbicide1Herb", "pptTrt1d", "nutTrt1fert", "nutTrt2comp", "pptTrt1d:nutTrt2comp")] <- c(1,1,0,1,1)
 testfit <- gjamIIE(natcoarse_gjam, xDC)
 gjamIIEplot(testfit,
             #response = "BackgroundExoticForb", 
             #response = "SeededNativeForb",
-            response = "SeededNativeGrass",
-            effectMu = c("main", "direct", "ind"), effectSd = c("main", "direct", "ind"))
+            response = "BRCA",
+            effectMu = c("main", "int"), effectSd = c("int"))
 natcoarse_xdata
 
 
@@ -582,16 +582,19 @@ testfit <- gjamIIE(natcoarse_gjam, xDC)
 gjamIIEplot(testfit,
             #response = "BackgroundExoticForb", 
             #response = "SeededNativeForb",
-            response = "BackgroundExoticForb",
-            effectMu = c("direct", "ind"), effectSd = c("direct", "ind"))
+            response = "BRCA",
+            effectMu = c("main", "int"), effectSd = c("main", "int"))
+            #effectMu = c("direct", "ind"), effectSd = c("direct", "ind"))
+
 
 
 # try GJAM predict to compare model fit vs. observed
-gjamPredict(natcoarse_gjam)
+predresponse <- gjamPredict(natcoarse_gjam, y2plot = colnames(natcoarse_ydata))
 
 
 
 # -- Don't split hillslope, block as random effect -----
+## this is the model to use
 # 4 types of cover groups per plot
 # drop unseeded trt
 natcoarse_ydata <- subset(natcoarse_all, !grepl("Seeded", coarse_fxnl) & seedtrt != "Unseeded", select = c(plot, seedtrt, herbicide, coarse_fxnl, totcov)) %>%
@@ -719,7 +722,7 @@ axis( 1, at=1:nt,labels=colnames(natcoarse_sense))
 
 data.frame(natcoarse_sense) %>%
   gather(predictor, val, 1:ncol(.)) %>%
-  ggplot(aes(predictor, log(val))) +
+  ggplot(aes(predictor, val)) +
   geom_boxplot() +
   theme(axis.text.x = element_text(angle = 90))
 
@@ -730,6 +733,15 @@ betaSE_df <- data.frame(natcoarse_gjam$parameters$betaSe) %>%
   mutate(predictor = rownames(.)) %>%
   gather(response, betaSE, 1:(ncol(.)-1))
 beta_df <- left_join(beta_df, betaSE_df)
+# clean up treatments
+beta_df <- mutate(beta_df, ppt_trt = ifelse(grepl("1d", predictor), "D", 
+                                          ifelse(grepl("2w", predictor), "W", "XC")),
+                nut_trt = ifelse(grepl("2comp", predictor), "C",
+                                 ifelse(grepl("1f", predictor), "F", "XC")),
+                herbicide = ifelse(grepl("1herb", predictor), "Herbicided", "Non-Herbicided"))
+# NA anything that is intercept
+beta_df[beta_df$predictor == "intercept", c("nut_trt", "ppt_trt", "herbicide")] <- NA
+
 
 ggplot(subset(beta_df, predictor != "intercept"), aes(predictor, beta)) +
   geom_hline(aes(yintercept = 0), lty = 2, col = "red") +
@@ -843,6 +855,401 @@ gjamPlot(natcoarse_gjam, plotPars = list(PLOTALLY = T, GRIDPLOTS = T, SAVEPLOTS 
                                          outFolder = "/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/gjam_analyses/indiv_vfxnl_pptxnut_30kchains/"))
 
 
+# alternative model with 3-way herbicide interaction
+
+  
+# -- FIGS FOR ESA ------
+# path to figs
+figpath <- "/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/esa2023_presfigs/" 
+
+# plot coefficients for each species ()
+beta_df <- data.frame(natcoarse_gjam$parameters$betaMu) %>%
+  mutate(predictor = rownames(.)) %>%
+  gather(response, beta, 1:(ncol(.)-1))
+betaSE_df <- data.frame(natcoarse_gjam$parameters$betaSe) %>%
+  mutate(predictor = rownames(.)) %>%
+  gather(response, betaSE, 1:(ncol(.)-1))
+beta_df <- left_join(beta_df, betaSE_df)
+
+betacoeff_df <- data.frame(natcoarse_gjam$parameters$betaStandXWTable)
+betacoeff_df$rowid <- rownames(betacoeff_df)
+betacoeff_df$response <- str_extract(betacoeff_df$rowid, "^[:alpha:]+_")
+betacoeff_df$response <- gsub("_", "", betacoeff_df$response)
+betacoeff_df$predictor <- gsub("^.*_", "", betacoeff_df$rowid)
+betacoeff_df$group <- ifelse(grepl("Background", betacoeff_df$response), "Background", "Native Seeded")
+betacoeff_df$lifeform <- ifelse(grepl("BRCA|FEMI|Gra", betacoeff_df$response), "Grass", "Forb")
+
+
+# -- plot results -----
+# make plant colors
+plantnames <- unique(betacoeff_df$response)
+natgrasses <- plantnames[grepl("FEM|BR", plantnames)]
+natgrass_cols <- RColorBrewer::brewer.pal((length(natgrasses)+2), "Greens")[3:(length(natgrasses)+2)]
+exogr <- "BackgroundExoticGrass"
+exogr_cols <- RColorBrewer::brewer.pal(6, "YlGnBu")[4]
+natforbs <- plantnames[grepl("NativeFor|NEMA|ESCA", plantnames)]
+natforbs_cols <- RColorBrewer::brewer.pal((length(natforbs)+1), "Purples")[2:(length(natforbs)+1)]
+exoforb <- "BackgroundExoticForb"
+exoforb_cols <- RColorBrewer::brewer.pal(6, "YlOrBr")[5]
+nfix <- plantnames[grepl("Nfix", plantnames)]
+nfix_cols <- RColorBrewer::brewer.pal(6, "YlOrBr")[3]
+
+plant_cols <- c(natgrass_cols, exogr_cols, natforbs_cols, exoforb_cols, nfix_cols)
+plants1 <- c(natgrasses, exogr, natforbs, exoforb, nfix)
+names(plant_cols) <- plants1
+
+plant_cols2 <- plant_cols
+plants2 <- c("B. carinatus", "F. microstachys", "Non-native grasses", "Background native forbs", "E. californica",
+                          "N. maculata", "Non-native forbs", "Non-native N-fixers")
+names(plant_cols2) <- plants2
+
+values = c('Exotic Forb' = "red", 
+           'Native Forb' = "purple", 
+           'Exotic Grass' = "forestgreen", 
+           'Native Grass' = "dodgerblue", 
+           "Exotic N-fixer" = "orange")
+
+signif_betas <- subset(betacoeff_df, grepl("[*]", sig95)) %>%
+  # drop no herbicide because it's flip of herbicide
+  subset(!grepl("0noHerb", predictor)) %>%
+  # note whether competitive effect or environmental
+  mutate(effect = ifelse(grepl("herb", predictor), "Competitive", "Environmental"))
+
+ggplot(signif_betas, aes(predictor,Estimate)) +
+  geom_point() +
+  facet_wrap(~effect) +
+  coord_flip()
+
+subset(signif_betas, effect == "Competitive") %>%
+  mutate(response = factor(response, 
+                           levels = c("BackgroundExoticGrass", "BackgroundExoticForb", "FEMI", "BRCA"),
+         labels = c("Non-native grasses", "Non-native forbs", "F. microstachys", "B. carinatus")
+         )) %>%
+ggplot(aes(response,Estimate)) +
+  geom_hline(aes(yintercept = 0), alpha = 0.5) +
+  labs(y = "Effect of herbicide (with 95% credible interval)",
+       x = NULL) +
+  geom_errorbar(aes(ymin = CI_025, ymax = CI_975), width = 0.1) +
+  geom_point(aes(fill = response), pch = 21, size = 4) +
+  scale_fill_manual(values = c(exogr_cols, exoforb_cols, natgrass_cols)) +
+  theme(axis.text = element_text(size = 11),
+        #axis.title = element_text(size = ),
+        legend.position = "none") +
+  coord_flip()
+ggsave(paste(figpath, "gjam_herbsig.pdf"), units = "in", height = 4, width = 5)
+
+# also show raw?
 
 
 
+specNames <- colnames(natcoarse_ydata)
+specColor_natdiv <- unname(plant_cols[specNames])
+
+gjamPlot(natcoarse_gjam, plotPars = list(GRIDPLOTS=T, specColor = specColor_natdiv, #cex = 0.75,
+                                         #PLOTALLY = T, #SAVEPLOTS = T,
+                                         outfolder = "/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/esa2023_presfigs/"))
+# save gjammodel
+saveRDS(natcoarse_gjam, "/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/gjam_model_esa.rdata")
+
+
+# -- plots of cover and presence for native and by functional group to support -----
+# plot fxnls groups and each native, using colors above
+subset(natcoarse_all, grepl("Native se", seedtrt)) %>%
+ggplot()
+
+
+# test plot response matrix and environment predictor matrix separately
+natcoarse_gjam$prediction
+
+
+# -- make ordination using coarse fxnl groups and natives ---
+library(vegan)
+
+natcoarse_nmds <- metaMDS(natcoarse_ydata, k = 2, trymax = 100)
+plot(natcoarse_nmds)
+adonis2(natcoarse_ydata ~ herbicide + nutTrt * pptTrt, data = natcoarse_xdata, permutations = how(blocks = natcoarse_xdata$block))
+
+mds_natcoarse_results <- rename(natcoarse_xdata[c("plot", "herbicide", "seedtrt", "hillpos", "fulltrt", "nutTrt", "pptTrt")]) %>%
+  left_join(subset(trtkey)) %>%
+  cbind(natcoarse_nmds$points) %>%
+  mutate(herbicide_pretty = ifelse(herbicide == "0noHerb", "Non-herbicided", "Herbicided"),
+         herbicide_pretty = factor(herbicide_pretty, levels = c("Non-herbicided", "Herbicided")))
+
+mds_natcoarse_spp <- data.frame(natcoarse_nmds$species) %>%
+  mutate(spp = rownames(.)) %>%
+  mutate(pretty_name = gsub("Background", "", spp),
+         pretty_name = gsub("Grass", "grasses", pretty_name),
+         pretty_name = gsub("Forb", "forbs", pretty_name),
+         pretty_name = gsub("Nfixer", "N-fixers", pretty_name),
+         pretty_name = gsub("Exotic", "Non-native ", pretty_name))
+# clean up names
+mds_natcoarse_spp$pretty_name[mds_natcoarse_spp$spp == "FEMI"] <- "F. microstachys"
+mds_natcoarse_spp$pretty_name[mds_natcoarse_spp$spp == "BRCA"] <- "B. carinatus"
+mds_natcoarse_spp$pretty_name[mds_natcoarse_spp$spp == "NEMA"] <- "N. maculata"
+mds_natcoarse_spp$pretty_name[mds_natcoarse_spp$spp == "ESCA"] <- "E. californica"
+mds_natcoarse_spp$pretty_name[mds_natcoarse_spp$pretty_name == "Nativeforbs"] <- "Background native forbs"
+
+# make hulls (quickplot.. spider will be easier on eyes to show maybe)
+natcoarse_hulldat <- data.frame()
+for(h in unique(mds_natcoarse_results$herbicide)){
+  for(f in unique(mds_natcoarse_results$fulltrt)){
+    grphull <- mds_natcoarse_results[mds_natcoarse_results$fulltrt == f & mds_natcoarse_results$herbicide == h, ][chull(mds_natcoarse_results[mds_natcoarse_results$fulltrt == f & mds_natcoarse_results$herbicide == h, 
+                                                                                                                          c("MDS1", "MDS2")]), ]
+    # add to df
+    natcoarse_hulldat <- rbind(natcoarse_hulldat, grphull)  
+  }
+}
+# add herbicide pretty
+natcoarse_hulldat <- left_join(natcoarse_hulldat, distinct(mds_natcoarse_results, herbicide, herbicide_pretty))
+
+# make treatments factors
+mds_natcoarse_results <- mutate(mds_natcoarse_results, 
+       ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W")),
+       #ppt_trt = relevel(ppt_trt, "D"),
+       nut_trt = factor(nut_trt, levels = c("C", "F", "N"), labels = c("Compost", "Fertilizer", "No amendment")))
+natcoarse_hulldat <- mutate(natcoarse_hulldat, 
+                            ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W")),
+                            nut_trt = factor(nut_trt, levels = c("C", "F", "N"), labels = c("Compost", "Fertilizer", "No amendment")))
+# plot treatment hulls
+mds_natcoarse_trthulls <- ggplot(mds_natcoarse_results,
+       aes(MDS1, MDS2, col = ppt_trt, fill = ppt_trt)) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  geom_polygon(data=natcoarse_hulldat,  aes(fill=ppt_trt,group=ppt_trt, col = ppt_trt), alpha=0.35) +
+  geom_point(aes(shape = block<3), col = "grey30", alpha = 0.5, size = 3) + #col = "grey30",
+  geom_point(aes(shape = block<3), alpha = 0.5, size = 3) + #col = "grey30",
+  #geom_point(alpha = 0.7, size = 3) +
+  scale_shape_manual(name = "Hillslope", values = c(24, 25), labels = c("Up", "Down"), guides(color = "none")) +
+  #scale_color_manual(name = NULL, values = c('Exotic Forb' = "red", 'Native Forb' = "purple", 'Exotic Grass' = "forestgreen", 'Native Grass' = "dodgerblue", "Exotic N-fixer" = "orange")) +
+  scale_color_manual(name = "Precipitation\ntreatment", 
+                     labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+                     values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  scale_fill_manual(name = "Precipitation\ntreatment", 
+                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"), 
+                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  #guides( = "none") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        strip.text = element_text(size = 12),
+        legend.text = element_text(size = 10)) +
+  facet_grid(herbicide_pretty~nut_trt)
+
+# plot species
+mds_natcoarse_sppfig <- ggplot(mds_natcoarse_results, aes(MDS1, MDS2)) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  geom_polygon(data=natcoarse_hulldat,  fill = "transparent", col = "transparent", alpha=0.05) +
+  geom_point(data = mds_natcoarse_spp, aes(MDS1, MDS2, color = spp), size = 3) +
+  #geom_text(data = subset(mds_natcoarse_spp, grepl("Backg", spp)), aes(MDS1, MDS2, color = spp, label = spp), size = 3) +
+  #geom_label(data = subset(mds_natcoarse_spp, !grepl("Backg", spp)), aes(MDS1, MDS2, color = spp, label = spp), size = 3) +
+  ggrepel::geom_text_repel(data = mds_natcoarse_spp, aes(MDS1, MDS2, col = spp, label = pretty_name, fontface = nchar(spp))) +
+  #ggrepel::geom_text_repel(data = subset(mds_natcoarse_spp, nchar(spp) > 4), aes(MDS1, MDS2, col = spp, label = pretty_name)) +
+  #ggrepel::geom_text_repel(data = subset(mds_natcoarse_spp, nchar(spp) == 4), aes(MDS1, MDS2, col = spp, label = pretty_name), fontface = "italic") +
+  scale_color_manual(name = NULL, values = plant_cols) +
+  scale_fill_manual(name = NULL, values = plant_cols) +
+  theme(legend.position = "none")
+        # legend.justification = c("left", "top"),
+        # legend.key.size = unit(0.1, "pt"))
+
+cowplot::plot_grid(mds_natcoarse_trthulls,
+                   mds_natcoarse_sppfig, 
+                   nrow = 1,
+                   rel_widths = c(1.1,0.8))
+
+ggsave(paste0(figpath,"fxnlgrp_natspp_nmds.pdf"), units = "in", width = 10, height = 5)
+
+
+# -- plot cover ----
+# functional groups only first, then fxnl groups and native species IDs
+natcoarse_seedtrts <- subset(natcoarse_all, seedtrt != "Unseeded") %>%
+  # drop bg native nfix and bg natgram because rare
+  subset(!grepl("Background Native G|Native N-", coarse_fxnl)) %>%
+  mutate(ppt_trt = factor(ppt_trt, levels = c("D","XC", "W")))
+# rbind natives seeded
+
+seededspp_long <- left_join(seededspp, distinct(subset(natcoarse_seedtrts, select =c(plot:nut_trt)))) %>%
+  gather(coarse_fxnl, totcov, BRCA:TRCI) %>%
+  subset(!grepl("TRCI", coarse_fxnl)) %>%
+  #dplyr::select(names(natcoarse_seedtrts)) %>%
+  rbind(subset(natcoarse_seedtrts, !grepl("Seeded", coarse_fxnl), select = names(.))) %>%
+  mutate(pretty_name = trimws(gsub("Background", "", coarse_fxnl)),
+         pretty_name = gsub("Grass", "grasses", pretty_name),
+         pretty_name = gsub("Forb", "forbs", pretty_name),
+         pretty_name = gsub("N-fixer", "N-fixers", pretty_name),
+         pretty_name = gsub("Exotic", "Non-native", pretty_name))
+# clean up names
+seededspp_long$pretty_name[seededspp_long$coarse_fxnl == "FEMI"] <- "F. microstachys"
+seededspp_long$pretty_name[seededspp_long$coarse_fxnl == "BRCA"] <- "B. carinatus"
+seededspp_long$pretty_name[seededspp_long$coarse_fxnl == "NEMA"] <- "N. maculata"
+seededspp_long$pretty_name[seededspp_long$coarse_fxnl == "ESCA"] <- "E. californica"
+seededspp_long$pretty_name[seededspp_long$pretty_name == "Native forbs"] <- "Background native forbs"
+
+
+ggplot(subset(natcoarse_seedtrts, grepl("Back", coarse_fxnl)), aes(ppt_trt, totcov, fill = coarse_fxnl, group = paste(coarse_fxnl))) +
+  stat_summary(geom = "bar", position = position_dodge()) +
+  stat_summary(geom = "errorbar", position = position_dodge()) +
+  # scale_color_manual(name = "Precipitation\ntreatment", 
+  #                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+  #                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  facet_grid(herbicide~nut_trt)
+
+# don't show herbicide
+ggplot(subset(natcoarse_seedtrts, grepl("Back", coarse_fxnl) & !grepl("Non", herbicide)), aes(nut_trt, totcov, fill = coarse_fxnl, group = paste(coarse_fxnl, nut_trt))) +
+  #geom_boxplot() +
+  stat_summary(geom = "bar", position = position_dodge()) +
+  # scale_color_manual(name = "Precipitation\ntreatment", 
+  #                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+  #                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  facet_grid(~ppt_trt)
+
+ggplot(subset(natcoarse_seedtrts, !grepl("Back", coarse_fxnl) & !grepl("Non", herbicide)), aes(nut_trt, totcov, fill = coarse_fxnl, group = paste(coarse_fxnl, nut_trt))) +
+  #geom_boxplot() +
+  stat_summary(geom = "bar", position = position_dodge()) +
+  # scale_color_manual(name = "Precipitation\ntreatment", 
+  #                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+  #                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  facet_grid(~ppt_trt)
+
+ggplot(subset(natcoarse_seedtrts, !grepl("Back", coarse_fxnl) & grepl("Non", herbicide)), aes(nut_trt, totcov, fill = coarse_fxnl, group = paste(coarse_fxnl, nut_trt))) +
+  #geom_boxplot() +
+  stat_summary(geom = "bar", position = position_dodge()) +
+  # scale_color_manual(name = "Precipitation\ntreatment", 
+  #                    labels = c("D" = "Drought", "XC" = "Ambient", "W" = "Wet"),
+  #                    values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  facet_grid(~ppt_trt)
+
+
+
+
+
+
+# -- anova for not seeded ----
+summary(aov(totcov ~ coarse_fxnl * ppt_trt * herbicide * nut_trt, data = natcoarse_seedtrts))
+
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, data = subset(natcoarse_seedtrts, coarse_fxnl == "Background Exotic Grass"))) # only precip and herb matter for exograms (main effects only)
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(natcoarse_seedtrts, coarse_fxnl == "Background Exotic Forb"))) # herbicide and nutrient treatment matter for exo forbs (including their interaction)
+
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(natcoarse_seedtrts, coarse_fxnl == "Background Exotic N-fixer"))) #ppt marginally matters
+
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(natcoarse_seedtrts, coarse_fxnl == "Seeded Native Forb"))) # just ppt matters
+
+
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(natcoarse_seedtrts, coarse_fxnl == "Seeded Native Grass"))) # herbicide, ppt and their interaction
+
+summary(aov(FEMI ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(neighborhood_counts))) # just herb and interaction with herb:ppt
+
+summary(aov(BRCA ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(neighborhood_counts))) # herb, nut, ppt, nut:ppt
+
+summary(aov(NEMA ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(neighborhood_counts))) # ppt strong, marginal nut
+
+summary(aov(ESCA ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(neighborhood_counts))) # marginal 3-way. native seeded forbs just happy to be there
+
+summary(aov(totcov ~ herbicide * nut_trt * ppt_trt, 
+            data = subset(natcoarse_seedtrts, coarse_fxnl == "Background Native Forb"))) # bg nat forbs don't care
+
+
+# just show herbicided. show exogr and exoforb + seeded nats
+
+natcoarse_seedtrts_short <- subset(natcoarse_seedtrts, grepl("Exotic [G|F]|Seeded", coarse_fxnl)) %>%
+ mutate(pretty_names = trimws(gsub("Background", "", coarse_fxnl)),
+        pretty_names = gsub("Forb", "forbs", pretty_names),
+        pretty_names = gsub("Grass", "grasses", pretty_names),
+        pretty_names = gsub("Exotic", "Non-native", pretty_names),
+        pretty_names = gsub("Native", "native", pretty_names)
+        ) %>%
+  mutate(nut_trt = factor(nut_trt, levels = c("C", "F", "XC"), labels = c("Compost", "Fertilizer", "No amendment")),
+         herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided")))
+simple_plantcols <- plant_cols2[grepl("B. |N. |Non-native [g|f]", names(plant_cols2))]
+names(simple_plantcols)[grep("B. ", names(simple_plantcols))] <- "Seeded native grasses"
+names(simple_plantcols)[grep("N. ", names(simple_plantcols))] <- "Seeded native forbs"
+#simple_plantcols #<-
+
+ggplot(natcoarse_seedtrts_short, aes(ppt_trt, totcov, col = pretty_names, group = coarse_fxnl)) +
+  stat_summary(position = position_dodge(width = 0.5)) +
+  scale_color_manual(name = "Functional group", values = simple_plantcols) +
+  facet_grid(herbicide~nut_trt, scales = "free_y") +
+  labs(y = "Mean cover (%)", x = "Precipitation treatment") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+ggsave(paste0(figpath, "simple_cover_summaries.pdf"), unit = "in", width = 6.5, height = 4)
+
+# all groups (it's a lot)
+seededspp_long %>%
+  mutate(pretty_name = factor(pretty_name,
+                              levels = c("Non-native forbs", "Non-native grasses", "Non-native N-fixers",
+                                         "Background native forbs",
+                                         "E. californica", "N. maculata",
+                                         "B. carinatus", "F. microstachys")),
+         nut_trt = factor(nut_trt, levels = c("C", "F", "XC"), labels = c("Compost", "Fertilizer", "No amendment"))) %>%
+  subset(herbicide == "Herbicided") %>%
+ggplot(aes(as.numeric(ppt_trt), totcov, col = pretty_name, group = pretty_name)) +
+  geom_vline(aes(xintercept = 1.5), linetype = 3, col = "grey50") +
+  geom_vline(aes(xintercept = 2.5), linetype = 3, col = "grey50") +
+  stat_summary(position = position_dodge(width = 0.75)) +
+  scale_x_continuous(breaks =c(1,2,3), labels = c("D", "XC", "W")) +
+  scale_color_manual(name = NULL, values = plant_cols2) +
+  facet_grid(herbicide~nut_trt, scales = "free_y") +
+  labs(y = "Mean cover (%)", x = "Precipitation treatment") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+ggsave(paste0(figpath, "spp_cover_summaries.pdf"), unit = "in", width = 10, height = 3)
+
+
+# try to cover natives
+testherb <- seededspp_long %>%
+  mutate(pretty_name = factor(pretty_name,
+                              levels = c("Non-native forbs", "Non-native grasses", "Non-native N-fixers",
+                                         "Background native forbs",
+                                         "E. californica", "N. maculata",
+                                         "B. carinatus", "F. microstachys")),
+         nut_trt = factor(nut_trt, levels = c("C", "F", "XC"), labels = c("Compost", "Fertilizer", "No amendment"))) %>%
+  subset(herbicide == "Herbicided") #%>%
+
+ggplot(testherb, aes(as.numeric(ppt_trt), totcov, col = pretty_name, group = pretty_name)) +
+  geom_vline(aes(xintercept = 1.5), linetype = 3, col = "grey50") +
+  geom_vline(aes(xintercept = 2.5), linetype = 3, col = "grey50") +
+  stat_summary(aes(alpha = grepl("Non-nat|Back", pretty_name)), position = position_dodge(width = 0.75)) +
+  #stat_summary(data = subset(testherb, grepl("Non-nat|Back", pretty_name)), position = position_dodge(width = 0.75)) +
+  scale_x_continuous(breaks =c(1,2,3), labels = c("D", "XC", "W")) +
+  scale_color_manual(name = NULL, values = plant_cols2) +
+  scale_alpha_manual(values = c(`FALSE`=0,`TRUE` = 1), guide = "none") + 
+  facet_grid(herbicide~nut_trt, scales = "free_y") +
+  labs(y = "Mean cover (%)", x = "Precipitation treatment") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+ggsave(paste0(figpath, "spp_cover_summaries_ghostnats.pdf"), unit = "in", width = 10, height = 3)
+
+
+# try to cover native grams
+ggplot(testherb, aes(as.numeric(ppt_trt), totcov, col = pretty_name, group = pretty_name)) +
+  geom_vline(aes(xintercept = 1.5), linetype = 3, col = "grey50") +
+  geom_vline(aes(xintercept = 2.5), linetype = 3, col = "grey50") +
+  stat_summary(aes(alpha = !grepl("B. |F. ", pretty_name)), position = position_dodge(width = 0.75)) +
+  #stat_summary(data = subset(testherb, grepl("Non-nat|Back", pretty_name)), position = position_dodge(width = 0.75)) +
+  scale_x_continuous(breaks =c(1,2,3), labels = c("D", "XC", "W")) +
+  scale_color_manual(name = NULL, values = plant_cols2) +
+  scale_alpha_manual(values = c(`FALSE`=0,`TRUE` = 1), guide = "none") + 
+  facet_grid(herbicide~nut_trt, scales = "free_y") +
+  labs(y = "Mean cover (%)", x = "Precipitation treatment") +
+  theme(strip.background = element_rect(fill = "transparent"),
+        legend.text = element_text(size = 10),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 11))
+
+ggsave(paste0(figpath, "spp_cover_summaries_ghostnatgrams.pdf"), unit = "in", width = 10, height = 3)

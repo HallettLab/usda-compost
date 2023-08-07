@@ -44,9 +44,11 @@ cimis_2010 <- cimis_data(targets = 95918, start.date = as.Date("2009-01-01"), en
                     items = c("day-precip", "day-air-tmp-max", "day-air-tmp-min", "day-air-tmp-avg"))
 cimis_2016 <- cimis_data(targets = 95918, start.date = max(cimis_2010$Date), end.date =  max(cimis_2010$Date)+1749, measure.unit = "M", 
                          items = c("day-precip", "day-air-tmp-max", "day-air-tmp-min", "day-air-tmp-avg"))
-cimis_2021 <- cimis_data(targets = 95918, start.date = max(cimis_2016$Date), end.date =  Sys.Date()-1, measure.unit = "M", 
+cimis_2021 <- cimis_data(targets = 95918, start.date = max(cimis_2016$Date), end.date =  max(cimis_2016$Date)+1749, measure.unit = "M", 
                          items = c("day-precip", "day-air-tmp-max", "day-air-tmp-min", "day-air-tmp-avg"))
-all_cimis <- rbind(cimis_2010, cimis_2016, cimis_2021) %>%
+cimis_2023 <- cimis_data(targets = 95918, start.date = max(cimis_2021$Date), end.date =  Sys.Date()-1, measure.unit = "M", 
+                         items = c("day-precip", "day-air-tmp-max", "day-air-tmp-min", "day-air-tmp-avg"))
+all_cimis <- rbind(cimis_2010, cimis_2016, cimis_2021,cimis_2023) %>%
   distinct()
 cimis_missing_dates <- unique(all_cimis$Date[is.na(all_cimis$Value)])
 # try missing data at station 195 (auburn, ca)
@@ -157,8 +159,8 @@ cimis_monthly <- group_by(all_cimis, mon, yr, waterYear, wymon) %>%
   subset(!nobs < 28)
   
 cimis_ts_tmean <- ts(all_cimis$infill_values[all_cimis$Item == "DayAirTmpAvg"], start = c(2009,01), freq = 365)
-cimis_PET <- thornthwaite(ts(cimis_monthly$mon_tmean, start = c(2009,01), end = c(2022, 3), freq = 12), lat = 39.25170524042971)
-cimis_BAL <- ts(cimis_monthly$mon_ppt, start = c(2009, 01), end = c(2022, 3), freq=12) - cimis_PET
+cimis_PET <- thornthwaite(ts(cimis_monthly$mon_tmean, start = c(2009,01), end = c(2023, 7), freq = 12), lat = 39.25170524042971)
+cimis_BAL <- ts(cimis_monthly$mon_ppt, start = c(2009, 01), end = c(2023, 7), freq=12) - cimis_PET
 cimis_SPEI.1 <- spei(cimis_BAL, 1)
 cimis_SPEI.3 <- spei(cimis_BAL, 3)
 plot(cimis_SPEI.1) # missing data are making full spei calculations funky
@@ -189,7 +191,11 @@ temptrends <- data.frame(date = unique(all_cimis$Date),
 ggplot(temptrends, aes(date, trend, col = temp)) +
   geom_line()
 # look at trend
-summary(lm(trend ~ date, data = subset(temptrends, temp == "tmax"))) # tmin and tmean are both about +1deg per decade like tmax
+summary(lm(trend ~ date, data = subset(temptrends, temp == "tmin"))) # tmin and tmean are both about +1deg per decade like tmax
+with(subset(temptrends, !is.na(trend)), range(date))
+temptrends_datespres <- subset(temptrends, !is.na(trend))
+max(temptrends_datespres$date) - min(temptrends_datespres$date)
+
 
 #build plot
 tmin_plot <- ggplot() +
@@ -216,7 +222,8 @@ plot_grid(tmax_plot, tmean_plot, tmin_plot, nrow = 3, align = "hv")
 
 monthdat <- cbind(cimis_monthly, 
                   spei3 = as.numeric(cimis_SPEI.3$fitted),
-                  ppt_trend = as.numeric(ppt_trend_monthly$trend)) %>%
+                  ppt_trend = as.numeric(ppt_trend_monthly$trend)
+                  ) %>%
   mutate(date = as.Date(paste(yr, mon, 01, sep = "-"))) %>%
   left_join(distinct(all_cimis[c("Date", "doy", "dowy")]), by = c("date"= "Date")) %>%
   distinct()
@@ -242,6 +249,43 @@ pptplot <- ggplot(monthdat) +
         plot.margin = margin(0,0,0,0, "pt"))
 
 plot_grid(pptplot, speiplot, nrow = 2, align = "vh")
+
+
+# plot for esa 2023
+monthdat[c("date", "spei3")] %>%
+  mutate(nondrought = ifelse(spei3>=0, spei3, 0),
+         drought = ifelse(spei3<0, spei3, 0)) %>%
+  #subset(!is.na(spei3)) %>%
+  ggplot() +
+  geom_hline(aes(yintercept = 0), lty = 1) +
+  # add vlines at experiment start and end
+  geom_ribbon(aes(y = (spei3), xmin = as.Date("2020-10-01"), xmax = as.Date("2021-06-01")), fill = "grey80", alpha = 0.5) +
+  # geom_vline(aes(xintercept = as.Date("2018-10-01")), lty = 1, col = "grey50" ) +
+  geom_vline(aes(xintercept = as.Date("2020-10-01")), lty = 2, col = "grey50") +
+  geom_vline(aes(xintercept = as.Date("2021-06-01")), lty = 2, col = "grey50") +
+  geom_area(aes(date, nondrought), fill = "royalblue1", col = "grey30", alpha = 0.8) +
+  # geom_vline(aes(xintercept = as.Date("2028-10-01")), lty = 2, col = "grey30") +
+  # geom_vline(aes(xintercept = as.Date("2021-06-01")), lty = 2, col = "grey30") +
+  scale_x_date(expand = c(0.005,0.005), date_labels = "%Y", 
+               breaks = seq.Date(as.Date("2010-01-01"), as.Date("2023-01-01"), by = (365.25*4)) ) +
+  scale_y_continuous(expand = c(0.005,0.005)) +
+  geom_area(aes(date, drought), fill = "salmon3", col = "grey30", alpha = 0.8) +
+  labs(caption = "data source: CIMIS", 
+       y = "3-month SPEI", x = NULL, 
+       subtitle = "Browns Valley, California") +
+  theme(axis.text = element_text(size = 11),
+        plot.caption = element_text(size = 10),
+        plot.subtitle = element_text(size = 12),
+        axis.title = element_text(size = 12))
+
+# write out for esa 2023
+figpath <- "/Users/scarlet/Documents/suding_lab/SFREC/Compost/natdiv/esa2023_presfigs/"
+ggsave(paste0(figpath,"sfrec_3monspei_20092023.pdf"), units = "in", width = 7, height = 3)
+
+# no experiment timeline markings
+ggsave(paste0(figpath,"sfrec_3monspei_20092023_nomarks.pdf"), units = "in", width = 7, height = 3)
+# native exp only
+ggsave(paste0(figpath,"sfrec_3monspei_20092023_natexo_marks.pdf"), units = "in", width = 7, height = 3)
 
 
 # -- SOIL MOISTURE v. PREPPED PPT ---

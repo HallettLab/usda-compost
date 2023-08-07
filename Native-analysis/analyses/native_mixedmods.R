@@ -3,22 +3,33 @@
 # questions: caitlin.t.white@colorado.edu
 
 # want to know..
-# 1) how did seeded natives do?
-# 2) is there any difference between native cover in herbicide vs. not 
-# 3) Did seeding natives matter at all for changing exotic cover (e.g. suppressing non-native cover?)
+# 1) how did seeded natives do? generally and by species seeded
+# 2) is there any difference between native cover in herbicide vs. not
+# 3) did nutrient addition (esp compost) + wet advantage exotics over natives?
+# 4 [maybe]) Did seeding natives matter at all for changing exotic cover (e.g. suppressing non-native cover?)
 
+# notes:
 # plot 33 not seeded because not herbicided (block 4, NW plot)
+
+# this is a nested (split-split-plot) experiment design.
+# to account for all error terms would need to have error for: block, whole plot (nut), sub-plot (ppt), and maybe herbicide depending on how analyzing data
+# lack of 4NW plot makes this an imbalanced design, 4 reps for all treat combos except NW (3 only)
+# because of low rep size, cannot nest error as ideally would in split-plot ANOVA (not enough variation in data within treatment groups for it)
+
+# keep block as random effect and be cognizant of bias when interpreting results (models may be overconfident in estimates)
+
+
 
 # -- SETUP -----
 # load needed libraries
 library(tidyverse)
-library(car)
+library(cowplot) # for arranging plots
+library(car) # for type II and III anova tests
 library(lme4)
 library(lmerTest)
 library(multcomp)
 library(MASS)
-library(cowplot)
-library(pscl)
+library(pscl) # for zinf or hurdle
 library(glmmTMB) # for random effects in ZINF model
 
 # source prepped data
@@ -27,7 +38,7 @@ source("Native-analysis/native_prep_cover.R", )
 
 
 
-# -- ANOVA or GLMMs ----
+# -- DID SEED + HERB TRTS WORK GENERALLY? ----
 # start with simple cover (seeded natives vs. background exotics, where nfixers lumped in "forb group")
 # plot to check it looks right -- warnings will be for "missing" seeded cover in unseeded subplots and that's fine, ignore
 coarsecov_all_2021_simple %>%
@@ -45,50 +56,130 @@ coarsecov_all_2021_simple %>%
         legend.direction = "horizontal",
         strip.background = element_rect(fill = "transparent"))
 
+# look at distribution by group
+with(coarsecov_all_2021_simple, boxplot(totcov~fullgrp))
+
+
 # compare background exotics in seeded vs. unseeded plots to see if any diff
-lm_exotics <- lmerTest::lmer(totcov ~ fxnlgrp + ppt_trt + nut_trt + herbicide + (1|block) +(1|wpID), data = subset(simplecov, grepl("Back", fullgrp))) # & seedtrt == "Unseeded"
+# ignore nutrient and ppt trts for now but control for them in error
+lm_exotics <- lmerTest::lmer(totcov ~ herbicide * fxnlgrp + seedtrt + (1|wholeplotID) +(1|ppt_trt:nut_trt), 
+                             data = subset(coarsecov_all_2021_simple, grepl("Back", fullgrp)))
 summary(lm_exotics)
-Anova(lm_exotics) # similar if use type III
+Anova(lm_exotics) # seed addition didn't have much impact on exotic cover relative to itself in unseeded subplots, herbicide mattered more
 ls_means(lm_exotics, pairwise = T)
 lmerTest::ranova(lm_exotics)
-# herbicide makes a difference, forb v. grass, ppt, and interaction between fnxl group x ppt_trt, and fxnlgrp x nut_trt
-# nutrient amendment alone does not have main effect, seeding trt doesn't matter, no 3-way interaction between fxnl group, ppt and nut_trt
+# herbicide, fxnl grp all signif; seeding has no impact on amount of exotic grass and forb cover in or outside of seeded sub-sub-plots (even when include as interaction)
+# generally exotic cover greater in non-herb, and grass dominates (by 70% cover on average)
+# exotic forb cover is greater in herbicided, exotic grass reduced (tends to have 40% more cover in herbicided)
+# model it as negbin with counts
+nb_exotics <- glmer.nb(round(totcov,0) ~ herbicide * fullgrp * seedtrt + (1|wholeplotID) +(1|ppt_trt:nut_trt), 
+                       data = subset(coarsecov_all_2021_simple, grepl("Back", fullgrp)))
+summary(nb_exotics) # similar results
+emmeans_allexos <- data.frame(emmeans::emmeans(nb_exotics, spec = c("herbicide", "fullgrp", "seedtrt")))
+ggplot(emmeans_allexos, aes(herbicide, exp(emmean), group = paste(herbicide, seedtrt), col = seedtrt)) +
+  geom_errorbar(aes(ymin = exp(asymp.LCL), ymax = exp(asymp.UCL)), position = position_dodge(width = 0.5), width = 0) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  facet_wrap(~fullgrp)
 
+
+# check out exotic grass cover only -- just want to know if treatments reduced dominant cover
+nb_exoticgram <- glmer.nb(round(totcov,0) ~ herbicide + nut_trt + ppt_trt +  (1|block) + (1|seedtrt:subplotID), 
+         data = subset(coarsecov_all_2021_simple, grepl("Exotic_G", fullgrp)))
+summary(nb_exoticgram) # now yes, as expected: herb and drought reduced grass cover -- but singular fit
+Anova(nb_exoticgram) # seeding and nutrient amendments do little overall; responsive to herbicide + ppt trt
+emmeans_exogram <- data.frame(emmeans::emmeans(nb_exoticgram, spec = c("herbicide", "nut_trt", "ppt_trt")))
+ggplot(emmeans_exogram, aes(herbicide, emmean, group = paste(herbicide, nut_trt, ppt_trt), col = paste(nut_trt, ppt_trt))) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), position = position_dodge(width = 0.5), width = 0) +
+  geom_point(position = position_dodge(width = 0.5))
+
+# repeat for exotic forb
+pois_exoticforb <- glmer(round(totcov,0) ~ herbicide + seedtrt + nut_trt + ppt_trt +  (1|block) + (1|seedtrt:subplotID),
+                       family = "poisson",
+                          data = subset(coarsecov_all_2021_simple, grepl("Exotic_F", fullgrp)))
+summary(pois_exoticforb) # herb advantaged exotic forbs, compost reduced, drought reduced.. interesting .. perhaps bc of native grass response
+Anova(pois_exoticforb) # responsive to herbicide + nutrient treat
+exoforb <- data.frame(emmeans::emmeans(pois_exoticforb, spec = c("herbicide", "nut_trt", "ppt_trt")))
+ggplot(exoforb, aes(herbicide, emmean, group = paste(herbicide, nut_trt, ppt_trt), col = paste(nut_trt, ppt_trt))) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), position = position_dodge(width = 0.5), width = 0) +
+  geom_point(position = position_dodge(width = 0.5))
+  
 
 # compare native seeded in herb vs. non-herb to see if any differences
-simplecov$nativity <- with(simplecov, ifelse(grepl("Nati", fullgrp), "Native", "Exotic"))
-simplecov$nativity <- factor(simplecov$nativity)
-lm_natives <- lmerTest::lmer(totcov ~ herbicide + nativity * fxnlgrp* ppt_trt + nut_trt +(1|block), data = subset(simplecov, seedtrt == "Native seeded"))
+lm_natives <- lmerTest::lmer(totcov ~ herbicide + fullgrp + ppt_trt + nut_trt + (1|block), 
+                             data = subset(coarsecov_all_2021_simple, seedtrt == "Native seeded"))
 summary(lm_natives)
 Anova(lm_natives)
 ls_means(lm_natives, pairwise = T)
 lmerTest::ranova(lm_natives)
 
-lm_natives_herb <- lmerTest::lmer(totcov ~ nativity * fxnlgrp* ppt_trt * nut_trt +(1|block), data = subset(simplecov, seedtrt == "Native seeded" & herbicide == "Herbicided"))
-summary(lm_natives_herb)
-lm_natives_nonherb <- lmerTest::lmer(totcov ~ herbicide + fxnlgrp * ppt_trt * nut_trt +(1|block), data = subset(simplecov, seedtrt == "Native seeded"  & !grepl("Backg", fxnlgrp)))
-summary(lm_natives_nonherb)
+# round to run negbin but will not count trace amounts of natives that were there
+nb_natives <- glmer.nb(round(totcov,0) ~ herbicide + fullgrp * ppt_trt + nut_trt + (1|block), 
+                      data = subset(coarsecov_all_2021_simple, grepl("Native", fullgrp) & seedtrt == "Native seeded"))
+# singular fit warning for negbin model
+pois_natives <- glmer(round(totcov,0) ~ herbicide + nut_trt + ppt_trt + fullgrp + (1|block), 
+                    family = "poisson",
+                       data = subset(coarsecov_all_2021_simple, grepl("Native", fullgrp) & seedtrt == "Native seeded"))
+summary(pois_natives) # herbicide helps, ppt trt also helps
+# not being able to run model with random error terms and full interaction is a problem..
+plot(pois_natives)
+plot(nb_natives) # better
+pchisq(2 * (logLik(nb_natives) - logLik(pois_natives)), df =1, lower.tail = F) #nb is better fit
+summary(nb_natives)
+Anova(nb_natives)
+# plot predicted means
+emnatives <- data.frame(emmeans::emmeans(nb_natives, spec = c("herbicide", "nut_trt", "ppt_trt", "fullgrp")))
+ggplot(mutate(emnatives, ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W"))), 
+       aes(herbicide, exp(emmean), group = paste(herbicide, nut_trt, ppt_trt), col = ppt_trt)) +
+  #geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_errorbar(aes(ymin = exp(asymp.LCL), ymax = exp(asymp.UCL)), position = position_dodge(width = 0.5), width = 0) +
+  geom_point(aes(shape = nut_trt), position = position_dodge(width = 0.5)) +
+  scale_color_manual(values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  facet_wrap(~fullgrp)
+# anything below 0 yields an NaN number (interp: would not occur)
 
+
+nb_natives_seeded <- glmer.nb(round(totcov) ~ herbicide * fullgrp * ppt_trt + nut_trt +(1|block), 
+                                  data = subset(coarsecov_all_2021_simple, seedtrt == "Native seeded"))
+summary(nb_natives_seeded)
+Anova(nb_natives_seeded)
+confint(nb_natives_seeded)
+emnatives_all <- data.frame(emmeans::emmeans(nb_natives_seeded, spec = c("herbicide", "nut_trt", "ppt_trt", "fullgrp")))
+ggplot(mutate(emnatives_all, ppt_trt = factor(ppt_trt, levels = c("D", "XC", "W"))), aes(herbicide, exp(emmean), group = paste(herbicide, nut_trt, ppt_trt), col = ppt_trt)) +
+  #geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_errorbar(aes(ymin = exp(asymp.LCL), ymax = exp(asymp.UCL)), position = position_dodge(width = 0.5), width = 0) +
+  geom_point(aes(shape = nut_trt, fill = ppt_trt), col = "grey30", position = position_dodge(width = 0.5)) +
+  labs(y = "Predicted cover (%)", x = "Pre-seeding treatment") +
+  scale_color_manual(values = RColorBrewer::brewer.pal(4,"Blues")[2:4], guide = ) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(4,"Blues")[2:4]) +
+  scale_shape_manual(values = c(21, 24, 22)) +
+  facet_wrap(~fullgrp, scales = "free")
+
+# try to diff groups to see if can model effect of all that way..
+natonly_coarsecov_simple <- subset(coarsecov_all_2021_simple, grepl("Native", seedtrt), 
+                                   select = c(plot, herbicide, fullgrp, block:nativity, totcov)) %>%
+  mutate(herbicide= gsub("Non-h", "NonH", herbicide)) %>%
+  spread(herbicide, totcov, fill = 0) %>%
+  mutate(nh_less_h = NonHerbicided-Herbicided,
+         fullgrp = factor(fullgrp),
+         fullgrp =relevel(fullgrp, "Background_Exotic_Grass"))
+
+# look at dist
+ggplot(natonly_coarsecov_simple) +
+  geom_density(aes(nh_less_h)) +
+  facet_wrap(~fullgrp) # exo forbs and nat grams have long left tail..
+
+# run model anyway..
+lm_diff <- lmerTest::lmer(nh_less_h ~ fullgrp * nut_trt * ppt_trt + (1|block), 
+                             data = natonly_coarsecov_simple)
+summary(lm_diff)
+Anova(lm_diff) # seed addition didn't have much impact on exotic cover relative to itself in unseeded subplots, herbicide mattered more
+ls_means(lm_diff, pairwise = T)
+lmerTest::ranova(lm_diff) #no..
 
 
 # -- SPECIES RESPONSE MODELS ----
 # build 5 separate LMMs for each native species seeded
 # compare with all species in one model for due diligence
-
-# prep dataset with all neighbor abundance, and with neighbor forbs and grams split out
-# can start with simplecov background exotics, sum across and retain functional groups
-neighborhood <- subset(simplecov, grepl("Nat", seedtrt) & grepl("Back", fullgrp), select = -fullgrp) %>%
-  mutate(fxnlgrp = casefold(fxnlgrp)) %>%
-  spread(fxnlgrp, totcov, fill = 0) %>%
-  mutate(neighbors = forb + grass)
-nats <- c("TRCI", "BRCA", "FEMI", "NEMA", "ESCA")
-seededspp <- dplyr::select(natwide, plot:date, all_of(nats)) %>%
-  subset(!grepl("Unse", seedtrt)) %>%
-  dplyr::select(plot, herbicide, mon, date, TRCI:ESCA) %>%
-  gather(spp, cov, TRCI:ESCA) %>%
-  group_by(plot, herbicide, spp) %>%
-  summarise(cov = max(cov), .groups = "drop_last") %>%
-  spread(spp, cov)
 
 # look at distribution
 gather(seededspp, spp, cov, BRCA:TRCI) %>%
@@ -128,10 +219,6 @@ nrow(seededspp)
 sapply(seededspp[seededspp$herbicide == "Herbicided",nats], function(x) sum(x >0))
 sapply(seededspp[seededspp$herbicide != "Herbicided",nats], function(x) sum(x >0)) # all but TRCI recruited regardles of herbicide
 
-# join to neighborhood
-neighborhood <- merge(neighborhood, seededspp)
-neighborhood_counts <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x %in% c(1:9), x+1, ifelse(x > 0 & x<1, 1, x)))
-neighborhood_PA <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x>0, 1, 0))
 # grams look like they needed herbicide conditions, forbs less affected
 
 # start with lmers on abundance
@@ -140,8 +227,8 @@ femi_lmer <- lmer(FEMI ~ herbicide * ppt_trt + nut_trt  + (1|block), data = neig
 femi_lmer_poisson <- glmer(FEMI ~ herbicide + ppt_trt + nut_trt + (1|block), family = "poisson", data = neighborhood_counts)
 femi_lmer_nb <- glmer.nb(FEMI ~ herbicide + ppt_trt + nut_trt + (1|block), data = neighborhood_counts)
 femi_lmer_nb_herbonly <- glmer.nb(FEMI ~ ppt_trt + nut_trt + (1|block), data = subset(neighborhood_counts, grepl("^Herb", herbicide)))
-femi_lmer_nb_grass <- glmer.nb(FEMI ~ grass + ppt_trt + nut_trt + (1|block), data = neighborhood_counts)
-femi_lmer_bin <- glmer(FEMI ~  grass + ppt_trt + nut_trt + (1|block), family = "binomial", data = neighborhood_PA)
+femi_lmer_nb_grass <- glmer.nb(FEMI ~ ExoticGrass + ppt_trt + nut_trt + (1|block), data = neighborhood_counts)
+femi_lmer_bin <- glmer(FEMI ~  ExoticGrass + ppt_trt + nut_trt + (1|block), family = "binomial", data = neighborhood_PA)
 femi_lmer_bin2 <- glmer(FEMI ~  grass + herbicide + ppt_trt + nut_trt + (1|hillpos), family = "binomial", data = neighborhood_PA)
 femi_lmer_bin3 <- glmer(FEMI ~  herbicide + ppt_trt + nut_trt + (1|hillpos), family = "binomial", data = neighborhood_PA)
 summary(femi_lmer)
@@ -166,7 +253,7 @@ lmerTest::ranova(femi_lmer)
 
 # try zinf instead, compare w hurdle
 femi_zinf <- zeroinfl(FEMI ~ herbicide + ppt_trt + nut_trt, data = neighborhood_counts, dist = "negbin", link = "logit")
-femi_hurdle <- hurdle(FEMI ~ herbicide + ppt_trt + nut_trt, data = neighborhood_counts, dist = "negbin", link = "logit")
+femi_hurdle <- hurdle(FEMI ~ herbicide * ppt_trt + nut_trt, data = neighborhood_counts, dist = "negbin", link = "logit")
 summary(femi_zinf)
 summary(femi_hurdle)
 summary(femi_lmer_nb)
@@ -269,7 +356,7 @@ summary(all_glmer_nb3x)
 # make hillpos factor
 neighborhood_counts
 # femi
-femi_glm_nb <- MASS::glm.nb(FEMI ~ herbicide + ppt_trt + nut_trt, data = neighborhood_counts)
+femi_glm_nb <- MASS::glm.nb(FEMI ~ herbicide + ppt_trt + nut_trt + factor(block), data = neighborhood_counts)
 femi_glm_nb_hill <- MASS::glm.nb(FEMI ~ herbicide + ppt_trt + nut_trt + hillpos, data = neighborhood_counts)
 femi_glm_nb_hill_grass <- MASS::glm.nb(FEMI ~ grass + ppt_trt + nut_trt + hillpos, data = neighborhood_counts)
 femi_glm_nb_hill_x <- MASS::glm.nb(FEMI ~ herbicide * ppt_trt * nut_trt + hillpos, data = neighborhood_counts)
@@ -404,3 +491,4 @@ vuong(all_glm_nb_simple, all_zinf) # not by BIC corrected
 vuong(all_glm_nb_simple, all_hurdle) # not by AIC corrected
 
 glmmTMB()
+
