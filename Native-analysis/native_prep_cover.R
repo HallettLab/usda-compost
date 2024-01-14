@@ -34,7 +34,7 @@ spplist <- read.csv(paste0(datpath, "Compost_SppList.csv"), na.strings = na_vals
 coverlong <- read.csv(paste0(datpath, "Cover/Cover_CleanedData/Compost_Cover_LongClean.csv"), strip.white = T, na.strings = na_vals)
 
 # check that all read in as expected
-#str(natlong); str(natwide); str(coverlong)
+# str(natlong); str(natwide); str(coverlong)
 
 #fix date
 natlong$date <- as.Date(natlong$date, format = "%Y-%m-%d")
@@ -58,94 +58,145 @@ trtkey <- trtkey %>%
          xpos = rep(rep(1:3, each = 3), 4)) %>%
   # set factor levels
   mutate(nut_trt = factor(nut_trt, levels = c("XC", "F", "C")),
-         ppt_trt = factor(ppt_trt, levels = c("XC", "D", "W")))
-  
+         ppt_trt = factor(ppt_trt, levels = c("XC", "D", "W")),
+         fulltrt = factor(fulltrt, levels = c("XCXC", "XCD", "XCW",
+                                              "FXC", "FD", "FW",
+                                              "CXC", "CD", "CW")),
+         wholeplotID = factor(wholeplotID, 
+                              levels = paste0(rep.int(c(1:4),3),rep(levels(nut_trt), each = 4))
+                              ),
+         subplotID = factor(subplotID,
+                            levels = paste0(rep.int(c(1:4),4),rep(levels(fulltrt), each = 4))
+                            ),
+         block = factor(block))
+# review
+summary(trtkey)
+levels(trtkey$wholeplotID)
+levels(trtkey$subplotID) # good
 
 
-# -- AGGREGATE COVER -----
-# 1. COARSE FXNL, ALL SUB-SUB-PLOTS -----
-# ashley only updated cover vals for re-surveys for spp that had changed
-# choose max pct_cov per species per plot per herbicide and seeding trt, then sum
-coarsecov_nat <- natlong %>%
+# -- QA: SCREEN GRASS COVER CHANGES -----
+# general note: sometimes May revisits reveal April grasses were mis-ID'd (e.g., if they didn't have infloresence)
+# native seeded surveys: ashley only updated cover vals for re-surveys for spp that had changed
+sort(unique(natlong$notes))
+# focus comment search based on skim
+with(natlong, sort(unique(notes[grepl("correct|update ", notes)])))
+# screen for seeded spp downhill of plot (present, but seed migrated downslope)
+# > plots 11 herb, 12 non herb, 2 [update AICA]
+with(natlong, sort(unique(notes[grepl("down|outside", notes)])))
+# look at entered cover for seeded spp outside plot
+# > in manual review, anytime FEMI is noted outside plot it is also recorded with cover inside plot
+# > BRCA noted outside plot is not present in one plot (assign trace cover) [plot 34, block4 CD, non-herbicided]
+
+with(subset(coverlong, yr == 2021), sort(unique(notes)))
+# ^ no notes in main cover dataset about mis-ID'd grasses
+
+# rules for aggregating data across apr and may surveys: 
+# 1. take max value of a species from both surveys UNLESS says to update (applies to 3 subplots)
+# 2. if seeded spp found outside plot and not recorded as present in plot, assign trace value: it established, seed just migrated
+# > if a plant was present in april and died by may, still count as it being able to grow: we are interested in whether treatments inhibit ability to establish,
+
+
+
+# - 1. SPECIES LEVEL AGGREGATE COVER -----
+# compile season cover per species dataset for all native seeded, and unseeded plots in herb/non-herb 2021
+natsp <- subset(natlong, select = c(plot:mon, notes, code4, pct_cover, fxnl_grp:native_seeded)) %>%
+  group_by(plot, seedtrt, herbicide, code4, fxnl_grp) %>%
+  mutate(usemay = any(grepl("correct/update|update AICA",notes) & fxnl_grp == "Grass")) %>%
+  ungroup() %>%
+  reframe(pct_cover = ifelse(usemay, pct_cover[mon == 5], max(pct_cover)),.by = names(.)[!grepl("cover|usemay|notes|mon", names(.))]) %>%
+  distinct()
+
+# add row for BRCA in plot where outside frame and not recorded in
+brca_row <- subset(natlong, grepl("BRCA outside", notes) & fxnl_grp == "Grass", select = names(natsp))[1,] %>%
+  mutate(code4 = "BRCA", pct_cover = 0.01, nativity = "Native", native_seeded = "Yes")
+
+# bind brca row to nat sp
+natsp <- rbind(natsp, brca_row) %>%
+  arrange(plot, seedtrt, herbicide, code4) %>%
+  # set seedtrt and herbicide as factors
+  mutate(seedtrt = factor(seedtrt, levels = c("Unseeded", "Native seeded")),
+         herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided")))
+
+# be sure there aren't any duplicate entries
+summary(duplicated(grouped_df(natsp, names(natsp)[!names(natsp) == "pct_cover"]))) # no duplicates
+# review cover values
+with(natsp, sort(unique(pct_cover))) # 1.01 looks like typo; some values above 1 have a 0.5 addition
+natsp$pct_cover[natsp$pct_cover == 1.01] <- 1
+# check all
+summary(natsp) # ok
+
+# prep ambient cover -- just select 2021 for comparison
+nats <- unique(natsp$code4[natsp$native_seeded == "Yes"])
+ambsp <- mutate(coverlong, native_seeded = ifelse(code4 %in% nats, "Yes", "No"),
+                herbicide = "Non-herbicided", seedtrt = "Unseeded",
+                # seed factor levels for row-binding
+                seedtrt = factor(seedtrt, levels = c("Unseeded", "Native seeded")),
+                herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided"))) %>%
+  subset(yr == 2021, select = c(plot:date, notes, code4, pct_cover, fxnl_grp, nativity, native_seeded, herbicide, seedtrt)) %>%
+  reframe(pct_cover = max(pct_cover),.by = names(natsp)[!grepl("cover|usemay|notes|mon", names(natsp))]) %>%
+  distinct()
+# review cover vals
+with(ambsp, sort(unique(pct_cover))) # looks okay
+summary(ambsp)
+
+# put both together, add column for count cover data
+natambsp_cov <- rbind(natsp,ambsp) %>%
+  arrange(plot, seedtrt, herbicide, code4) %>%
   mutate(nativity = ifelse(nativity == "Unknown", "Exotic", nativity),
          native_seeded = ifelse(native_seeded == "No", "Background", "Seeded"),
-         coarse_fxnl = paste(native_seeded, nativity, fxnl_grp,sep = " ")) %>%
-  # by not including month as grouping factor, summing apr and may vals
-  group_by(plot, seedtrt, herbicide,fxnl_grp, nativity, native_seeded, code4) %>%
-  mutate(maxcov = max(pct_cover)) %>%
-  ungroup() %>%
-  group_by(plot, seedtrt, herbicide, fxnl_grp, nativity, native_seeded, coarse_fxnl) %>%
-  summarise(totcov = sum(pct_cover),
-            spp = str_flatten(unique(code4), collapse = ", "),
-            S = length(unique(code4))) %>%
-  ungroup() %>%
-  data.frame()
-
-# repeat for background unherbicided (i.e. main spp comp)
-# > for quick prelim, take average between apr and may each year
-coarsecov_main_allyrs <- coverlong %>%
-  dplyr::select(plot:sample_event, code4:pct_cover) %>%
-  spread(code4, pct_cover, fill = 0) %>%
-  gather(code4, pct_cover, AGSP:ncol(.)) %>%
-  group_by(plot, yr, code4) %>%
-  summarise(max_cover = max(pct_cover)) %>%
-  ungroup() %>%
-  left_join(distinct(spplist[c("code4", "fxnl_grp", "nativity")])) %>%
-  mutate(nativity = ifelse(nativity == "Unknown", "Exotic", nativity),
-         native_seeded = "Background",
-         seedtrt = "Unseeded",
-         herbicide = "Non-herbicided",
-         coarse_fxnl = paste(native_seeded, nativity, fxnl_grp,sep = " ")) %>%
-  # by not including month as grouping factor, summing apr and may vals
-  group_by(plot, yr, seedtrt, herbicide, fxnl_grp, nativity, native_seeded, coarse_fxnl) %>%
-  summarise(totcov = sum(max_cover),
-            spp = str_flatten(unique(code4), collapse = ", "),
-            S = length(unique(code4))) %>%
-  ungroup() %>%
-  data.frame()
-
-# create dataset with everything
-coarsecov_all_2021 <- subset(coarsecov_main_allyrs, yr == 2021, select = -yr) %>%
-  rbind(coarsecov_nat[names(.)]) %>%
-  # join additional trtkey nestedness info
+         coarse_fxnl = paste(native_seeded, nativity, fxnl_grp,sep = " "),
+         # trace gets 1, all else gets rounded; add 0.1 sound 0.5 rounds (R doesn't round it always)
+         count_cover = ifelse(pct_cover == 0.01, 1, round(pct_cover + 1.1))) %>%
+  # drop trt cols to join trt key
+  subset(select = -c(plotid:ppt_trt)) %>%
   left_join(trtkey) %>%
-  # set factor levels for seedtrt and herbicide
-  mutate(seedtrt = factor(seedtrt, levels = c("Unseeded", "Native seeded")),
-         herbicide = factor(herbicide, levels = c("Non-herbicided", "Herbicided"))
-         ) 
-                        
+  # rearrance cols
+  subset(select = c(plot, wholeplotID, subplotID, block:fulltrt, ypos, xpos, seedtrt, herbicide, yr, code4, pct_cover, count_cover, fxnl_grp:native_seeded, coarse_fxnl)) %>%
+  data.frame()
+  
+# make sure no duplicates
+summary(duplicated(grouped_df(natambsp_cov, names(natambsp_cov)[!grepl("cover", names(natambsp_cov))]))) # no duplicates
+summary(natambsp_cov)
+with(distinct(natambsp_cov, plot, fulltrt, seedtrt, herbicide), table(fulltrt[seedtrt == "Native seeded"])) # plot 33 does not have herbicided subplots
 
-# 2. SIMPLIFY COARSE FXNL COV -----
-# drop any background native plant that recruited.. just want to know if herbicide advantaged seeded natives against ambient non-natives
-coarsecov_all_2021_simple <- dplyr::select(coarsecov_all_2021, -c(spp, S)) %>%
-  #combine N-fixer and forb
-  mutate(fxnl_grp2 = ifelse(grepl("Forb|N-fix", fxnl_grp), "Forb", fxnl_grp)) %>%
-  group_by(plot, seedtrt, herbicide, fxnl_grp2, nativity, native_seeded) %>%
-  summarise(totcov = sum(totcov), .groups = "drop_last") %>%
-  # drop any background native
-  subset(!(native_seeded == "Background" & nativity == "Native")) %>%
-  unite(fullgrp, native_seeded, nativity, fxnl_grp2, sep = "_") %>%
-  # make sure all possible groups repped
-  spread(fullgrp, totcov, fill = 0) %>%
-  # also drop plot 33 since no experiment there
-  subset(plot != 33) %>%
-  gather(fullgrp, totcov, Background_Exotic_Forb:ncol(.)) %>%
-  # make simple fxnl grp
-  mutate(fxnlgrp =  ifelse(grepl("Forb", fullgrp), "Forb", "Grass"),
-         fxnlgrp = factor(fxnlgrp, levels = c("Forb", "Grass"))) %>%
-  # rejoin trtment info
-  left_join(trtkey) %>%
+
+
+# - 2. FXNL GRP AGGREGATE COVER -----
+# sum on coarse fxnl grp, make pct cov and 'count' cover
+# need to calculate count differently otherwise some groups get inflated (e.g., 14.03 -> 22)
+natambfxnl_cov <- grouped_df(natambsp_cov, names(natambsp_cov)[!grepl("cover|code4", names(natambsp_cov))]) %>%
+  reframe(totcov_pct = sum(pct_cover),
+          # insert placeholder col for count cov
+          totcov_count = sum(pct_cover),
+          spp = str_flatten(unique(code4), collapse = ", "),
+          S = length(unique(code4))) %>%
+  distinct() %>%
+  #make cover count data (trace amounts --> 1)
+  mutate(integer = floor(totcov_pct),
+    decimals = str_extract(totcov_pct, "(?<=[.])[0-9]+"),
+    # replace na in decimals with 0, and change .5 to .50
+    decimals = ifelse(is.na(decimals), "00", 
+                      ifelse(decimals == "5", "50", decimals)),
+         tenths = as.numeric(substr(decimals, 1, 1)),
+         hundredths = as.numeric(substr(decimals, 2, 2)),
+         addct = ifelse(tenths == 5 & !is.na(hundredths), 1+ hundredths, 
+                        ifelse(tenths == 5 & is.na(hundredths), 1, hundredths)),
+    totcov_count = ifelse(is.na(addct), integer, integer + addct)) %>%
+  # drop cols used to make count
+  subset(select = -c(integer:addct)) %>%
   data.frame()
 
 
-# 3. PREP NEIGHBORHOOD DATA -----
+
+# - 3. WIDE NEIGHBORHOOD DATA -----
 # individual seeded spp in their own columns with sums of neighbors (grams, forbs, and alltog)
 # prep dataset with all neighbor abundance, and with neighbor forbs and grams split out
 # can start with simplecov background exotics, sum across and retain functional groups
-neighbors <- subset(coarsecov_nat, grepl("Nat", seedtrt) & grepl("Back", native_seeded), select = c(plot:herbicide, coarse_fxnl, totcov)) %>%
+widefxnl_pct <- subset(natambfxnl_cov, select = -c(fxnl_grp:native_seeded, totcov_count:S)) %>%
   # simplify coarse_fxnl names
   mutate(coarse_fxnl = gsub ("Background| |-", "", coarse_fxnl)) %>%
-  spread(coarse_fxnl, totcov, fill = 0) %>%
+  spread(coarse_fxnl, totcov_pct, fill = 0) %>%
   mutate(ExoForbNfix = ExoticForb + ExoticNfixer,
          NatForbNfix = NativeForb + NativeNfixer,
          ExoticNeighbors = ExoticForb + ExoticGrass + ExoticNfixer,
@@ -154,26 +205,35 @@ neighbors <- subset(coarsecov_nat, grepl("Nat", seedtrt) & grepl("Back", native_
          AllForbNfix = ExoForbNfix + NatForbNfix,
          AllNeighbors = ExoticNeighbors + NativeNeighbors)
 
-# list natives seeded
-nats <- c("TRCI", "BRCA", "FEMI", "NEMA", "ESCA")
-seededspp <- dplyr::select(natwide, plot:date, all_of(nats)) %>%
-  subset(!grepl("Unse", seedtrt)) %>%
-  dplyr::select(plot, herbicide, mon, date, TRCI:ESCA) %>%
-  gather(spp, cov, TRCI:ESCA) %>%
-  group_by(plot, herbicide, spp) %>%
-  summarise(cov = max(cov), .groups = "drop_last") %>%
-  spread(spp, cov)
+# repeat for fxnl group count
+widefxnl_count <- subset(natambfxnl_cov, select = -c(fxnl_grp:native_seeded, totcov_pct, spp:S)) %>%
+  # simplify coarse_fxnl names
+  mutate(coarse_fxnl = gsub ("Background| |-", "", coarse_fxnl)) %>%
+  spread(coarse_fxnl, totcov_count, fill = 0) %>%
+  mutate(ExoForbNfix = ExoticForb + ExoticNfixer,
+         NatForbNfix = NativeForb + NativeNfixer,
+         ExoticNeighbors = ExoticForb + ExoticGrass + ExoticNfixer,
+         NativeNeighbors = NativeForb + NativeGrass + NativeNfixer,
+         AllGrass = ExoticGrass + NativeGrass,
+         AllForbNfix = ExoForbNfix + NatForbNfix,
+         AllNeighbors = ExoticNeighbors + NativeNeighbors)
 
-# join to neighborhood
-neighborhood <- merge(neighbors, seededspp) %>%
-  #join trtkey
-  left_join(trtkey) %>%
-  #rearrange
-  subset(select = c(plot, block:ypos, herbicide:TRCI)) %>%
-  arrange(plot, herbicide)
-# transform continuous abundance to count data for native only
-##  names(neighbors)[!grepl("plot|seed|herb", names(neighbors))] <- if want to transform neighbors later
-neighborhood_counts <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x %in% c(1:9), x+1, ifelse(x > 0 & x<1, 1, x)))
-neighborhood_PA <- mutate_at(neighborhood, .vars = nats, function(x) ifelse(x>0, 1, 0))
+# repeat for species level
+widesp_pct <- subset(natambsp_cov, select = -c(fxnl_grp:native_seeded, count_cover,fxnl_grp:coarse_fxnl)) %>%
+  spread(code4, pct_cover, fill = 0)
+widesp_count <- subset(natambsp_cov, select = -c(fxnl_grp:native_seeded, pct_cover,fxnl_grp:coarse_fxnl)) %>%
+  spread(code4, count_cover, fill = 0)
+# review
+summary(widesp_pct) # ok
+
+
+# create presence-absence forms
+widefxnl_pa <- widefxnl_count %>%
+  mutate_at(names(.)[grepl("Exo|Nat|All", names(.))], function(x) ifelse(x>0, 1, x))
+# repeat for species level 
+widesp_pa <- widesp_count %>%
+  mutate_at(names(.)[grepl("^[A-Z]+", names(.))], function(x) ifelse(x>0, 1, x))
+# review
+summary(widesp_pa) # ok
 
 
