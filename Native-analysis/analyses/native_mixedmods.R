@@ -24,56 +24,556 @@
 # load needed libraries
 library(tidyverse)
 library(cowplot) # for arranging plots
+library(fitdistrplus) # for assessing distributions
 library(car) # for type II and III anova tests
 library(lme4)
 library(lmerTest)
 library(multcomp)
 library(MASS)
-library(pscl) # for zinf or hurdle
 library(glmmTMB) # for random effects in ZINF model
+library(bbmle) # for AIC tab to compare quasi log-likelihoods
+library(DHARMa)
 
-# source prepped data
-# > this should set default settings for datpath, plot theme, no factors by default
-source("Native-analysis/native_prep_cover.R", )
+# source prepped cover and trtkey data
+# > sets default settings for datpath, plot theme, no factors by default
+source("Native-analysis/native_prep_cover.R", print.eval = F)
 
+
+# -- ASSESS DISTRIBUTIONS -----
+# to know which type of distribution to specify in models
+# > note: fxnl groups in tidy are only each fxnl group (e.g., forbs and n-fixers not summed)
+plotdist(tidyfxnl0$totcov_pct)
+plotdist(tidyfxnl0_seeded$totcov_pct) # about half are 0
+plotdist(tidysp0$pct_cover)
+plotdist(tidysp0_seeded$pct_cover) # over 80% are 0
+# look at prop 0 (rule of thumb: anything above 60% 0 candidate for zero inf model)
+table(tidyfxnl0$totcov_pct == 0)/nrow(tidyfxnl0) # 50 % are 0, 50% >0
+table(tidyfxnl0_seeded$totcov_pct == 0)/nrow(tidyfxnl0_seeded) # 42% are 0, 58% not 0 -- probably don't need zero inf
+table(tidysp0_seeded$pct_cover == 0)/nrow(tidysp0_seeded) # 76% are 0, 24% not 0 -- possible use zero inf
+
+# by fxnl groups: using pct cover and count
+descdist(tidyfxnl0$totcov_pct, boot = 10000) # beta
+descdist(tidyfxnl0$totcov_count, boot = 10000, discrete = T) # poisson is closest
+# check native seeded only
+descdist(tidyfxnl0$totcov_pct[tidyfxnl0$seedtrt != "Unseeded"], boot = 10000) #beta
+descdist(tidyfxnl0$totcov_count[tidyfxnl0$seedtrt != "Unseeded"], boot = 10000, discrete = T) # poisson
+
+# species level
+descdist(tidysp0$pct_cover, boot = 10000) # beta dist
+descdist(tidysp0$count_cover, boot = 10000, discrete = T) # negative binomial
+
+# look at native seeded spp
+descdist(widesp_count$FEMI, boot = 10000, discrete = T) # negbin
+descdist(widesp_count$FEMI[widesp_count$seedtrt == "Native seeded"], boot = 10000, discrete = T) # close to poisson in seeded only plots, but still negbin
+descdist(widesp_count$ESCA, boot = 10000, discrete = T) # also close to poisson, but can in negbin space
+descdist(widesp_count$ESCA[widesp_count$seedtrt == "Native seeded"], boot = 10000, discrete = T) 
+descdist(widesp_count$BRCA, boot = 10000, discrete = T) # negbin
+descdist(widesp_count$BRCA[widesp_count$seedtrt == "Native seeded"], boot = 10000, discrete = T) # negbin
+descdist(widesp_count$NEMA, boot = 10000, discrete = T) # negbin
+descdist(widesp_count$NEMA[widesp_count$seedtrt == "Native seeded"], boot = 10000, discrete = T) # negbin
+
+# check abundant spp
+## AVBA
+descdist(round(widesp_count$AVBA), boot = 10000, discrete = T) # poisson?
+hist(widesp_count$AVBA, breaks = 100) # not normal
+descdist(round(widesp_pct$AVBA), boot = 10000, discrete = F) # beta
+## TACA
+descdist(round(widesp_count$TACA), boot = 10000, discrete = T) # poisson? like AVBA
+hist(widesp_count$TACA, breaks = 100) # not normal
+## ERBO
+descdist(round(widesp_count$ERBO), boot = 10000, discrete = T) # negbin
+descdist(seedtrt_ydata$FEMI, boot = 10000)
+fit_fxnlp <- fitdist(tidyfxnl0$totcov_count, method = "mle", discrete = T, distr = "pois")
+summary(fit_fxnlp)
+fit_fxnlnb <- fitdist(tidyfxnl0$totcov_count, method = "mle", discrete = T, distr = "nbinom")
+summary(fit_fxnlnb)
+
+
+# check mean vs variance
+mean(tidyfxnl0$totcov_count) # 13.32545
+var(tidyfxnl0$totcov_count) # 911.3632
+
+
+# -- PREP PCT COVER FOR BETA FAM ----
+# needs to be between 0 and 1
+tidyfxnl0$totcov_prop <- (tidyfxnl0$totcov_pct)/100
+tidyfxnl0_seeded$totcov_prop <- tidyfxnl0_seeded$totcov_pct/100
+
+# beta dist needs values between 0 and 1. some fxnl groups sum to over 100% over season
+# add small amount to 0 and subtract small amount from max value
+tidyfxnl0$totcov_scale01 <- with(tidyfxnl0, ifelse(totcov_pct == 0, 0, totcov_pct/max(totcov_pct)))
+# check values before adjust min and max
+head(sort(unique(tidyfxnl0$totcov_scale01))) # smallest value is at e-5 scale; largest is at 0.922 before 1
+tidyfxnl0$totcov_scale01beta <- tidyfxnl0$totcov_scale01
+tidyfxnl0$totcov_scale01beta[tidyfxnl0$totcov_scale01==0] <- 1e-7
+tidyfxnl0$totcov_scale01beta[tidyfxnl0$totcov_scale01==1] <- 1-0.01
+range(tidyfxnl0$totcov_scale01); range(tidyfxnl0$totcov_scale01beta)
+#tidyfxnl0$totcov_scale01t <- with(tidyfxnl0, ifelse(totcov_pct == 0, 0.0000000001, totcov_scale01))
+plot(tidyfxnl0$totcov_pct ~ tidyfxnl0$totcov_scale01)
+
+fit_fxnlbeta <- fitdist(tidyfxnl0$totcov_scale01beta, distr = "beta")
+summary(fit_fxnlbeta)
+
+# plot diagnostic fits
+par(mfrow = c(2,2))
+denscomp(fit_fxnlbeta) # not sure how to interp this
+cdfcomp(fit_fxnlbeta) # fit looks good for beta
+ppcomp(fit_fxnlbeta) # more 0s than expected, reason to use negbin
+qqcomp(fit_fxnlbeta)
+
+# negbin fit on 'count' cover
+denscomp(fit_fxnlnb) # nb seems like a better fit than poisson
+cdfcomp(fit_fxnlnb) # not a perfect fit but better than poisson 
+ppcomp(fit_fxnlnb)
+qqcomp(fit_fxnlnb)
+
+# poisson
+denscomp(fit_fxnlp)
+cdfcomp(fit_fxnlp) # fit looks good for beta
+ppcomp(fit_fxnlbeta) # more 0s than expected, reason to use negbin
+qqcomp(fit_fxnlp)
+
+
+# beta is a an okay distribution if want to use pct cover; otherwise use negbin
 
 
 # -- DID SEED + HERB TRTS WORK GENERALLY? ----
+# screen fxnl groups for low occurrence (to drop from analysis)
+sort(colSums(widefxnl_pa[grepl("Exotic|Native", names(widefxnl_pa))])/nrow(widefxnl_pa))
+# can drop native n-fixers (seeded or native)
+
 # start with simple cover (seeded natives vs. background exotics, where nfixers lumped in "forb group")
 # plot to check it looks right -- warnings will be for "missing" seeded cover in unseeded subplots and that's fine, ignore
-coarsecov_all_2021_simple %>%
-  mutate(totcov = ifelse(grepl("Native", fullgrp) & seedtrt == "Unseeded", NA, totcov)) %>%
-  ggplot(aes(herbicide, totcov, fill = fullgrp)) + #interaction(fullgrp, seedtrt, herbicide)
-  geom_boxplot(aes(group = interaction(fullgrp, herbicide)), varwidth = T, position = position_dodge(width = 0.5), alpha = 0.5) +
-  geom_point(aes(col = fullgrp), position = position_dodge(width = 0.5)) +
-  scale_fill_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
-  scale_color_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
-  #facet_grid(seedtrt ~ fulltrt) +
+tidyfxnl0 %>%
+  #mutate(totcov = ifelse(grepl("Native", fullgrp) & seedtrt == "Unseeded", NA, totcov)) %>%
+  ggplot(aes(herbicide, totcov_pct, fill = coarse_fxnl)) + #interaction(fullgrp, seedtrt, herbicide)
+  geom_boxplot(aes(group = interaction(coarse_fxnl, herbicide)), varwidth = T, position = position_dodge(width = 0.5), alpha = 0.5) +
+  geom_point(aes(col = coarse_fxnl), position = position_dodge(width = 0.5)) +
+  # scale_fill_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
+  # scale_color_manual(values = c("orchid", "seagreen1", "purple4", "seagreen4")) +
+  #facet_grid(seedtrt ~ coarse_fxnl) +
   facet_wrap(~ nut_trt + seedtrt +ppt_trt, ncol = 6) +
-  #facet_grid(fulltrt ~ seedtrt) #+
+  #facet_grid(coarse_fxnl ~ seedtrt) #+
   theme(#axis.text.x = element_text(angle = 90))
         legend.position = "top",
         legend.direction = "horizontal",
         strip.background = element_rect(fill = "transparent"))
 
 # look at distribution by group
-with(coarsecov_all_2021_simple, boxplot(totcov~fullgrp))
+with(tidyfxnl0_seeded, boxplot(totcov_pct~coarse_fxnl))
 
+#tidyfxnl0$plot <- factor(tidyfxnl0$plot)
+# relevel coarse_fxnl so background exotic grams are reference (otherwise herbicide has a positive effect because exo forbs are the reference)
 
+tidyfxnl0$coarse_fxnl <- factor(tidyfxnl0$coarse_fxnl) 
+tidyfxnl0$coarse_fxnl <- relevel(tidyfxnl0$coarse_fxnl, ref = "Background Exotic Grass") 
+levels(tidyfxnl0$coarse_fxnl)
 # compare background exotics in seeded vs. unseeded plots to see if any diff
 # ignore nutrient and ppt trts for now but control for them in error
-lm_exotics <- lmerTest::lmer(totcov ~ herbicide * fxnlgrp + seedtrt + (1|wholeplotID) +(1|ppt_trt:nut_trt), 
-                             data = subset(coarsecov_all_2021_simple, grepl("Back", fullgrp)))
-summary(lm_exotics)
-Anova(lm_exotics) # seed addition didn't have much impact on exotic cover relative to itself in unseeded subplots, herbicide mattered more
-ls_means(lm_exotics, pairwise = T)
-lmerTest::ranova(lm_exotics)
+glm_beta_exotics <- glmmTMB(totcov_scale01 ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                      family = ordbeta,
+                      data = subset(tidyfxnl0, grepl("Background Exo", coarse_fxnl))) # select = c(plot, block, coarse_fxnl, totcov_scale01, herbicide)
+summary(glm_beta_exotics)
+
+glm_nb1_exotics <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl +(1|block/wholeplotID/subplotID), 
+                      family = nbinom1(),
+                      data = subset(tidyfxnl0, grepl("Background Exo", coarse_fxnl)))
+summary(glm_nb1_exotics)
+
+glm_nb2_exotics <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl +(1|block/wholeplotID/subplotID), 
+                           family = nbinom2,
+                           data = subset(tidyfxnl0, grepl("Background Exo", coarse_fxnl)))
+summary(glm_nb2_exotics) # theta is better for nbinom2
+
+# run on all fxnl groups
+# using pct rescaled to 0<y<1
+glm_beta_allfxnl <- glmmTMB(totcov_scale01 ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                            family = ordbeta, # beta_family
+                            # drop seeded N fixer because it barely came up
+                            data = subset(tidyfxnl0, !grepl("Native N-fix", coarse_fxnl))) # select = c(plot, block, coarse_fxnl, totcov_scale01, herbicide)
+summary(glm_beta_allfxnl)
+
+# using count with poisson
+glm_nb2_allfxnl <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                            family = nbinom2,
+                            # drop seeded N fixer because it barely came up
+                            data = subset(tidyfxnl0, !grepl("Native N-fix", coarse_fxnl)))
+summary(glm_nb2_allfxnl)
+
+# update to hurdle model to see if zero inflation model is better
+# > any 0 in dataset is true (don't think ashley and carmen did missed species or were there are the wrong time, no false zeroes)
+glm_nb2_allfxnl_hurdle <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                                  family = truncated_nbinom2,
+                                  # seedtrt influences whether natives there or not, herbicide should also influence finding natives
+                                  zi = ~ seedtrt + herbicide,
+                                  # drop seeded N fixer because it barely came up
+                                  data = subset(tidyfxnl0, !grepl("Native N-fix", coarse_fxnl)))
+summary(glm_nb2_allfxnl_hurdle)
+glm_nb2_allfxnl_zinb <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                                  family = nbinom2,
+                                  # seedtrt influences whether natives there or not, herbicide should also influence finding natives
+                                  zi = ~ seedtrt + herbicide,
+                                  # drop seeded N fixer because it barely came up
+                                  data = subset(tidyfxnl0, !grepl("Native N-fix", coarse_fxnl)))
+summary(glm_nb2_allfxnl_zinb)
+
+# test poisson with hurdle
+glm_pois_allfxnl_hurdle <- glmmTMB(totcov_count ~ seedtrt + herbicide * coarse_fxnl + (1|block/wholeplotID/subplotID), 
+                                family = truncated_poisson(),
+                                # seedtrt influences whether natives there or not, herbicide should also influence finding natives
+                                zi = ~ seedtrt + herbicide,
+                                # drop seeded N fixer because it barely came up
+                                data = subset(tidyfxnl0, !grepl("Native N-fix", coarse_fxnl)))
+summary(glm_pois_allfxnl_hurdle)
+
+# compare hurdle to non-hurdle negbin
+AICtab(glm_nb2_allfxnl, glm_nb2_allfxnl_hurdle,glm_pois_allfxnl_hurdle, glm_nb2_allfxnl_zinb, base = T, logLik = T) # poisson definitely not the right fit
+# hurdle is worst.. zinb is best (but model doesn't fit data in concept; only slightly better than non-zero inflated model)
+
+# more model eval with dharma, compare beta v. nb
+fxnl_nb2_hurdle_simres <- simulateResiduals(glm_nb2_allfxnl_hurdle)
+plot(fxnl_nb2_hurdle_simres)
+testOutliers(fxnl_nb2_hurdle_simres, type = "bootstrap")
+
+# zinb model
+fxnl_nb2_zinb_simres <- simulateResiduals(glm_nb2_allfxnl_zinb)
+plot(fxnl_nb2_zinb_simres)
+testOutliers(fxnl_nb2_zinb_simres, type = "bootstrap")
+plotResiduals(fxnl_nb2_zinb_simres)
+testZeroInflation(fxnl_nb2_zinb_simres)
+
+# negative binomial model
+fxnl_nb2_simres <- simulateResiduals(glm_nb2_allfxnl)
+plot(fxnl_nb2_simres)
+plotResiduals(fxnl_nb2_simres)
+testOutliers(fxnl_nb2_simres, type = "bootstrap")
+testZeroInflation(fxnl_nb2_simres)
+
+
+
+fxnl_beta <- simulateResiduals(glm_beta_allfxnl) # ordered beta distribution [y can be 0 or 1] does not look quite as bad as beta_family
+plot(fxnl_beta)
+
+
+
+# -- TEST EFFECTS ON SEEDED SPP -----
+widesp_fxnlneighbors_count <- left_join(widefxnl_count, widesp_count[c("plot", "seedtrt", "herbicide", nats)])
+widesp_fxnlneighbors_pct <- left_join(widefxnl_pct, widesp_pct[c("plot", "seedtrt", "herbicide", nats)])
+# make proportional for ordered beta dist
+widesp_fxnlneighbors_pct$FEMI_prop <- widesp_fxnlneighbors_pct$FEMI/100
+widesp_fxnlneighbors_pct$BRCA_prop <- widesp_fxnlneighbors_pct$BRCA/100
+widesp_fxnlneighbors_pct$NEMA_prop <- widesp_fxnlneighbors_pct$NEMA/100
+widesp_fxnlneighbors_pct$ESCA_prop <- widesp_fxnlneighbors_pct$ESCA/100
+
+# use neighbor grams and neighbor forbs as predictors
+# just within seeded plots
+# look at effects of env on species first
+femi_nb2_herbicide <- glmmTMB(FEMI ~ herbicide + nut_trt * ppt_trt, family = nbinom2() ,data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+femi_nb2_allneighbors <- glmmTMB(FEMI ~ herbicide + AllNeighbors + nut_trt * ppt_trt, 
+                                 family = nbinom2(),
+                                 data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+femi_nb2_exoneighbors <- glmmTMB(FEMI ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt, 
+                                 family = nbinom2(),
+                                 data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+femi_nb2_reblock <- glmmTMB(FEMI ~ herbicide + nut_trt * ppt_trt + (1|block), 
+                            family = nbinom2(),
+                            data = subset(widesp_count, seedtrt != "Unseeded"))
+femi_nb2_reblockwp <- glmmTMB(FEMI ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID), 
+                            family = nbinom2(),
+                            data = subset(widesp_count, seedtrt != "Unseeded"))
+femi_nb2_refullnest <- glmmTMB(FEMI ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                              family = nbinom2(),
+                              data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+femi_nb2_exograss_refullnest <- glmmTMB(FEMI ~ herbicide + ExoticGrass + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+femi_nb2_exoneighbors_refullnest <- glmmTMB(FEMI ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                        family = nbinom2(),
+                                        data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+summary(femi_nb2_herbicide)
+summary(femi_nb2_allneighbors)
+summary(femi_nb2_exoneighbors)
+summary(femi_nb2_reblock)
+summary(femi_nb2_reblockwp)
+summary(femi_nb2_refullnest)
+summary(femi_nb2_exograss_refullnest)
+summary(femi_nb2_exoneighbors_refullnest)
+
+AICtab(femi_nb2_herbicide, femi_nb2_allneighbors, femi_nb2_exoneighbors,
+       femi_nb2_reblock, femi_nb2_reblockwp, femi_nb2_refullnest, 
+       femi_nb2_exograss_refullnest, femi_nb2_exoneighbors_refullnest,
+       base =T, logLik = T)
+
+
+# test using pct cover
+femiprop_beta_refullnest <- glmmTMB(FEMI_prop ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = ordbeta,
+                               data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+femiprop_beta_reblock <- glmmTMB(FEMI_prop ~ herbicide + nut_trt * ppt_trt + (1|block), 
+                                    family = ordbeta,
+                                    data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+femiprop_beta_reblockwp <- glmmTMB(FEMI_prop ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID), 
+                                 family = ordbeta,
+                                 data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+summary(femiprop_beta_refullnest) # can't use full nesting
+summary(femiprop_beta_reblock)
+summary(femiprop_beta_reblockwp) # effects are about the same
+# FEMI doesn't care about neighbors. it just needs a clean slate to start (if had litter pre-growth that might be helpful).
+
+AICtab(femiprop_beta_reblock, femiprop_beta_reblockwp, base = T, logLik = T)
+
+femi_beta_simres <- simulateResiduals(femiprop_beta_reblockwp) # ordered beta distribution [y can be 0 or 1] does not look quite as bad as beta_family
+plot(femi_beta_simres) # no issues
+femi_nb2_refullnest_simres <- simulateResiduals(femiprop_beta_reblockwp) # ordered beta distribution [y can be 0 or 1] does not look quite as bad as beta_family
+plot(femi_nb2_refullnest_simres) # no issues here either
+
+
+# -- compare with BRCA: negbin and beta -----  
+brca_nb2_refullnest <- glmmTMB(BRCA ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+brca_nb2_exogram_refullnest <- glmmTMB(BRCA ~ herbicide + ExoticGrass + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+brca_nb2_exogf_refullnest <- glmmTMB(BRCA ~ herbicide + ExoticGrass + ExoticForb + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                       family = nbinom2(),
+                                       data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+brca_nb2_exogfn_refullnest <- glmmTMB(BRCA ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                     family = nbinom2(),
+                                     data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+summary(brca_nb2_refullnest)
+summary(brca_nb2_exogram_refullnest) # if use all neighbors does not produce
+summary(brca_nb2_exogf_refullnest)
+summary(brca_nb2_exogfn_refullnest)
+AICtab(brca_nb2_refullnest, brca_nb2_exogram_refullnest, brca_nb2_exogf_refullnest, brca_nb2_exogfn_refullnest, base = T)
+
+brca_beta_refullnest <- glmmTMB(BRCA_prop ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = ordbeta,
+                               data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+brca_beta_exofn_refullnest <- glmmTMB(BRCA_prop ~ herbicide + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                family = ordbeta,
+                                data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+brca_beta_exogfn_refullnest <- glmmTMB(BRCA_prop ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                      family = ordbeta,
+                                      data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+summary(brca_beta_refullnest)
+summary(brca_beta_exofn_refullnest)
+summary(brca_beta_exogfn_refullnest)
+
+AICtab(brca_beta_refullnest, brca_beta_exofn_refullnest, brca_beta_exogfn_refullnest, base = T, logLik = T)
+ppcomp(fitdist(widesp_fxnlneighbors_count$BRCA, distr = "nbinom"))
+cdfcomp(fitdist(widesp_fxnlneighbors_pct$BRCA_prop, method = "mme", distr = "beta"), plotstyle = "ggplot") # beta looks right but there are many 0s
+cdfcomp(fitdist(widesp_fxnlneighbors_pct$FEMI_prop, method = "mme", distr = "beta"), plotstyle = "ggplot")
+cdfcomp(fitdist(widesp_fxnlneighbors_count$FEMI, distr = "negbin"), plotstyle = "ggplot")
+
+# run brca with hurdle
+brca_nb2_refullnest_hurdle <-  glmmTMB(BRCA ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                       ziformula = ~ herbicide,
+                                       family = truncated_nbinom2(),
+                                       data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+summary(brca_nb2_refullnest_hurdle)
+
+brca_nb2_exogfn_refullnest_hurdle <- glmmTMB(BRCA ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                       ziformula = ~ herbicide,
+                                       family = truncated_nbinom2(),
+                                       data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+summary(brca_nb2_exogfn_refullnest_hurdle)
+
+brca_nb2_refullnest_zinb <- glmmTMB(BRCA ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                             ziformula = ~ herbicide,
+                                             family = nbinom2(),
+                                             data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+summary(brca_nb2_refullnest_zinb) # doesn't run with exotic grams and forbs
+
+AICtab(brca_nb2_refullnest, brca_nb2_exogfn_refullnest, 
+       brca_nb2_refullnest_hurdle, brca_nb2_refullnest_zinb, brca_nb2_exogfn_refullnest_hurdle,
+       base = T, logLik = T) # hurdle model is worse.. but not zinb
+
+# ESCA ----
+esca_nb2_refullnest <- glmmTMB(ESCA ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+esca_nb2_exogfn_refullnest_zinb <- glmmTMB(ESCA ~ herbicide + ExoticForb + nut_trt * ppt_trt + (1|block/wholeplotID), 
+                                      ziformula = ~ herbicide,
+                                      family = nbinom2(),
+                                      data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+esca_pois_exogfn_refullnest_zinb <- glmmTMB(ESCA ~ herbicide + ExoticGrass + ExoForbNfix + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                                           ziformula = ~ herbicide,
+                                           family = poisson,
+                                           data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+esca_beta_refullnest <- glmmTMB(ESCA_prop ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = ordbeta,
+                               data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+summary(esca_nb2_refullnest)
+summary(esca_nb2_exogfn_refullnest_zinb)
+summary(esca_pois_exogfn_refullnest_zinb)
+summary(esca_beta_refullnest)
+
+nema_nb2_refullnest <- glmmTMB(NEMA ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID), # won't run with subplot included
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+nema_nb2_refullnest_zinb <- glmmTMB(NEMA ~ herbicide + nut_trt * ppt_trt + block + (1|wholeplotID/subplotID),
+                               ziformula = ~ herbicide,
+                               family = nbinom2(),
+                               data = subset(widesp_fxnlneighbors_count, seedtrt != "Unseeded"))
+nema_beta_refullnest <- glmmTMB(NEMA_prop ~ herbicide + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), # won't run with subplot included
+                               family = ordbeta,
+                               data = subset(widesp_fxnlneighbors_pct, seedtrt != "Unseeded"))
+summary(nema_beta_refullnest) # runs, but won't calculate st errors
+summary(nema_nb2_refullnest)
+summary(nema_nb2_refullnest_zinb) # runs, won't calculate st errors
+
+
+# -- TRY ALL SPECIES MODEL ----
+# don't anticipate this will work with full nested error structure, but see what can be modeled
+tidynats0_seeded <- subset(tidysp0_seeded, code4 %in% nats[nats != "TRCI"]) %>%
+  left_join(subset(widefxnl_pct, select = c(plot:ppt_trt, seedtrt:ExoticNfixer, ExoForbNfix:AllNeighbors))) %>%
+  mutate(code4 = factor(code4, levels = c("TRCI", "ESCA", "NEMA", "BRCA", "FEMI")))
+                    
+# use tidysp0, subsetting to just nats seeded. join neighbors of interest as columns. start with no neighbors in model to begin
+
+allsp_nb <- glmmTMB(formula = count_cover ~ herbicide + code4 + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                    family = nbinom2,
+                    # subset to just native spp seeded, order levels so low abundance forbs are reference [otherwise it's BRCA]
+                    data = subset(mutate(tidysp0_seeded, code4 = factor(code4, levels = c("TRCI", "ESCA", "NEMA", "BRCA", "FEMI"))),
+                                         code4 %in% nats[nats != "TRCI"]))
+
+# ran with code4 as additive term; TRCI is reference (which is basically 0)
+summary(allsp_nb)
+
+# three-way interaction between sp code and enviro trts
+allspx_nb <- glmmTMB(formula = count_cover ~ herbicide + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                    family = nbinom2,
+                    data = subset(mutate(tidysp0_seeded, code4 = factor(code4, levels = c("TRCI", "ESCA", "NEMA", "BRCA", "FEMI"))),
+                                  code4 %in% nats[nats != "TRCI"]))
+
+# interaction model runs.. not much is signif
+summary(allspx_nb)
+
+# three-way interaction between sp code and enviro trts
+allspx_nb2_allneigh <- glmmTMB(formula = count_cover ~ herbicide + AllNeighbors + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                       family = nbinom2,
+                       data = tidynats0_seeded)
+
+summary(allspx_nb2_allneigh)
+
+# three way interaction with grams specifically
+allspx_nb2_exog <- glmmTMB(formula = count_cover ~ herbicide + ExoticGrass + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                               family = nbinom2,
+                               data = tidynats0_seeded)
+
+summary(allspx_nb2_exog)
+
+# grams + forb neighbors
+# note: too many terms in model with,
+allspx_nb2_exofn <- glmmTMB(formula = count_cover ~ herbicide + ExoForbNfix + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID), 
+                           family = nbinom2,
+                           data = tidynats0_seeded)
+
+summary(allspx_nb2_exofn) 
+
+# try model without herbicide, but with neighbors (in this case, herbcide should be part of nested error, but probably won't fit)
+allspx_nb2_fullnest <- glmmTMB(formula = count_cover ~ code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide), 
+                            family = nbinom2,
+                            data = tidynats0_seeded)
+
+summary(allspx_nb2_fullnest) 
+
+allspx_nb2_fullnest_exoneigh <- update(allspx_nb2_fullnest, update.formula(count_cover ~ code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide),
+                                                                           . ~ ExoticNeighbors + .))
+summary(allspx_nb2_fullnest_exoneigh)
+
+allspx_nb2_fullnest_exogfn <- update(allspx_nb2_fullnest, update.formula(count_cover ~ code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide),
+                                                                           . ~ ExoticGrass + ExoForbNfix + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide)))
+
+summary(allspx_nb2_fullnest_exogfn) 
+
+AICtab(allsp_nb, allspx_nb, allspx_nb2_allneigh, allspx_nb2_exog, allspx_nb2_exofn, 
+       allspx_nb2_fullnest, allspx_nb2_fullnest_exoneigh, allspx_nb2_fullnest_exogfn,
+       base = T, logLik = T)
+# like others above, best model is the one without any neighbors, but next best are any of the models with any neighbor (agnostic to who)
+# > what i'm taking from this is neighbor ID really does not matter that much other than herbicide knocks back dominant spp competition (in this case, non-native grass)
+# disperion is close to 1 for all, so less need for zero-inflated model
+
+# one more: interact native spp with grams instead
+allspx_nb2_fullnest_codexneighbor <- update(allspx_nb2_fullnest, update.formula(count_cover ~ code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide),
+                                                                         . ~ ExoticNeighbors * code4 + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide)))
+
+summary(allspx_nb2_fullnest_codexneighbor) 
+
+allspx_nb2_fullnest_codexgram <- update(allspx_nb2_fullnest, update.formula(count_cover ~ code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide),
+                                                                                . ~ ExoticGrass * code4 + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide)))
+
+summary(allspx_nb2_fullnest_codexgram) 
+
+AICtab(allsp_nb, allspx_nb, allspx_nb2_allneigh, allspx_nb2_exog, allspx_nb2_exofn, 
+       allspx_nb2_fullnest, allspx_nb2_fullnest_codexneighbor, allspx_nb2_fullnest_exoneigh,
+       allspx_nb2_fullnest_codexgram, allspx_nb2_fullnest_exogfn,
+       base = T, logLik = T)
+
+allspx_nb2_simres <- simulateResiduals(allspx_nb)
+testDispersion(allspx_nb2_simres) 
+testResiduals(allspx_nb2_simres) # simulated residual values are not more extreme than expected (dispersion okay for model used)
+plotResiduals(allspx_nb2_simres) # surprisingly looks ok!
+
+# test model with code interacting with neighbors
+allspx_nb2_codexneigh_simres <- simulateResiduals(allspx_nb2_fullnest_codexneighbor)
+testResiduals(allspx_nb2_codexneigh_simres)
+plotResiduals(allspx_nb2_codexneigh_simres) # slightly better predictions, but has outlier (but is also bootstrapped)
+
+
+# -- TEST LITTER ----
+# if neighbor ID does not matter, is it just litter (whether there is opporunity to emerge and grow?)
+# compile april visit mean litter depth, just in seeded; also if any gopher holes disturbed plots
+
+natlitter <- group_by(natlong, plot, seedtrt, herbicide) %>%
+  mutate(gopher = any(grepl("gopher", notes, ignore.case = T))) %>%
+  ungroup() %>%
+  subset(mon == 4, select = c(plot, seedtrt, herbicide, gopher, litter_depth_cm)) %>%
+  distinct()
+
+# test for influence of litter and/or gopher disturbance (only impacted 11 plots)
+tidynats0_seeded <- left_join(tidynats0_seeded, natlitter)
+
+# leave out neighbors
+allspx_nb2_littergoph <- update(allspx_nb, 
+                                update.formula(count_cover ~ herbicide + code4 * nut_trt *ppt_trt + (1 | block/wholeplotID/subplotID),
+                                               . ~ litter_depth_cm + gopher + .), data = tidynats0_seeded)
+summary(allspx_nb2_littergoph)  
+  
+allspx_nb2_litter_codexneighbors <- update(allspx_nb2_fullnest_codexneighbor, 
+                                update.formula(allspx_nb2_fullnest_codexneighbor$modelInfo$allForm$formula,
+                                               . ~ litter_depth_cm + .), data = tidynats0_seeded)
+summary(allspx_nb2_litter_codexneighbors)
+AICtab(allspx_nb, allspx_nb2_fullnest_codexneighbor, allspx_nb2_littergoph, allspx_nb2_litter_codexneighbors, base = T, logLik = T)
+
+# allspx_nb is still most parsimonious model, with code4 * exoneighbors is slightly better
+
+
+# re-run with beta dist to confirm results, totcov_pct/max(totcov_pct)
+tidynats0_seeded$cover_scale01 <- with(tidynats0_seeded, (pct_cover - min(pct_cover))/(max(pct_cover)- min(pct_cover)))
+allspx_ordbeta <- glmmTMB(formula = cover_scale01 ~ herbicide + code4 * nut_trt * ppt_trt + (1|block/wholeplotID/subplotID),
+                         family = ordbeta,
+                         data = tidynats0_seeded)
+summary(allspx_ordbeta) # same things are signif
+
+# test with code 4 * exo neighbors interaction
+allspx_ordbeta_codexneighbors <- glmmTMB(formula = cover_scale01 ~ ExoticNeighbors * code4 + nut_trt * ppt_trt + (1|block/wholeplotID/subplotID/herbicide),
+                          family = ordbeta,
+                          data = tidynats0_seeded) # doesn't like it
+summary(allspx_ordbeta_codeneighbors)
+
+
+# ## -- OLD CODE -----
+Anova(glm_exotics) # seed addition didn't have much impact on exotic cover relative to itself in unseeded subplots, herbicide mattered more
+lmerTest::ls_means(glm_poisson_exotics, pairwise = T)
+lmerTest::ranova(glm_exotics)
 # herbicide, fxnl grp all signif; seeding has no impact on amount of exotic grass and forb cover in or outside of seeded sub-sub-plots (even when include as interaction)
 # generally exotic cover greater in non-herb, and grass dominates (by 70% cover on average)
 # exotic forb cover is greater in herbicided, exotic grass reduced (tends to have 40% more cover in herbicided)
 # model it as negbin with counts
-nb_exotics <- glmer.nb(round(totcov,0) ~ herbicide * fullgrp * seedtrt + (1|wholeplotID) +(1|ppt_trt:nut_trt), 
-                       data = subset(coarsecov_all_2021_simple, grepl("Back", fullgrp)))
+nb_exotics <- glmer.nb(totcov_count ~ herbicide + coarse_fxnl + seedtrt + (1|block), 
+                       data = subset(tidyfxnl0, grepl("Background Ex", coarse_fxnl)))
 summary(nb_exotics) # similar results
 emmeans_allexos <- data.frame(emmeans::emmeans(nb_exotics, spec = c("herbicide", "fullgrp", "seedtrt")))
 ggplot(emmeans_allexos, aes(herbicide, exp(emmean), group = paste(herbicide, seedtrt), col = seedtrt)) +
@@ -175,6 +675,9 @@ summary(lm_diff)
 Anova(lm_diff) # seed addition didn't have much impact on exotic cover relative to itself in unseeded subplots, herbicide mattered more
 ls_means(lm_diff, pairwise = T)
 lmerTest::ranova(lm_diff) #no..
+
+
+
 
 
 # -- SPECIES RESPONSE MODELS ----
@@ -489,6 +992,4 @@ predict_hurdle_x <- cbind(all_hurdle_x$model,
 # test if hurdle or zinf superior to nb glm
 vuong(all_glm_nb_simple, all_zinf) # not by BIC corrected
 vuong(all_glm_nb_simple, all_hurdle) # not by AIC corrected
-
-glmmTMB()
 

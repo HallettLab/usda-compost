@@ -237,3 +237,48 @@ widesp_pa <- widesp_count %>%
 summary(widesp_pa) # ok
 
 
+# -- TIDY VERSIONS WITH ZERO ----
+# make long form with zeros
+tidysp0 <- subset(natambsp_cov, select = c(plot:yr, code4, pct_cover, count_cover)) %>%
+  gather(met, val, pct_cover, count_cover) %>%
+  unite(met, code4, met, sep = ".") %>%
+  spread(met, val, fill = 0) %>%
+  gather(met, val, names(.)[grepl("[.]", names(.))]) %>%
+  separate(met, into = c("code4", "covmet"), sep = "[.]") %>%
+  spread(covmet, val)
+# check for duplicates
+summary(duplicated(tidysp0[!grepl("cover", names(tidysp0))])) # no dups
+
+# create for seeded plots only
+tidysp0_seeded <- subset(tidysp0, seedtrt != "Unseeded") %>%
+  # drop any spp that doesn't occur in a seeded plot
+  group_by(code4) %>%
+  filter(any(pct_cover > 0)) %>%
+  ungroup()
+
+summary(tidysp0_seeded)
+# compare # spp
+sort(unique(tidysp0$code4)) # spp in all plots
+sort(unique(tidysp0_seeded$code4)) # spp in seeded plots
+
+# make neighborhood dataset with nat spp and neighbor coarse fxnl groups
+tidyfxnl0 <- subset(natambfxnl_cov, select = c(plot:yr, coarse_fxnl, totcov_pct, totcov_count)) %>%
+  gather(met, val, totcov_pct, totcov_count) %>%
+  unite(met, coarse_fxnl, met, sep = ".") %>%
+  spread(met, val, fill = 0) %>%
+  gather(met, val, names(.)[grepl("[.]", names(.))]) %>%
+  separate(met, into = c("coarse_fxnl", "covmet"), sep = "[.]") %>%
+  spread(covmet, val)
+
+# seeded only
+tidyfxnl0_seeded <- subset(tidyfxnl0, seedtrt != "Unseeded") %>%
+  # drop any spp that doesn't occur in a seeded plot
+  group_by(coarse_fxnl) %>%
+  filter(any(totcov_pct > 0)) %>%
+  ungroup()
+
+
+
+#  -- CLEAN UP ENVIRONMENT -----
+# remove things not needed for modeling
+rm(brca_row, natsp, ambsp, natwide)
