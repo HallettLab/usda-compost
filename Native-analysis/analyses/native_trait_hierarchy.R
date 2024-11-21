@@ -13,6 +13,7 @@ library(lme4)
 library(emmeans)
 library(effects)
 library(effectsize)
+library(performance)
 
 source("Native-analysis/analyses/native_ordinations.R")
 
@@ -325,16 +326,279 @@ funchier <- function(sp = "FEMI", diss = F){
   
 }
 
-# (2.1) FEMI trait hierarchy --------
+# calculate dissimilarity and hierarchy values for each species
 femi_hier <- funchier()
 femi_diss <- funchier(diss = T)
-# stick with count to be consistent with gllvm community modeling
-femi_hier <- left_join(femi_hier, rename(widesp_count[c("subplotID", "seedtrt", "herbicide", "FEMI")], FEMI_ct = FEMI))
-femi_diss <- left_join(femi_diss, rename(widesp_count[c("subplotID", "seedtrt", "herbicide", "FEMI")], FEMI_ct = FEMI))
+# brca
+brca_hier <- funchier(sp = "BRCA")
+brca_diss <- funchier(sp = "BRCA", diss = T)
+# esca
+esca_hier <- funchier(sp = "ESCA")
+esca_diss <- funchier(sp = "ESCA", diss = T)
+# nema
+nema_hier <- funchier(sp = "NEMA")
+nema_diss <- funchier(sp = "NEMA", diss = T)
 
-# are neighbor species more similar to or different from FEMI?
-ggplot(femi_hier, aes(FDis, FEMI, col = herbicide)) +
+
+# rbind all then join plot info
+all_hier <- rbind(cbind(spp = "FEMI", rename(femi_hier, cover = FEMI)),
+                  cbind(spp = "BRCA", rename(brca_hier, cover = BRCA)),
+                  cbind(spp = "ESCA", rename(esca_hier, cover = ESCA)),
+                  cbind(spp = "NEMA", rename(nema_hier, cover = NEMA))
+) %>%
+  left_join(subset(target_long, select = -c(xpos, ypos)))
+
+all_diss <- rbind(cbind(spp = "FEMI", rename(femi_diss, cover = FEMI)),
+                  cbind(spp = "BRCA", rename(brca_diss, cover = BRCA)),
+                  cbind(spp = "ESCA", rename(esca_diss, cover = ESCA)),
+                  cbind(spp = "NEMA", rename(nema_diss, cover = NEMA))
+) %>%
+  left_join(subset(target_long, select = -c(xpos, ypos)))
+
+
+# pull trait cols to test
+test_traits <- names(all_diss)[grepl("CWM|FDis", names(all_diss))]
+# remove fresh leaf mass
+test_traits <- test_traits[!grepl("Fresh.leaf|PC.FD", test_traits)]
+
+
+# make trait dats long for storing glmms in list format
+all_hier_long <- cbind(type = "hierarchy", all_hier) %>%
+  data.frame() %>%
+  subset(select = -c(grep("FRic|FDiv|Fresh|PC.FD", names(.)))) %>%
+  gather(met, val, test_traits)
+
+all_diss_long <- cbind(type = "dissimilarity", all_diss) %>%
+  data.frame() %>%
+  subset(select = -c(grep("FRic|FDiv|Fresh|PC.FD", names(.)))) %>%
+  gather(met, val, test_traits)
+
+
+
+# spp trait dissimilarities -----
+form1 <- as.formula(count ~ val * (herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID))
+form2 <- as.formula(count ~ val * (herbicide + nut_trt + ppt_trt) + (1|block))
+inflform <- as.formula(~1)
+get_glmms <- function(df = all_hier_long, s = "FEMI", form = form1, fam = "nbinom2", zform = NA){
+  tempdat <- subset(df, spp == s)
+  if(length(zform)>1){
+  glmm_list <- lapply(split(tempdat[c("count", "herbicide", "nut_trt", "ppt_trt", "met", "val", "block", "wholeplotID")], tempdat$met), 
+                                 function(x) m <- glmmTMB(formula = form, 
+                                                          ziformula = zform, 
+                                                          data = x, family = fam))
+  }else{
+    glmm_list <- lapply(split(tempdat[c("count", "herbicide", "nut_trt", "ppt_trt", "met", "val", "block", "wholeplotID")], tempdat$met), 
+                        function(x) m <- glmmTMB(formula = form, 
+                                                 data = x, family = fam))
+  }
+  names(glmm_list) <- unique(tempdat$met)
+  return(glmm_list)
+  
+}
+
+femi_hier_glmms <- get_glmms()
+femi_diss_glmms <- get_glmms(df = all_diss_long)
+femi_diss_glmms_nb1 <- get_glmms(df = all_diss_long, fam = "nbinom1")
+femi_diss_glmms_pois <- get_glmms(df = all_diss_long, fam = "poisson")
+femi_diss_glmms_zip <- get_glmms(df = all_diss_long, zform = inflform, fam = "poisson")
+femi_diss_glmms_zinb1 <- get_glmms(df = all_diss_long, zform = inflform, fam = "nbinom1") # convergence issue
+femi_diss_glmms_zinb2 <- get_glmms(df = all_diss_long, zform = inflform, fam = "nbinom2")
+femi_diss_glmms_hurd1 <- get_glmms(df = all_diss_long, zform = inflform, fam = "truncated_nbinom1") # hurdle
+femi_diss_glmms_noenv <- get_glmms(df = all_diss_long, form = as.formula(count ~ val + herbicide + (1|block/nut_trt/ppt_trt)))
+femi_diss_glmms_addval <- get_glmms(df = all_diss_long, form = as.formula(count ~ herbicide * (nut_trt + ppt_trt) +val + (1|block)))
+femi_diss_glmms_addvalp <- get_glmms(df = all_diss_long, form = as.formula(count ~ herbicide * (nut_trt + ppt_trt) +val + (1|block)), fam = "poisson")
+femi_diss_glmms_addvalnb1 <- get_glmms(df = all_diss_long, form = as.formula(count ~ herbicide * (nut_trt + ppt_trt) +val + (1|block)), fam = "nbinom1")
+femi_hier_glmms_addval <- get_glmms(form = as.formula(count ~ herbicide * (nut_trt + ppt_trt) +val + (1|block/wholeplotID)))
+
+
+
+DHARMa::plotResiduals(femi_hier_glmms$CWM.Coarse.root.diameter.mm)
+
+lapply(femi_hier_glmms, function(x)plot(simulateResiduals(x))) # LDMC major issues, Height has issues for 25th q, PC.CWM has a poly shape      
+
+# -- EVAL FITS -----
+# just for femi dissimilarity, then move on to others
+lapply(femi_diss_glmms, summary)
+lapply(femi_diss_glmms, testResiduals) # quantile resid issues in many. poly shape
+
+
+# repeat for nbinom1
+lapply(femi_diss_glmms_nb1, summary)
+lapply(femi_diss_glmms_nb1, testResiduals)
+par(mfrow = c(3,3))
+# compare residuals
+lapply(femi_diss_glmms, plotResiduals) # nbinom2 issues for coarse root diam, root volum, sla, pc.cwm
+lapply(femi_diss_glmms_nb1, plotResiduals) # issues for CWM.PC and LDMC, a little for height
+lapply(femi_diss_glmms_pois, plotResiduals) # poisson fit is definitely worse
+lapply(femi_diss_glmms_hurd1, plotResiduals) # hurdle seems worse
+lapply(femi_diss_glmms_zinb1, plotResiduals) # convergence error is on PC.CWM
+lapply(femi_diss_glmms_zinb2, plotResiduals)
+lapply(femi_diss_glmms_zip, plotResiduals) # this is not too bad
+lapply(femi_diss_glmms_noenv, plotResiduals) # no. accounting for env important
+lapply(femi_diss_glmms_addval, plotResiduals) # this one is good! no interaction between trait diss and treatments
+lapply(femi_diss_glmms_addvalp, plotResiduals) # no. negbin is better.
+lapply(femi_diss_glmms_addvalnb1, plotResiduals) # nbinom2 is slightly better than nbinom1
+lapply(femi_hier_glmms_addval, plotResiduals) # slightly off for 2nd to last
+
+lapply(femi_diss_glmms_zip, summary)
+lapply(femi_diss_glmms_zip, testDispersion)
+lapply(femi_diss_glmms_zinb1, testDispersion)
+lapply(femi_diss_glmms_nb1, testDispersion) # seems like better dispersion using nbinom1 than zip..
+lapply(femi_diss_glmms_addval, testDispersion) 
+lapply(femi_diss_glmms_addvalnb1, testDispersion) 
+
+lapply(femi_diss_glmms_addval, summary) # SLA dissimilarity helps FEMI
+lapply(femi_hier_glmms_addval, summary) # hierarchy: SLA**, PC, RMF (negative), Coarse root diam
+
+
+# test hierarchy for femi
+
+
+plot(emmeans(femi_diss_glmms_zip$CWM.Root.volume.cm3, ~ nut_trt + ppt_trt | herbicide + val))
+
+ggplot(subset(femi_diss), aes(CWM.SLA.cm2.g, FEMI)) +
   geom_point(aes(col = herbicide)) +
+  geom_smooth(method = "lm") +
+  facet_wrap(~herbicide)
+
+ggplot(subset(femi_hier), aes(CWM.Height.cm, FEMI)) +
+    geom_point(aes(col = herbicide)) +
+    geom_smooth(method = "lm") +
+  facet_wrap(~nut_trt)
+  
+
+
+
+# -- CONTINUE W OTHER SPP ------
+form3 <- as.formula(count ~ herbicide * (ppt_trt + nut_trt) + val + (1|block/wholeplotID))
+form4 <- as.formula(count ~ herbicide * (ppt_trt + nut_trt + val) + (1|block/wholeplotID))
+
+# -- brca -----
+brca_hier_glmms1 <- get_glmms(s = "BRCA") # best
+brca_hier_glmms <- get_glmms(s = "BRCA", form = form3)
+brca_hier_glmms4 <- get_glmms(s = "BRCA", form = form4) 
+brca_diss_glmms <- get_glmms(df = all_diss_long, s = "BRCA", form = form3) # two model convergence problems
+brca_diss_glmms1 <- get_glmms(df = all_diss_long, s = "BRCA") 
+
+lapply(brca_hier_glmms1, plotResiduals)
+lapply(brca_hier_glmms, plotResiduals)
+lapply(brca_hier_glmms4, plotResiduals) 
+lapply(brca_diss_glmms, plotResiduals)
+lapply(brca_diss_glmms1, plotResiduals)
+
+AIC(brca_hier_glmms1$FDis, brca_hier_glmms$FDis, brca_hier_glmms4$FDis) # AIC lower for simpler model
+
+lapply(brca_hier_glmms1, summary) # rmf matters (negatively) except pos in fert, comp, herb
+# > PC matters (pos) in herbicide, RMF, fine root, coarse root,
+lapply(brca_hier_glmms, summary)
+lapply(brca_hier_glmms4, summary)
+lapply(brca_diss_glmms, summary) # no trait advantage brca
+lapply(brca_diss_glmms1, summary) # coarse root diameter (comp) seems to matter for brca; SLA; RMf F and C; LDMC compost
+
+
+# -- esca -----
+form5 <- as.formula(count ~ herbicide + nut_trt + ppt_trt + val + (1|block/wholeplotID))
+
+esca_hier_glmms <- get_glmms(s = "ESCA") # 6 model convergence problems
+esca_hier_glmmsnb1 <- get_glmms(s = "ESCA", fam = "nbinom1") # lots of issue w convergence
+esca_hier_glmmsp <- get_glmms(s = "ESCA", fam = "poisson")
+esca_hier_glmms3 <- get_glmms(s = "ESCA", form = form3)
+esca_hier_glmms4<- get_glmms(s = "ESCA", form = form4)
+esca_hier_glmms5<- get_glmms(s = "ESCA", form = form5)
+esca_hier_glmms_zinb2 <- get_glmms(s = "ESCA", zform = inflform) # convergence issues
+
+esca_diss_glmms <- get_glmms(df = all_diss_long, s = "ESCA")
+esca_diss_glmms3 <- get_glmms(df = all_diss_long, s = "ESCA", form = form3)
+esca_diss_glmms4 <- get_glmms(df = all_diss_long, s = "ESCA", form = form4)
+
+lapply(esca_hier_glmms, plotResiduals)
+lapply(esca_hier_glmmsnb1, plotResiduals) # no
+lapply(esca_hier_glmmsp, plotResiduals) # nb2 fit still better
+lapply(esca_hier_glmms3, plotResiduals) # no
+lapply(esca_hier_glmms4, plotResiduals) # no
+lapply(esca_hier_glmms5, plotResiduals) # no
+lapply(esca_hier_glmms_zinb2, plotResiduals) # normal nb2 still least problematic
+
+lapply(esca_diss_glmms, plotResiduals) # problems with 2nd trait only
+lapply(esca_diss_glmms3, plotResiduals) # probems with several others but less severe
+lapply(esca_diss_glmms4, plotResiduals) # definite no
+
+lapply(esca_hier_glmms, summary) # neg in drought only (interactions): fine root sl, ldmc (weak), sla, trait pc
+lapply(esca_diss_glmms, summary) # LDMC (positive), fine root (pos)
+
+lapply(esca_hier_glmms5, summary)
+
+lapply(esca_diss_glmms3, summary)
+
+
+nema_hier_glmms <- get_glmms(s = "NEMA") # 4 model convergence issues
+nema_diss_glmms <- get_glmms(df = all_diss_long, s = "NEMA")
+lapply(nema_diss_glmms, summary)
+lapply(nema_diss_glmms, plotResiduals)
+
+
+# (2.1) FEMI trait hierarchy --------
+# troubleshoot FEMI dissimilarity
+lapply(femi_diss_glmms, summary)
+lapply(femi_diss_glmms, testResiduals) # quantile resid issues in many. poly shape
+lapply(femi_diss_glmms, plotQQunif) # passes dispersion test
+femi_diss_glmms_form1nb1 <- get_glmms(df = all_diss_long, fam = "nbinom1")
+femi_diss_glmms_form1nb1 <- get_glmms(df = all_diss_long, fam = "nbinom1") 
+femi_diss_glmms_form1genp <- get_glmms(df = all_diss_long, fam = "genpois") 
+femi_diss_glmms_form1zip <- get_glmms(df = all_diss_long, fam = "poisson") 
+femi_diss_glmms_form1zinb1 <- get_glmms(df = all_diss_long, fam = "nbinom1") 
+
+testzip <- lapply()
+lapply(femi_hier_glmms, plotResiduals) # Coarse root has issues, Height S curve issues, LDMC better but still issue, RMF has issues (poly shape), PC.CWM okay     
+lapply(femi_diss_glmms_form1zip, plotResiduals) # generally best looking resids
+lapply(femi_diss_glmms_form1zip, plotQQunif)
+lapply(femi_diss_glmms_form1zinb1, plotResiduals) # good except for PC.CWM
+lapply(femi_diss_glmms_form1nb1, plotResiduals) # LDMC major issues, Height has issues for 25th q, PC.CWM has a poly shape      
+lapply(femi_diss_glmms_form1genp, plotResiduals) # still a few issue but better than either nb fits
+lapply(femi_diss_glmms_form1genp, DHARMa::testDispersion)
+lapply(femi_diss_glmms_form1nb1, DHARMa::testDispersion)
+lapply(femi_diss_glmms, DHARMa::testDispersion)
+lapply(femi_diss_glmms, DHARMa::plotSimulatedResiduals)
+plot(simulateResiduals(femi_diss_glmms$CWM.LDMC))
+
+# compare for height
+AIC(femi_diss_glmms$CWM.Height.cm, femi_diss_glmms_form1genp$CWM.Height.cm, femi_diss_glmms_form1nb1$CWM.Height.cm,
+    femi_diss_glmms_form1zip$CWM.Height.cm, femi_diss_glmms_form1zinb1$CWM.Height.cm)
+# general poisson has lowest AIC
+
+
+femi_diss_traitxtrts <- lapply(split(all_diss_long[c("FEMI_ct", "herbicide", "nut_trt", "ppt_trt", "met", "val", "block", "wholeplotID")], femidiss_long$met), 
+                               function(x) m <- glmmTMB(formula = FEMI_ct ~ val * (herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID), 
+                                                   data = x, family = "nbinom2"))
+names(femi_diss_traitxtrts) <- test_taits
+femi_hier_traitxtrts <- lapply(split(femihier_long[c("FEMI_ct", "herbicide", "nut_trt", "ppt_trt", "met", "val", "block", "wholeplotID")], femihier_long$met), 
+                               function(x) m <-(glmmTMB(formula = FEMI_ct ~ val * (herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID), 
+                                                   data = x, family = "nbinom2")))
+names(femi_hier_traitxtrts) <- test_traits
+
+lapply(femi_hier_traitxtrts, function(x) broom.mixed::tidy(x, conf.int = T))
+lapply(femi_diss_traitxtrts, function(x) broom.mixed::tidy(x, conf.int = T))
+lapply(femi_hier_traitxtrts, coef)
+
+plot(emmeans::emmeans(femi_diss_traitxtrts$CWM.LDMC, ~ herbicide + ppt_trt + nut_trt | val))
+plot(emmeans::emmeans(femi_hier_traitxtrts$CWM.LDMC, ~ ppt_trt + nut_trt | val +herbicide, ))
+
+
+# test dissimilarity first
+# > does Fdisp for traits and Fdis PCA give you the same info?
+plot(femi_diss$FDis ~ femi_diss$PC.FDis) # not quite
+
+cor.test(~femi_diss$FDis + femi_diss$PC.FDis) # rho = .3445938 95% CI 0.1192778 0.5361551
+
+
+summary(glmmTMB(FEMI_ct ~ FDis * (nut_trt + ppt_trt + herbicide) + (1|block), data = femi_diss, family = "nbinom2"))
+
+
+
+# are neighbor species morfdisp()# are neighbor species more similar to or different from FEMI?
+ggplot(femi_hier, aes(FDis, FEMI, col = herbicide)) + #
+  geom_point(aes(col = herbicide)) +
+  geom_smooth(method = "lm")
   facet_grid(nut_trt ~ ppt_trt)
 
 ggplot(femi_hier, aes(CWM.SLA.cm2.g, FEMI, col = herbicide)) +
@@ -615,13 +879,14 @@ subset(esca_hier, select = grep("rowid|PC.CW|FDis|CWM.Fine|block|herbici|ppt_|nu
 subset(esca_diss, select = grep("rowid|PC.CW|FDis|CWM.Fine|block|herbici|ppt_|nut_tr|ESCA", names(esca_hier))) %>%
   gather(traitmet, val, grep("^F[A-Z][a-z]|^CWM|^PC", names(.))) %>%
   #subset(ESCA > 0) %>%
-  ggplot(aes(val, ESCA_ct)) +
+  ggplot(aes(val, log(ESCA_ct+.01))) +
   #ggplot(aes(val, log(ESCA+0.0001))) +
   #ggplot(aes(val, scale(ESCA))) +
   geom_vline(aes(xintercept = 0), col = "black", lwd = 1.5) +
   geom_point(aes(col = ppt_trt, shape = herbicide), size = 3, alpha = .75) + #col = 
-  #geom_smooth(aes(col = ppt_trt, fill = ppt_trt, lty = herbicide), se = F, method = "lm") +
-  stat_smooth(aes(col = ppt_trt, fill = ppt_trt), method = "lm", formula = "y ~ poly(x,2)") +
+  geom_smooth(col = "black", se = T, method = "lm") + #lty = herbicide
+  geom_smooth(aes(col = ppt_trt, fill = ppt_trt), se = T, method = "lm") + #lty = herbicide
+  #stat_smooth(aes(col = ppt_trt, fill = ppt_trt), method = "lm", formula = "y ~ poly(x,2)") +
   #stat_smooth(aes(),col = "grey30", method = "lm", formula = "y ~ poly(x,2)") + #group = herbicide, lty = herbicide
   #stat_smooth(aes(),col = "grey30", method = "lm") +
   scale_color_manual(values = c("seagreen2", "chocolate", "blue")) +
@@ -802,8 +1067,49 @@ gather(nema_diss, traitmet, val, grep("^F[A-Z][a-z]|^CWM|^PC", names(nema_hier))
 
 # (3) MODEL TRAIT HIERARCHY -----
 VarCorr(nema_hier_fdismod_full)
+
 # adjusted pvalues for multiple hypothesis testing
 
 # determine marginal importance
 
 
+# (4) CHAPTER MODELS -----
+# just run mods for trait dissimilarity, separate mods for each spp, and per KNS one w  only trait, then trait 
+
+femi_diss_nb <- glmmTMB(FEMI_ct ~ FDis + herbicide + (1|block/xpos/ypos), family = nbinom2(), data = femi_diss)
+femi_diss_env_nb <- glmmTMB(FEMI_ct ~ FDis + ppt_trt + nut_trt + herbicide + (1|block), family = nbinom2(), data = femi_diss)
+femi_diss_envx_nb <- glmmTMB(FEMI_ct ~ FDis + (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = femi_diss)
+summary(femi_diss_nb)
+summary(femi_diss_env_nb)
+summary(femi_diss_envx_nb)
+
+femi_hier_nb <- glmmTMB(FEMI_ct ~ FDis + herbicide + (1|block/xpos/ypos), family = nbinom2(), data = femi_hier)
+femi_hier_env_nb <- glmmTMB(FEMI_ct ~ FDis + ppt_trt + nut_trt + herbicide + (1|block), family = nbinom2(), data = femi_hier)
+femi_hier_envx_nb <- glmmTMB(FEMI_ct ~ FDis + (ppt_trt * nut_trt) + herbicide + (1|block), family = nbinom2(), data = femi_hier)
+femi_hier_envxonly_nb <- glmmTMB(FEMI_ct ~ (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = femi_hier)
+summary(femi_hier_nb)
+summary(femi_hier_env_nb)
+summary(femi_hier_envx_nb)
+summary(femi_hier_envxonly_nb)
+
+anova(femi_hier_envx_nb, femi_hier_envxonly_nb, femi_hier_nb)
+
+
+# integrated trait pca: disimilarity v trait hierarchy
+# BRCA
+
+# FEMI
+femi_diss_pccwm.envx_nb <- glmmTMB(FEMI_ct ~ PC.CWM + (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = femi_diss)
+femi_hier_pccwm.envx_nb <- glmmTMB(FEMI_ct ~ PC.CWM + (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = femi_hier)
+
+# NEMA
+
+# ESCA
+esca_diss_pccwm.envx_nb <- glmmTMB(ESCA_ct ~ PC.CWM + (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = esca_diss)
+esca_hier_pccwm.envx_nb <- glmmTMB(ESCA_ct ~ PC.CWM + (ppt_trt + nut_trt) * herbicide + (1|block), family = nbinom2(), data = esca_hier)
+summary(esca_diss_pccwm.envx_nb)
+summary(esca_hier_pccwm.envx_nb)
+
+nema_diss_nb
+esca_diss_nb
+brca_diss_nb
