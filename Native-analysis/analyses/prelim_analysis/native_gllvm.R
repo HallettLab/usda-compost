@@ -4,7 +4,7 @@
 # -- SETUP -----
 #devtools::install_github("https://github.com/BertvanderVeen/gllvm/tree/roweff") #use this version to use nested random effects
 library(gllvm)
-library(vegan) # need to call gllvm::ordiplot
+#library(vegan) # need to call gllvm::ordiplot
 
 
 # source prepped cover and trtkey data
@@ -12,10 +12,10 @@ library(vegan) # need to call gllvm::ordiplot
 #source("Native-analysis/native_prep_cover.R", print.eval = F, echo = F) # trait script loads all datasets needed
 # source prepped trait data
 source("Native-analysis/native_prep_traits.R", print.eval = F, echo = F)
-# ^note: warning message about NA coercian is okay. just converting notes about no sample available to NA, rest of numeric vals become numberic
+# ^note: warning message about NA coercion is okay. just converting notes about no sample available to NA, rest of numeric vals become numberic
 
 
-# -- PREP Y, X, AND TR DATA  ----
+# 1. PREP Y, X, AND TR DATA  ----
 # ydat = species (row = site, cols = sp abundances)
 # xdat = environment (row = site, cols = env vars)
 # TR = trait data (sp as rownames, cols = traits)
@@ -35,6 +35,9 @@ rownames(xdat) <- rowkey$rowid
 # drop anything not using in models
 xdat <- xdat[!names(xdat) %in% c("rowid")] #"xpos", "ypos" <-- keep these if want to use as randos
 
+
+
+
 # species in count form
 ydat_count <- merge(widesp_count, rowkey) # merge to be sure
 
@@ -44,13 +47,52 @@ ydat_count <- ydat_count[names(ydat_count)[grepl("^[A-Z]+", names(ydat_count))]]
 # check colsums
 checkcolSums <- sapply(ydat_count, function(x) sum(x>0))
 sort(checkcolSums)/nrow(ydat_count)
+# crosscheck presence in trait dataset
+notraits <- names(ydat_count)[!names(ydat_count) %in% natamb_avgtraits_wide$code4] # 22 species not in traitmat
+notraits
+# what is their occurrence?
+sort(checkcolSums[notraits]) # only 4 would be retained: UNBU (native), AST3 (non-native), NAPU (navarettia), GAPA (non-native forb, galium parisiense)
+# how abundant are species (meancov)
+sort(sapply(ydat_count, mean)) # most are under 1% cover on average across all plots
+table(sort(sapply(ydat_count, max)))
+# look at variation in abundance values
+sort(sapply(ydat_count, sd))
+table(sort(sapply(ydat_count, function(x) length(unique(x[x>0]))))) # most species (21) have only 2 values--one of which is 0..
+# in gjam, lack of variation in data would make modeling more challenging. not sure how it is for gllvm, but generally it's not helpful in ordination either
+plot(sapply(ydat_count, max) ~ sapply(ydat_count, mean), main = "compost spp mean cover vs max")
+plot(sapply(ydat_count, sd) ~sapply(ydat_count, function(x) length(unique(x))), main = "compost spp unique count values vs sd counts")
 
-# for first test, drop anything not in at least 5% of plots
+# rules to lumping spp: 
+# rare = in less than 5% of plots (7 or fewer)
+# only 1 unique non-zero cover value or max cover of 1
+# no trait data (unless frequently occurring and has variation in data -- at least 3 non zero values)
+
+# drop anything not in at least 5% of plots
 nrow(ydat_count)*.05 # at least 7 plots
 
 # pull rare (<5% plots to group by fxnl group)
 # > to not over-inflate count on rare, sum on pct cover then transform to count
 ydat_raresp <- names(ydat_count)[checkcolSums < nrow(ydat_count)*.05]
+# ID non-rare (common)
+ydat_nonrare_sp <- names(ydat_count)[checkcolSums >= nrow(ydat_count)*.05]
+
+# screen variation in data
+ydat_uniquevals <- sapply(ydat_count, function(x) length(unique(x[x >0])))
+sort(ydat_uniquevals[ydat_nonrare_sp])
+
+# screen max abundance
+ydat_maxcov <- sapply(ydat_count, max)
+sort(ydat_maxcov[ydat_nonrare_sp])
+
+# screen trait availability
+ydat_nonrare_sp[!ydat_nonrare_sp %in% natamb_avgtraits_wide$code4] # add AST3 and UNBU to spp to lump (bc unknown and relatively low cov and low var)
+# NAPU and GAPA don't have traits but were abundant, so useful for variation in data
+
+# add to rare spp
+ydat_raresp <- sort(c(ydat_raresp, "UNBU", "AST3"))
+# drop from nonrare
+ydat_nonrare_sp <- ydat_nonrare_sp[!ydat_nonrare_sp %in% c("UNBU", "AST3")]
+
 # keep pct cover df separate to recycle for beta distribution
 ydat_rare <- subset(tidysp0, code4 %in% ydat_raresp) %>%
   # join spp functional info
@@ -77,12 +119,14 @@ ydat_count_rare <- ydat_count_rare[grepl("Nat|Exo", names(ydat_count_rare))]
 summary(rownames(ydat_count) == rownames(ydat_count_rare)) # yes
 
 # cbind then recrunch colsums to drop anything in less than 5% of plots
-ydat_count <- cbind(ydat_count, ydat_count_rare)
+# remove raresp from ydat_count 
+ydat_count <- cbind(ydat_count[!names(ydat_count) %in% ydat_raresp], ydat_count_rare)
 # check colsums
 checkcolSums <- sapply(ydat_count, function(x) sum(x>0))
 sort(checkcolSums)/nrow(ydat_count)
-# combine background native nfix and native forb, and exo forb and exo nfix (note each nfixers only present in 2 plots)
+# drop anything not present in 5% of all plots
 ydat_count <- ydat_count[checkcolSums > nrow(ydat_count)*.05]
+# combine background native nfix and native forb, and exo forb and exo nfix (note each nfixers only present in 2 plots)
 ydat_count$NativeForbNfix <- ydat_count$NativeForb + ydat_count_rare$NativeNfix
 ydat_count$ExoticForbNfix <- ydat_count$ExoticForb + ydat_count_rare$ExoticNfix
 # drop NativeForb and ExoticForb cats
@@ -92,34 +136,29 @@ summary(ydat_count) # ok
 # make sure no rare sp in final
 summary(ydat_raresp %in% names(ydat_count)) # none
 
+
 #  sp as beta distribution [0,1]
-ydat_beta <- merge(widesp_pct, rowkey)
-# since already have ID'd rare can combine aggregageted rare with spp first, then drop all nonspp cols
+# remove rare spp from widesp_pct
+ydat_beta <- merge(widesp_pct[!names(widesp_pct) %in% ydat_raresp], rowkey)
+# since already have ID'd rare can combine aggregated rare with spp first, then drop all nonspp cols
 # create rare groups for beta dist
 ydat_beta_rare <- subset(ydat_rare, select = -count_cover) %>%
   spread(coarse_fxnl, pct_cover) %>%
   # sum natforb and nat nfix, exoforb and exonfix
   mutate(NativeForbNfix = NativeForb + NativeNfix,
          ExoticForbNfix = ExoticForb + ExoticNfix)
+# combine common and aggregted rare spp
 ydat_beta <- cbind(ydat_beta, ydat_beta_rare)
 # set rownames
 rownames(ydat_beta) <- ydat_beta$rowid
-# drop anything not plant cov
-ydat_beta <- ydat_beta[names(ydat_beta)[grepl("^[A-Z]+|Nat|Exo", names(ydat_beta))]]
+# keep same cols as in ydat_count (all in at least 5% of plots, Forbs and Nfixers are aggregated)
+ydat_beta <- ydat_beta[names(ydat_count)]
 
-# check colsums
-checkcolSums <- sapply(ydat_beta, function(x) sum(x>0))
-sort(checkcolSums)/nrow(ydat_beta)
-# combine background native nfix and native forb, and exo forb and exo nfix (note each nfixers only present in 2 plots)
-ydat_beta <- ydat_beta[checkcolSums > nrow(ydat_beta)*.05]
-
-# drop NativeForb and ExoticForb cats
-ydat_beta <- ydat_beta[!names(ydat_beta) %in% c("ExoticForb", "NativeForb")]
 
 # make all proportional, so between 0 and 1
 ydat_beta <- mutate_all(ydat_beta, function(x) x/100)
 # make sure all between 0,1
-summary(ydat_beta) # all btwn 0 and 1
+sapply(ydat_beta, range) # all btwn 0 and 1
 
 # specify design structure
 sDesign_full <- xdat[c("plot", "block", "xpos", "ypos", "wholeplotID", "subplotID")]
@@ -137,11 +176,12 @@ summary(rownames(ydat_beta) == rownames(xdat))
 summary(rownames(ydat_beta) == rownames(sDesign_full)) # okay
 
 
+
 # -- prep seeded plot y data -----
 # > can re-use xdat and traitdat, just need to subset to relevant spp
 # need to split out seeded so no columns with all 0s -- this also means re-aggregating fxnl cover for rare spp
 # what is 5% of plots?
-sum(xdat$seedtrt != "Unseeded") * 0.05 # at least 4 plots
+sum(xdat$seedtrt != "Unseeded") * 0.05 # at least 4 plots of 70 plots total
 
 # build count first; build beta only if need (will probably use count)
 ydat_count_seeded <- merge(subset(widesp_count, seedtrt != "Unseeded"), rowkey) %>%
@@ -152,14 +192,34 @@ ydat_count_seeded <- merge(subset(widesp_count, seedtrt != "Unseeded"), rowkey) 
 rownames(ydat_count_seeded) <- ydat_count_seeded$rowid
 ydat_count_seeded <- ydat_count_seeded[names(ydat_count_seeded)[grepl("^[A-Z]+", names(ydat_count_seeded))]]
 # check colsums
-checkcolSums <- sapply(ydat_count_seeded, function(x) sum(x>0))
-sort(checkcolSums)/nrow(ydat_count_seeded)
+checkcolSums_seeded <- sapply(ydat_count_seeded, function(x) sum(x>0))
+sort(checkcolSums_seeded)/nrow(ydat_count_seeded)
 
-# pull rare (<5% plots to group by fxnl group)
+# check max cover, unique cover vals, and overlap with trait dat
+seeded_maxcov <- sapply(ydat_count_seeded, max)
+seeded_uniquecov <- sapply(ydat_count_seeded, function(x) length(unique(x[x > 0])))
+seeded_notraits <- names(ydat_count_seeded)[!names(ydat_count_seeded) %in% natamb_avgtraits_wide$code4] # 22 spp
+# review
+sort(checkcolSums_seeded); table(checkcolSums_seeded)
+sort(seeded_maxcov); table(seeded_maxcov)
+sort(seeded_uniquecov); table(seeded_uniquecov)
+
+# pulseeded_maxcov# pull rare (<5% plots to group by fxnl group)
 # > to not over-inflate count on rare, sum on pct cover then transform to count
-ydat_raresp_seeded <- names(ydat_count_seeded)[checkcolSums < nrow(ydat_count_seeded)*.05]
+ydat_raresp_seeded <- checkcolSums_seeded[checkcolSums_seeded <= nrow(ydat_count_seeded)*.05]
+ydat_nonrare_sp_seeded <- checkcolSums_seeded[checkcolSums_seeded > nrow(ydat_count_seeded)*.05]
+
+ydat_raresp_seeded # are any of these in trait dataset?
+sort(ydat_raresp_seeded[names(ydat_raresp_seeded) %in% natamb_avgtraits_wide$code4]) # split 19 yes, 19 no; 13 rare present ARE in traits db
+# what of nonrare is NOT in traits db
+sort(ydat_nonrare_sp_seeded[!names(ydat_nonrare_sp_seeded) %in% natamb_avgtraits_wide$code4]) # AST3, NAPU, GAPA. similar to all plots (except UNBU was in allplots)
+# follow same as for all plots: add AST3 to rare and keep napu and gapa as species
+sort(seeded_maxcov[names(ydat_nonrare_sp_seeded)]) # AST3 was only ever max 1, NAPU max cover is 2 -- but NAPU is in 13 plots
+sort(seeded_uniquecov[names(ydat_nonrare_sp_seeded)]) # APOC and NAPU only have two non-zero unique vals
+
+
 # keep pct cover df separate to recycle for beta distribution
-ydat_rare_seeded <- subset(tidysp0, seedtrt != "Unseeded" & code4 %in% ydat_raresp_seeded) %>%
+ydat_rare_seeded <- subset(tidysp0, seedtrt != "Unseeded" & code4 %in% c(names(ydat_raresp_seeded), "AST3")) %>%
   # join spp functional info
   left_join(distinct(natambsp_cov, code4, coarse_fxnl)) %>%
   group_by(plot, seedtrt, herbicide, coarse_fxnl) %>%
@@ -177,8 +237,11 @@ ydat_rare_seeded <- subset(tidysp0, seedtrt != "Unseeded" & code4 %in% ydat_rare
 ydat_count_rare_seeded <- subset(ydat_rare_seeded, select = -pct_cover) %>%
   spread(coarse_fxnl, count_cover)
 
-# join based on rowid then keep only plant cols
-ydat_count_seeded <- mutate(ydat_count_seeded, rowid = rownames(ydat_count_seeded)) %>%
+# drop anything in raresp
+ydat_count_seeded <- ydat_count_seeded[!names(ydat_count_seeded) %in% c(names(ydat_raresp_seeded), "AST3")] %>%
+  # set rowid
+  mutate(rowid = rownames(.)) %>%
+  # join based on rowid then keep only plant cols
   merge(ydat_count_rare_seeded) %>%
   arrange(plot, seedtrt, herbicide)
 # set rownames
@@ -187,19 +250,23 @@ rownames(ydat_count_seeded) <- ydat_count_seeded$rowid
 ydat_count_seeded <- ydat_count_seeded[names(ydat_count_seeded)[grepl("^[A-Z]+|Nat|Exo", names(ydat_count_seeded))]]
 
 # check colsums
-checkcolSums <- sapply(ydat_count_seeded, function(x) sum(x>0))
-sort(checkcolSums)/nrow(ydat_count_seeded) 
-checkcolSums # sum nfix and forbs for ambient native plants only
+checkcolSums_seeded <- sapply(ydat_count_seeded, function(x) sum(x>0))
+sort(checkcolSums_seeded)/nrow(ydat_count_seeded)
+checkcolSums_seeded # sum nfix and forbs for ambient native plants only
 
 # combine background native nfix and native forb, and exo forb and exo nfix (note each nfixers only present in 2 plots)
-ydat_count_seeded <- ydat_count_seeded[checkcolSums > nrow(ydat_count_seeded)*.05]
+ydat_count_seeded <- ydat_count_seeded[checkcolSums_seeded > nrow(ydat_count_seeded)*.05]
+# sum native forb and nfix lumped spp
 ydat_count_seeded$NativeForbNfix <- ydat_count_seeded$NativeForb + ydat_count_rare_seeded$NativeNfix
+# repeat for exotic -- exo nfix are in 4 plots, and would keep consistent with all plots methods
+ydat_count_seeded$ExoticForbNfix <- ydat_count_seeded$ExoticForb + ydat_count_rare_seeded$ExoticNfix
 # drop NativeForb and ExoticForb cats
-ydat_count_seeded <- ydat_count_seeded[!names(ydat_count_seeded) %in% c("NativeForb")]
+ydat_count_seeded <- ydat_count_seeded[!names(ydat_count_seeded) %in% c("NativeForb", "ExoticForb", "ExoticNfix")]
 # review
 summary(ydat_count_seeded) # ok
 # make sure no rare sp in final
-summary(ydat_raresp_seeded %in% names(ydat_count_seeded)) # none
+summary(names(ydat_raresp_seeded) %in% names(ydat_count_seeded)) # none
+# aggregated 38 rare spp (including AST3) into their functional groups
 
 # create xdat and study design for seeded for convenience, and to be sure roworder same
 xdat_seeded <- subset(xdat, seedtrt != "Unseeded")
@@ -207,6 +274,9 @@ sDesign_seeded <- sDesign_full[grepl("NatSeed", rownames(sDesign_full)),]
 # check rownames the same order
 summary(rownames(ydat_count_seeded) == rownames(xdat_seeded))
 summary(rownames(ydat_count_seeded) == rownames(sDesign_seeded)) # yes
+xdat_seeded <- mutate(xdat_seeded, hillpos = ifelse(block %in% c(1,2), "down", "up"),
+               # alpha order is correct factor order (downslope = ref, just as block 1 is ref)
+               hillpos = factor(hillpos))
 
 
 
@@ -234,8 +304,8 @@ traitmat_seeded <- traitmat[rownames(traitmat) %in% names(ydat_count_seeded),]
 # check order agrees (should be alphabetical)
 rownames(traitmat_full);names(ydat_count) # yes, alphabetical
 nrow(traitmat_full) # 34 rows but 37 spp in ydat_count.. may need to drop spp not in trait dat if want 4th corner model
-names(ydat_count)[!names(ydat_count) %in% traitmat_full$code4] # unk aster, 2 native plnts, aggregates
-names(ydat_count_seeded)[!names(ydat_count_seeded) %in% rownames(traitmat_seeded)] # ast3, napu, and aggregate groups
+names(ydat_count)[!names(ydat_count) %in% traitmat_full$code4] # napu and aggregates
+names(ydat_count_seeded)[!names(ydat_count_seeded) %in% rownames(traitmat_seeded)] # napu and aggregate groups
 
 # note cols in ydat to drop
 notrait_spp <- unique(c(names(ydat_count)[!names(ydat_count) %in% traitmat_full$code4],
@@ -275,7 +345,7 @@ reduced_traits <- names(traitmat_full)[grepl("SLA|Fresh|RMF|LDM|Height|SLA|root.
 reduced_traits # be sure have the ones desired
 
  
-# -- PcoA and db-RDA to set expectations -----
+# 2. PcoA and db-RDA to set expectations -----
 # this may produce neg eigenvalues, but to get a general idea of constrained ordination
 # use hellinger transformation -- drop native seeded spp because won't be in unseeded plots
 allplots_hel <- decostand(ydat_count[!names(ydat_count) %in% c("FEMI", "BRCA", "ESCA", "NEMA")], method = "hellinger")
@@ -394,7 +464,8 @@ ordiellipse(seedplots_hel_pcoa, xdat_seeded$herbicide, kind = "sd", col = c("pin
 ordiellipse(seedplots_hel_pcoa, paste0(xdat_seeded$wholeplotID, xdat_seeded$herbicide), kind = "ehull", col = c("pink1", "pink4"), label = T)
 
 
-# -- PRELIM GLLVM MODELS -----
+
+# 3. PRELIM GLLVM MODELS -----
 # to determine distribution to use (negbin or beta)
 # specify seed for reproducibility
 myseed <- 1371
@@ -406,28 +477,113 @@ par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
 plot(null_nb) # looks pretty good visually
 summary(null_nb, dispersion = T, Lvcoefs = T) # AIC:  14377.27 AICc:  14385.86 BIC:  15341.55 LL:  -7042 df:  147 
 
-# still unconstrained model, but with nested design specified in random errom
+# still unconstrained model, but with nested design specified in random error
 null_nb_nested <- gllvm(y = ydat_count, family = "negative.binomial", 
                         studyDesign = sDesign_full,
                         row.eff = ~(1|block/wholeplotID/subplotID),
-                        seed = myseed
-)
+                        seed = myseed) # lack of convergence warning
+plot.new()
+plot(null_nb_nested)
+
 summary(null_nb_nested, row.intercepts = T, dispersion = T, spp.intercepts = T, Lvcoefs = T) # AIC:  16237.27 AICc:  16246.22 BIC:  17221.22 LL:  -7969 df:  150 
-par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
-plot(null_nb_nested) # cannot plot when nested error specified (maybe a bug in development version, works in CRAN)
+
+# ZINB
+null_zinb <- gllvm(y = ydat_count, family = "ZINB", seed = myseed)
+# warning: model overfit when use nested error for ZINB
+plot.new()
+plot(null_zinb) # no
+
+# ZIP (to see if helps tails)
+null_zip <- gllvm(y = ydat_count, family = "ZIP", seed = myseed)
+plot.new()
+plot(null_zip) # worse than zinb. negbin model is still best.
 
 # null model on proportional cover
-null_beta <- gllvm(y = ydat_beta, family = "beta",
-                   seed = myseed)
-plot(null_beta) # bad fits due to high number 0s [maybe because of seeded native spp], stick with negbin
+# won't run with 0s, add small amount
+ydat_beta2 <- ydat_beta + 0.0001
+null_beta <- gllvm(y = ydat_beta2, family = "beta", seed = myseed)
+plot.new()
+plot(null_beta) # very bad fits, stick with negbin
 
-# try with seeded plots only to see if they are better fits
-null_beta_seeded <- gllvm(y = ydat_beta_seeded, family = "beta",
-                          seed = myseed)
-plot(null_beta_seeded) # still not good fits because of high number of 0s, stick with negbin
+# try ordered beta (permits 0 values unlika beta dist)
+null_ordbeta <- gllvm(y = ydat_beta, family = "orderedBeta", method = "EVA",
+                   seed = myseed) # error about singular fit
+plot.new()
+plot(null_ordbeta) # no. method = VA (default) or EVA = bad fits
 
+# try hurdle ordered beta  family = "betaH", method="EVA"
+null_betaH <- gllvm(y = ydat_beta, family = "betaH", method = "EVA",
+                      seed = myseed)
+plot.new()
+plot(null_betaH) # it's not terrible..
+
+
+# compare negbin and hurdle beta
+preds_nb <- predict.gllvm(null_nb) %>%
+  data.frame() %>%
+  cbind(rowid = rownames(null_nb$y)) %>%
+  gather(spp, pred, 1:(ncol(.)-1))
+
+preds_betaH <- predict.gllvm(null_betaH) %>% # has twice as many cols for hurdle preds
+  data.frame() %>%
+  cbind(rowid = rownames(null_nb$y)) %>%
+  gather(spp, pred, 1:(ncol(.)-1)) %>%
+  separate(spp, into = c("type", "spp"), sep = "_") %>%
+  mutate(spp = ifelse(is.na(spp), type, spp),
+         type = ifelse(type == "H01", "hurdle", "cover"))
+
+# get tidy y to compare
+tidy_y <- data.frame(null_betaH$y) %>%
+  rownames_to_column("rowid") %>%
+  gather(spp, obs, 2:ncol(.))
+
+# plot both to compare
+merge(preds_nb, tidy_y) %>%
+  ggplot(aes(obs*100, exp(pred))) +
+  geom_point() +
+  geom_abline(col = "blue") +
+  facet_wrap(~spp, scales = "free")
+
+
+merge(preds_betaH, tidy_y) %>%
+  subset(type != "cover") %>%
+  ggplot(aes((obs>0), exp(pred))) +
+  geom_jitter() +
+  geom_boxplot() +
+  facet_wrap(~spp, scales = "free_y") # ok (where plants are y pred is greater), but does best for most abundant spp
+
+merge(preds_betaH, tidy_y) %>%
+  subset(type == "cover") %>%
+  ggplot(aes(obs, exp(pred))) +
+  geom_jitter() +
+  geom_abline(col = "blue") +
+  facet_wrap(~spp, scales = "free") 
+
+# compare resids
+cowplot::plot_grid(
+  merge(preds_nb, tidy_y) %>%
+    ggplot(aes(spp, (obs*100 - exp(pred)))) +
+    geom_boxplot() +
+    geom_jitter() +
+    geom_hline(aes(yintercept = 0), col = "red") +
+    ggtitle("negbin resids") +
+    coord_flip(),
+merge(preds_betaH, tidy_y) %>%
+  subset(type == "cover") %>%
+  ggplot(aes(spp, obs- exp(pred))) +
+  geom_boxplot() +
+  geom_jitter() +
+  geom_hline(aes(yintercept = 0), col = "red") +
+  ggtitle("hurdle cov resids") +
+  coord_flip(), 
+nrow = 1
+)
+# hurdle model cover predictions are worse. stick with negbin model
 
 # > move forward with negative binomial gllvm
+
+
+
 
 # -- screen best number latent variables ----
 # above pcoa and rda suggest maybe 3, but 1 axis (diving hillslope) captures the most variation in data 
@@ -448,12 +604,15 @@ bestnull_nb # 2 latent variables are good! then 1
 #      1        2        3        4 
 # 14704.41 14693.05 14716.80 14771.02 
 # 14823.09 14809.80 14824.02 14878.27  <-- different numbers when set seed(?), still same conclusion: 2 then 1/3 are comp
+# 14823.18 14852.98 14824.02 14880.37  <-- Nov 2024 (seed not set), 1 or 3, then 2.. (already know it's just hillslope)
+# 14683.66 14666.65 14691.45 14726.87 <-- 11/12/24, 2 lvs then 1 then 3. with re-worked y data (unbu and ast3 are now lumped)
 
 # test on seeding and herbicide treats (ignore env for now): are 2 lv's still best?
 bestseedherb_nb <- bestlv(ydat_count, X = xdat)
 bestseedherb_nb 
 #       1        2        3        4 
 # 13960.32 13988.62 14050.48 14126.30 # 1 LV is best
+# 14267.9  14269.5  14326.2  14400.7 <-- 11/12/24 recheck # 1 or 2 is best when bring in xdat
 
 # run with a different seed to see if 1 LV still best
 bestseedherb_nb <- bestlv(ydat_count, X = xdat, rowform = as.formula(~ 1|block/wholeplotID/subplotID), seed = myseed)
@@ -467,9 +626,13 @@ bestseedherbenv_nb <- bestlv(ydat_count, X = xdat, yform = as.formula(~ herbicid
 bestseedherbenv_nb # 1 LV is also best
 #     1        2        3        4 
 # 13888.62 13959.78 14046.78 14282.83 
+# 14196.91 14259.42 14536.20 14426.61  <-- 11/12/14 when all terms added in, 1 LV is best
+
+# > proceed with 1 LV, negbin model
 
 
-# -- GLLVM NEGBIN MODELS -----
+# 4. GLLVM NEGBIN MODELS -----
+# > note: default LVs is 2 unless specify something different
 # add hillpos to xdat
 xdat <- mutate(xdat, hillpos = ifelse(block %in% c(1,2), "down", "up"),
                # alpha order is correct factor order (downslope = ref, just as block 1 is ref)
@@ -537,8 +700,8 @@ gllvm::ordiplot(seedherb_hillenvls_nb, s.cex = 0.5, arrow.scale = 1, symbols = F
 # add native spp seeded in
 seedherb_hillenvls_nb_wnats <- gllvm(y = ydat_count, X = xdat, family = "negative.binomial",
                                # put block since captures so much variation
-                               formula = ~ herbicide + seedtrt , 
-                               lv.formula = ~ hillpos * ppt_trt*nut_trt,
+                               formula = ~ herbicide + seedtrt, 
+                               lv.formula = ~ hillpos + ppt_trt*nut_trt,
                                num.lv.c = 2, 
                                studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")],
                                row.eff = ~ (1|block), #(1|block/wholeplotID),
@@ -692,7 +855,7 @@ seedherb_nb_scaletraits_re$fourth.corner
 
 coeffs_envxtrait_re <- names(data.frame(seedherb_nb_scaletraits_re$X.design))
 coefplot(seedherb_nb_scaletraits,mar = c(4,10,1,1), order = T, cex.ylab = 0.75)
-coefplot.gllvm(seedherb_nb_scaletraits_re, mar = c(4,17,4,1), order = T, cex.ylab = 0.75,
+coefplot(seedherb_nb_scaletraits_re, mar = c(4,17,4,1), order = T, cex.ylab = 0.75,
          cex.lab = 1, cex.main = 1, cex.axis = 1,
          main = "All env, trait, and interactions, with random effect (1|block/wholeplotID)")
 
@@ -814,20 +977,225 @@ corrplot::corrplot(getResidualCov(seedherb_envxblock_nb_seeded)$cov, is.corr = F
 ordiplot.gllvm(seedherb_envxblock_nb_seeded)
 
 
-# -- try constrained ordination model ----
-# use herbicide as latent
-# -- package example for traits ----
-data(antTraits)
-View(antTraits$traits)
-View(antTraits$abund)
 
-# -- dev package example for nested random effects ----
-data(spider)
-str(spider$abund)
-View(spider$trait)
+# -- CHAPTER MODELS -----
+# make the following x predictors: ppt, soil amendment, seedtrt, herbicide. how much do these explain variation in abd?
+# models to make:
+# 1) all plots, no nats, test what herbicide and seeding treatment did to communities
+# 1b) all plots, no nats, with environment 
+# 2) seeded only (pred = ppt, soil, herbicide)
+# 3) seeded 4th corner
 
-# nested
-model <- gllvm(spider$abund, num.lv = 2, family="poisson", #
-               row.eff= ~(1|group/plot), studyDesign = data.frame(group=rep(1:2,14), plot = rep(1:4, each = 7)))
-summary(model)
-gllvm::getResidualCor(model)
+# double check rownames match
+table(rownames(ydat_count) == rownames(xdat))
+
+# model 1: all plots, without native seeded to assess effects on whole community
+allplots_gllvm <- gllvm(y = ydat_count[!names(ydat_count) %in% nats], X = xdat, 
+                        family = "negative.binomial", 
+                        num.lv = 3, 
+                        formula = as.formula(~ herbicide + seedtrt),
+                        # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                        studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                        row.eff = ~ (1|block/wholeplotID),
+                        seed = myseed) 
+
+
+allplots_gllvm_nats <- gllvm(y = ydat_count, X = xdat, 
+                        family = "negative.binomial", 
+                        num.lv = 3, 
+                        formula = as.formula(~ herbicide + seedtrt),
+                        # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                        studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                        row.eff = ~ (1|block/wholeplotID),
+                        seed = myseed) 
+
+summary(allplots_gllvm_nats)
+gllvm::coefplot(allplots_gllvm_nats)
+plot(allplots_gllvm)
+plotVarPartitioning(varPartitioning(allplots_gllvm_nats), mar = c(10,10,10,10), las = 2,
+                    col = palette(hcl.colors(8, "Roma")))
+
+
+dev.off()
+gllvm::ordiplot(allplots_gllvm)
+
+
+# model 1 b: all plots, no nats, with env
+allplots_gllvm_env <- gllvm(y = ydat_count[!names(ydat_count) %in% nats], X = xdat, 
+                        family = "negative.binomial", 
+                        num.lv = 1, 
+                        formula = as.formula(~ herbicide + seedtrt + ppt_trt * nut_trt),
+                        # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                        studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                        row.eff = ~ (1|block/wholeplotID),
+                        seed = myseed) 
+
+summary(allplots_gllvm_env)
+plot(allplots_gllvm_env)
+gllvm::ordiplot(allplots_gllvm_env)
+plotVarPartitioning(varPartitioning(allplots_gllvm_env), mar = c(10,10,10,10), las = 2,
+                    col = palette(hcl.colors(8, "Roma")))
+corrplot::corrplot(gllvm::getResidualCor(allplots_gllvm_env), order = "hclust", method = "color")
+corrplot::corrplot(gllvm::getResidualCov(allplots_gllvm_env)$cov, is.corr = F,order = "hclust", method = "color")
+gllvm::se(allplots_gllvm_env)
+
+
+# with nats
+allplots_gllvm_env_nats <- gllvm(y = ydat_count, X = xdat, 
+                            family = "negative.binomial", 
+                            num.lv = 2, 
+                            # lv.formula = ~ hillpos,
+                            # num.lv.c = 2
+                            formula = as.formula(~ herbicide + seedtrt + (ppt_trt * nut_trt)),
+                            # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                            studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                            row.eff = ~ (1|block/wholeplotID),
+                            seed = myseed) 
+
+plotVarPartitioning(varPartitioning(allplots_gllvm_env_nats), mar = c(10,10,10,10), las = 2,
+                    col = palette(hcl.colors(8, "Roma")))
+
+
+# model 2: seeded only
+ydat_count_seeded
+xdat_seeded
+sDesign_seeded
+table(rownames(sDesign_seeded) == rownames(ydat_count_seeded))
+names(ydat_count_seeded)
+
+seeded_gllvm_env <- gllvm(y = ydat_count_seeded, X = xdat_seeded, 
+                          family = "negative.binomial", 
+                          num.lv = 2, 
+                          formula = as.formula(~ herbicide + ppt_trt * nut_trt),
+                          # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                          studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                          row.eff = ~ (1|block/wholeplotID),
+                          seed = myseed)
+summary(seeded_gllvm_env)
+coefficients(seeded_gllvm_env)
+dev.off()
+plotVarPartitioning(varPartitioning(seeded_gllvm_env), mar = rep(8,4),
+                    las = 2, col = palette(hcl.colors(8, "Roma")))
+
+seeded_gllvm_envcorW2 <- gllvm(y = ydat_count_seeded[!names(ydat_count_seeded) %in% c("ExoticGrass","APOC","CAPY","NAPU", "GEDI", "AICA", "HYRA", "HYGL", "LASE")], X = xdat_seeded, 
+                          family = "negative.binomial", 
+                          num.lv.c = 2, 
+                          formula = as.formula(~ herbicide + ppt_trt * nut_trt),
+                          lv.formula = ~ hillpos,
+                          randomB = "LV",
+                          corWithin = T,
+                          # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                          studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                          row.eff = ~ (1|block/wholeplotID),
+                          seed = myseed)
+
+summary(seeded_gllvm_envcorW2)
+gllvm::confint.gllvm(seeded_gllvm_envcorW2)
+coefplot(seeded_gllvm_envcorW2)
+gllvm::ordiplot(seeded_gllvm_envcorW2, mar = rep(10,4), s.cex = 1) 
+                # s.colors = palette(hcl.colors(8, "Roma")))
+                # col.ellips = palette(hcl.colors(8, "Roma")), 
+                # lwd.ellips = 3)
+
+plotVarPartitioning(varPartitioning(seeded_gllvm_envcorW), mar = c(7,5,10,3), adj = 0.25,
+                    xlab = "", main = "",
+                    args.legend = list(horiz = F, cex = 0.75, xjust = 0.9, yjust = -0.2),
+                    las = 2, col = palette(hcl.colors(8, "Roma")))
+
+# test constrained ordination example (does it provide same info as when us trts as predictors?)
+
+seeded_gllvm_conord <- gllvm(y = ydat_count_seeded, 
+                             X = xdat_seeded, 
+                               family = "negative.binomial",
+                             # constrained latent vars
+                               num.lv.c = 2, 
+                               formula = as.formula(~ herbicide),
+                             lv.formula = as.formula(~ ppt_trt *nut_trt),
+                               corWithin = T,
+                               # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                               studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                               row.eff = ~ (1|block/wholeplotID),
+                               seed = myseed)
+
+summary(seeded_gllvm_conord)
+ordiplot(seeded_gllvm_conord, biplot = T)
+
+
+# compare with num.RR
+seeded_gllvm_rr <- gllvm(y = ydat_count_seeded, 
+                             X = xdat_seeded, 
+                             family = "negative.binomial",
+                             # constrained latent vars
+                             num.RR = 2, 
+                             formula = as.formula(~ herbicide),
+                             lv.formula = as.formula(~ ppt_trt *nut_trt),
+                             corWithin = T,
+                             # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                             studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                             row.eff = ~ (1|block/wholeplotID),
+                             seed = myseed)
+
+ordiplot(seeded_gllvm_rr, biplot = T)
+coefplot(seeded_gllvm_rr)
+plotVarPartitioning(varPartitioning(seeded_gllvm_rr),  mar = c(7,5,8,3), adj = 0.01,
+                    xlab = "", main = "herbicide = xvar,\nppt x nut = latent\nblock = random",
+                    args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.2),
+                    las = 2, col = palette(hcl.colors(8, "Roma")))
+
+
+seeded_gllvm_block <- gllvm(y = ydat_count_seeded, 
+                         X = xdat_seeded, 
+                         family = "negative.binomial",
+                         # constrained latent vars
+                         #num.lv = 2,
+                         num.RR  = 3, 
+                         lv.formula = as.formula(~ herbicide + ppt_trt *nut_trt),
+                         formula = as.formula(~ hillpos + block),
+                         corWithin = T,
+                         # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                         studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                         #row.eff = ~ (1|block/wholeplotID),
+                         seed = myseed)
+
+summary(seeded_gllvm_block)
+ordiplot(seeded_gllvm_block, biplot = F, jitter = T,jitter.amount = .3, which.lvs = c(1,2))
+plotVarPartitioning(varPartitioning(seeded_gllvm_block), mar = c(7,5,8,3), adj = 0,
+                    xlab = "", main = "Grazing legacy + block = xvars,\ntreats = latent",
+                    args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.2),
+                    las = 2, col = palette(hcl.colors(8, "Roma")))
+
+coefplot(seeded_gllvm_block, which.Xcoef = c(1:4), order = F)
+coefplot(seeded_gllvm_block, which.Xcoef = c(5:10), order = F)
+# model 3: 4th corner with traits
+# scale numeric cols in traitmat
+traitmat_scaled <- mutate_at(traitmat_full_norm, .vars = names(traitmat_full_norm)[!grepl("code4|durat|fxnl_|nativ", names(traitmat_full_norm))], function(x) as.numeric(scale(x)))
+
+# just env vars, no random effects
+seeded_gllvm_4scale <- gllvm(y = ydat_count[,names(ydat_count) %in% rownames(traitmat)], X = xdat[c("seedtrt", "herbicide", "nut_trt", "ppt_trt")],
+                            TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count),reduced_traits],#,c("Fine.root.specific.length.cm.g", "Proportion.fine.roots", "RMF", "LDMC", "SLA.cm2.g", "Height.cm")], # drop code4 
+                            family = "negative.binomial", 
+                            num.lv = 2, 
+                            formula = y ~ (herbicide + seedtrt + nut_trt * ppt_trt) + (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g +Height.cm + LDMC),
+                            studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], #row.eff = ~ (1|block/wholeplotID/subplotID),
+                            row.eff = ~ (1|block/wholeplotID),
+                            seed = myseed)
+
+
+
+seedherb_nb_seeded_scaletraits <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
+                                        X = xdat[grepl("NatSeed", rownames(xdat)), c("herbicide", "nut_trt", "ppt_trt")],
+                                        TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],#,c("Fine.root.specific.length.cm.g", "Proportion.fine.roots", "RMF", "LDMC", "SLA.cm2.g", "Height.cm")], # drop code4 
+                                        family = "negative.binomial", 
+                                        num.lv = 2, 
+                                        formula = y ~ herbicide + (nut_trt + ppt_trt) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3),
+                                        #lv.formula = ~ block,
+                                        studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                                        #corWithin = T,
+                                        #randomX = ~ herbicide,
+                                        row.eff = ~ (1|block),
+                                      #  gradient.check = T,
+                                        seed = myseed)
+summary(seedherb_nb_seeded_scaletraits)
+coefplot(seedherb_nb_seeded_scaletraits)
+ordiplot(seedherb_nb_seeded_scaletraits, biplot = T, jitter = T, jitter.amount = .5)
+
