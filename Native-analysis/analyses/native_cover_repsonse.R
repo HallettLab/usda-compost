@@ -25,15 +25,16 @@ source("Native-analysis/native_prep_traits.R", print.eval = F, echo = F)
 library(glmmTMB)
 library(DHARMa)
 library(performance)
+library(multcomp)
+library(emmeans)
 library(broom.mixed)
-library(bbmle) # for AICtab to compare models
 library(gllvm)
 library(cowplot)
 library(modelsummary)
 theme_ctw <- function(){
   theme(axis.title = element_text(size = 12), 
         axis.text = element_text(size = 12),
-        legend.text = element_text(size = 11),
+        legend.text = element_text(size = 12),
         legend.title = element_text(size = 12),
         strip.background = element_blank(),
         strip.text = element_text(size = 12))
@@ -264,7 +265,9 @@ fxnltarget_long <- rbind(target_long, fxnl_long[names(target_long)]) %>%
   arrange(plot, wholeplotID, seedtrt, herbicide, spp) %>%
   # create hillpos
   mutate(hillpos = ifelse(block %in% c(1,2), "downhill", "uphill"),
-         hillpos = factor(hillpos))
+         hillpos = factor(hillpos),
+         # make spp factor
+         spp = factor(spp))
 
 fxnltarget_long %>%
   mutate(fulltrt = recode(fulltrt, 'XCXC' = "Control", "XCD" = "D", "XCW" = "W",
@@ -283,7 +286,7 @@ fxnltarget_long %>%
 #       legend.justification.bottom = "right")
 
 
-# boxplot to show spread
+# points and lines to show spread
 fxnltarget_long %>%
   mutate(fulltrt = recode(fulltrt, 'XCXC' = "Control", "XCD" = "D", "XCW" = "W",
                           'FXC' = 'F', 'CXC' = 'C')) %>%
@@ -298,9 +301,7 @@ fxnltarget_long %>%
   facet_grid(herbicide ~ seedtrt, scales = "free_y") +
   theme_ctw() +
   labs(x = "Soil x precipitation treatment", y = "Abundance")
-theme(legend.position = "bottom",
-      legend.justification.bottom = "right",
-      legend.box.just = "right")
+
 
 
 # -- prep seeded plot y data -----
@@ -470,6 +471,9 @@ reduced_traits # be sure have the ones desired
 
 
 # scale traitmat
+traitmat_scaled <- mutate_at(traitmat_full_norm, .vars = names(traitmat_full_norm)[!grepl("code4|durat|fxnl_|nativ", names(traitmat_full_norm))], function(x) as.numeric(scale(x)))
+
+
 
 # -- GLMMs FOR TREATMENT EFFECTS -----
 # try all spp model but may need to run separate models for each seeded spp
@@ -479,110 +483,99 @@ reduced_traits # be sure have the ones desired
 # mod 3 = herb + spp x env interactive
 # mod 2 = spp x herb + spp x env interactive
 
+mod0 <- as.formula(count ~ spp + herbicide + nut_trt + ppt_trt + (1|block)) 
+mod1 <- as.formula(count ~ spp * (herbicide + nut_trt + ppt_trt) + (1|block))
+mod2 <- as.formula(count ~ herbicide + (spp * nut_trt * ppt_trt) + (1|block))
+mod3 <- as.formula(count ~ (spp * herbicide) + (spp * nut_trt * ppt_trt) + (1|block))
+mod4 <- as.formula(count ~ (spp * herbicide) + (herbicide * nut_trt * ppt_trt) + (1|block))
+mod5 <- as.formula(count ~ (spp * herbicide) * (nut_trt + ppt_trt) + (1|block))
 
-# 1) models for seeded spp only -----
+# 1a) models for seeded spp only -----
 # mod 0 -- this is too simple and doesn't cpapture spp effects, but for comparison
-nb_nats_seeded_add <- glmmTMB(count ~ spp + herbicide + nut_trt + ppt_trt + (1|block),
+nb_nats_seeded_mod0nb1 <- glmmTMB(formula = mod0,
                                   data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
                                   family = "nbinom1")
 
+nb_nats_seeded_mod0nb2 <- glmmTMB(formula = mod0,
+                                  data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
+                                  family = "nbinom2")
+
+check_model(nb_nats_seeded_mod0nb1)
+check_model(nb_nats_seeded_mod0nb2)
+check_overdispersion(nb_nats_seeded_mod0nb1) # overdispersion detected for nb1
+check_overdispersion(nb_nats_seeded_mod0nb2) # no overdispersion
+
+compare_performance(nb_nats_seeded_mod0nb1, nb_nats_seeded_mod0nb2) # nb 2 better fit
+par(mfrow = c(2,1))
+DHARMa::testDispersion(nb_nats_seeded_mod0nb1)
+DHARMa::testDispersion(nb_nats_seeded_mod0nb2) # nb2 better fit
+DHARMa::testResiduals(nb_nats_seeded_mod0nb1) # dispersion test signif (same test is in performance package)
+DHARMa::testResiduals(nb_nats_seeded_mod0nb2)
+
+# > proceed with nbinom2 distribution
+
+
 # mod 1
-nb_nats_seeded_sppxadd <- glmmTMB(count ~ spp * (herbicide + nut_trt + ppt_trt) + (1|block),
-                             data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                             family = "nbinom1")
-nb_nats_seeded_sppxadd2 <- glmmTMB(count ~ spp * (herbicide + nut_trt + ppt_trt) + (1|block),
+nb_nats_seeded_mod1nb2 <- glmmTMB(formula = mod1,
                                   data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
                                   family = "nbinom2")
-nb_nats_seeded_sppxadd2.sum <- glmmTMB(count ~ spp * (herbicide + nut_trt + ppt_trt) + (1|block),
-                                   data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                                   family = "nbinom2", contrasts = list(spp = "contr.sum"))
+
 # mod 2
-nb_nats_seeded_sppxenv <- glmmTMB(count ~ herbicide + spp * (nut_trt * ppt_trt) + (1|block), 
-                      data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                      family = "nbinom1")
-
-nb_nats_seeded_sppxenv2 <- glmmTMB(count ~ herbicide + spp * (nut_trt * ppt_trt) + (1|block), 
+nb_nats_seeded_mod2nb2 <- glmmTMB(formula = mod2, 
                                   data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
                                   family = "nbinom2")
+
 # mod 3
-nb_nats_seeded_sppx <- glmmTMB(count ~ (spp * herbicide) + (spp * nut_trt * ppt_trt) + (1|block),
-                               data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                               family = "nbinom1")
-nb_nats_seeded_sppx2 <- glmmTMB(count ~ (spp * herbicide) + (spp * nut_trt * ppt_trt) + (1|block),
-                               data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                               family = "nbinom2")
+nb_nats_seeded_mod3nb2 <- glmmTMB(formula = mod3,
+                                  data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
+                                  family = "nbinom2")
 
-# mod 4 -- additive env, but interaction between spp, herb and each env manip
-nb_nats_seeded_splitx <- glmmTMB(count ~ (spp * herbicide) * (nut_trt + ppt_trt) + (1|block),
-                                 data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                                 family = "nbinom2")
-summary(nb_nats_seeded_splitx)
-
+# mod 4
+nb_nats_seeded_mod4nb2 <- glmmTMB(formula = mod4,
+                                  data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
+                                  family = "nbinom2")
 # mod 5
-nb_nats_seeded_split3x <- glmmTMB(count ~ spp * herbicide + (herbicide* nut_trt *ppt_trt) + spp * (nut_trt + ppt_trt) + (1|block),
-                                 data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-                                 family = "nbinom2")
-summary(nb_nats_seeded_split3x)
-# to be sure, try full interactive. won't run, convergence problems
-# nb_nats_seeded_x <- glmmTMB(count ~ spp * herbicide * nut_trt * ppt_trt + (1|block),
-#                                data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
-#                                family = "nbinom2") # doesn't work w nbinom1 or 2
+nb_nats_seeded_mod5nb2 <- glmmTMB(formula = mod5,
+                                  data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt)),
+                                  family = "nbinom2")
+# > fully interactive model does not converge
 
-data.frame(anova(nb_nats_seeded_add, 
-      nb_nats_seeded_sppxadd,
-      nb_nats_seeded_sppxenv,
-      nb_nats_seeded_sppx))
+compare_performance(nb_nats_seeded_mod0nb2, nb_nats_seeded_mod1nb2, 
+                    nb_nats_seeded_mod2nb2,  nb_nats_seeded_mod3nb2,
+                    nb_nats_seeded_mod4nb2, nb_nats_seeded_mod5nb2) # mod 1 seems best, but consider 2, 3 and 5
+anova(nb_nats_seeded_mod0nb2, nb_nats_seeded_mod1nb2, 
+      nb_nats_seeded_mod2nb2,  nb_nats_seeded_mod3nb2,
+      nb_nats_seeded_mod4nb2, nb_nats_seeded_mod5nb2) # 1, 2, 3, 5 = mods to consider. mod 1 and 5 esp, but esp 1
+compare_performance(nb_nats_seeded_mod1nb2, 
+                    nb_nats_seeded_mod2nb2,  nb_nats_seeded_mod3nb2,
+                    nb_nats_seeded_mod5nb2, rank = T)
 
-performance::compare_performance(nb_nats_seeded_add, nb_nats_seeded_sppxadd, nb_nats_seeded_sppxenv,
-                                 nb_nats_seeded_sppx)
-performance::check_model(nb_nats_seeded_sppx2)
-performance::test_lrt(nb_nats_seeded_sppxadd2, nb_nats_seeded_sppx2)
+par(mfrow = c(2,2))
+lapply(list(nb_nats_seeded_mod1nb2, nb_nats_seeded_mod2nb2, nb_nats_seeded_mod3nb2, nb_nats_seeded_mod5nb2), plotResiduals)
+# > mod 1 is best ITO no trend in residuals
+par(mfrow = c(1,1))
+testZeroInflation(nb_nats_seeded_mod1nb2) # no zerof inflation
 
-# test nbinom2
-anova(nb_nats_seeded_sppx2, nb_nats_seeded_sppxadd2,  nb_nats_seeded_splitx, nb_nats_seeded_sppxenv2)
-anova(nb_nats_seeded_sppx, nb_nats_seeded_sppx2)
+summary(nb_nats_seeded_mod1nb2)
+summary(nb_nats_seeded_mod5nb2) # not many meaningful interactions
+summary(nb_nats_seeded_mod2nb2) # terrible bounds for NEMA
+summary(nb_nats_seeded_mod3nb2) # bad SE for NEMA
+# > only mods 1 and 5 give realistic results
+plot(emmeans::emmeans(nb_nats_seeded_mod1nb2, ~ nut_trt + ppt_trt  + herbicide| spp), type = "response")
+plot(emmeans::emmeans(nb_nats_seeded_mod5nb2, ~ nut_trt + ppt_trt  + herbicide| spp), type = "response") # NE
 
-performance::compare_performance(nb_nats_seeded_sppx2, nb_nats_seeded_sppxadd2,  nb_nats_seeded_splitx, nb_nats_seeded_sppxenv2, rank = T)
+# assess terms
+car::Anova(nb_nats_seeded_mod1nb2) # all but nutrient (direct) important.
+testResiduals(nb_nats_seeded_mod1nb2) # everything good
 
-# mods 2 and 3 best
-car::Anova(nb_nats_seeded_sppxadd) 
-car::Anova(nb_nats_seeded_sppx) # herb x spp is an important term, spp x each term additive is what's most important
-car::Anova(nb_nats_seeded_splitx) # don't need 3-way interaction between spp, herb, and env like with background
-car::Anova(nb_nats_seeded_sppxadd2.sum, type = 3)
-summary(nb_nats_seeded_sppxadd)
-summary(nb_nats_seeded_splitx)
-summary(nb_nats_seeded_sppxadd2)
-summary(nb_nats_seeded_sppxadd2.sum)
-DHARMa::plotQQunif(nb_nats_seeded_sppx)
-DHARMa::plotQQunif(nb_nats_seeded_sppx2)
-DHARMa::plotQQunif(nb_nats_seeded_splitx)
-
-plotResiduals(nb_nats_seeded_sppx)
-plotResiduals(nb_nats_seeded_sppx2)
-plotResiduals(nb_nats_seeded_splitx)
-
-DHARMa::testResiduals(nb_nats_seeded_sppx)
-DHARMa::testResiduals(nb_nats_seeded_sppx2)
-testResiduals(nb_nats_seeded_splitx)
-
-testDispersion(nb_nats_seeded_sppxenv2) # nbinom2 is a better fit than nbinom1
-anova(nb_nats_seeded_sppxadd2, nb_nats_seeded_splitx) # 3-way herb x each env is marginally better
-
-summary(nb_nats_seeded_splitx) # none of the 3way effects are signif
 
 # > proceed for native seeded spp with additive model
 # > compare results in herb vs unherb plots to be sure model picking up effects
 # herbicided plots only
 # interactive effects
 nb_nats_seeded_herbx <- glmmTMB(count ~ spp * (nut_trt * ppt_trt) + (1|block), 
-                          data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & !grepl("Non", herbicide)),
-                          family = "nbinom2")
-
-summary(nb_nats_seeded_herbx)
-summary(nb_nats_seeded_sppxadd2) # <- this mod best, just spp interaction w each manipulation 
-summary(nb_nats_seeded_sppx2)
-summary(nb_nats_seeded_sppxadd2.sum)
-
+                                data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & !grepl("Non", herbicide)),
+                                family = "nbinom2")
 
 # additive effects only
 nb_nats_seeded_herb <- glmmTMB(count ~ spp * (nut_trt + ppt_trt) + (1|block), 
@@ -593,56 +586,54 @@ anova(nb_nats_seeded_herb, nb_nats_seeded_herbx) # full interactive not better, 
 
 # test additive in unherbicided
 nb_nats_seeded_unherb <- glmmTMB(count ~ spp * (nut_trt + ppt_trt) + (1|block), 
-                                data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & grepl("Non", herbicide)),
-                                family = "nbinom2")
+                                 data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & grepl("Non", herbicide)),
+                                 family = "nbinom2")
 summary(nb_nats_seeded_unherb)
 
 # interactive -- can't run model with 3-way interaction between spp and nut x ppt, only spp + nut x ppt
 nb_nats_seeded_unherbx <- glmmTMB(count ~ spp + (nut_trt * ppt_trt) + (1|block), 
-                                 data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & grepl("Non", herbicide)),
-                                 family = "nbinom2")
+                                  data = subset(fxnltarget_long, spp %in% nats & !grepl("Unseed", seedtrt) & grepl("Non", herbicide)),
+                                  family = "nbinom2")
 
 summary(nb_nats_seeded_unherbx)
-anova(nb_nats_seeded_unherb, nb_nats_seeded_unherbx) # additive mode is better
+anova(nb_nats_seeded_unherb, nb_nats_seeded_unherbx) # additive model is better
 
 
 # for curiosity, test nema only
-nb_forbs_seeded <- glmmTMB(count ~ spp * (herbicide + nut_trt + ppt_trt) + (1|block), 
-                          data = subset(fxnltarget_long, spp %in% c("NEMA", "ESCA") & !grepl("Unseed", seedtrt)),
-                          family = "nbinom2")
+nb_forbs_seeded_mod1nb2 <- glmmTMB(formula = mod1, 
+                                   data = subset(fxnltarget_long, spp %in% c("NEMA", "ESCA") & !grepl("Unseed", seedtrt)),
+                                   family = "nbinom2")
 summary(nb_forbs_seeded)
 
-nb_grass_seeded <- glmmTMB(count ~  spp * (herbicide + nut_trt + ppt_trt) + (1|block), 
-                          data = subset(fxnltarget_long, spp %in% c("FEMI", "BRCA") & !grepl("Unseed", seedtrt)),
-                          family = "nbinom2")
+nb_grass_seeded_mod1nb2 <- glmmTMB(formula = mod1, 
+                                   data = subset(fxnltarget_long, spp %in% c("FEMI", "BRCA") & !grepl("Unseed", seedtrt)),
+                                   family = "nbinom2")
 summary(nb_grass_seeded)
 
 
 # compare BRCA coeffs across all mods but forb-only
 natsonly_coeffs <- rbind(
-#cbind(tidy(nb_nats_seeded_sppx), mod = "all plots x"),
-cbind(tidy(nb_nats_seeded_sppxadd2, conf.int = T, exponentiate = F), mod = "all plots"),
-cbind(tidy(nb_nats_seeded_splitx, conf.int = T, exponentiate = F), mod = "all plots, split"),
-cbind(tidy(nb_nats_seeded_herb,  conf.int = T, exponentiate = F), mod = "herb plots"),
-cbind(tidy(nb_nats_seeded_unherb,  conf.int = T, exponentiate = F), mod = "unherb plots"),
-cbind(tidy(nb_forbs_seeded,  conf.int = T, exponentiate = F), mod = "forbs only"),
-cbind(tidy(nb_grass_seeded,  conf.int = T, exponentiate = F), mod = "grass only"))
+  #cbind(tidy(nb_nats_seeded_sppx), mod = "all plots x"),
+  cbind(tidy(nb_nats_seeded_mod1nb2, conf.int = T, exponentiate = F), mod = "all plots"),
+  cbind(tidy(nb_nats_seeded_herb,  conf.int = T, exponentiate = F), mod = "herb plots"),
+  cbind(tidy(nb_nats_seeded_unherb,  conf.int = T, exponentiate = F), mod = "unherb plots"),
+  cbind(tidy(nb_forbs_seeded_mod1nb2,  conf.int = T, exponentiate = F), mod = "forbs only"),
+  cbind(tidy(nb_grass_seeded_mod1nb2,  conf.int = T, exponentiate = F), mod = "grass only"))
 
 
 ggplot(subset(natsonly_coeffs, is.na(group) & !grepl("spp", term) & !grepl("forb", mod)), aes(term, estimate, group = mod, col = mod)) +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0, position = position_dodge(width = 0.25)) +
   geom_point(position = position_dodge(width = 0.25), size = 3) +
   coord_flip()
- 
+
 # stack resids for comparison
 natsonly_preds <- rbind(
-cbind(augment(nb_nats_seeded_sppxadd2), mod = "all plots"),
-cbind(augment(nb_nats_seeded_splitx), mod = "all plots, split"),
-cbind(augment(nb_forbs_seeded), mod = "forbs only"),
-cbind(augment(nb_grass_seeded), mod = "grass only")
+  cbind(augment(nb_nats_seeded_mod1nb2), mod = "all plots"),
+  cbind(augment(nb_forbs_seeded_mod1nb2), mod = "forbs only"),
+  cbind(augment(nb_grass_seeded_mod1nb2), mod = "grass only")
 ) %>%
   rbind(cbind(augment(nb_nats_seeded_herb), herbicide = "Herbicided", mod = "herb plots only")[names(.)],
-    cbind(augment(nb_nats_seeded_unherb), herbicide = "Non-herbicided", mod = "unherb plots only")[names(.)])
+        cbind(augment(nb_nats_seeded_unherb), herbicide = "Non-herbicided", mod = "unherb plots only")[names(.)])
 # drop .rownames
 natsonly_preds <- natsonly_preds[!grepl("rown", names(natsonly_preds))]
 
@@ -669,61 +660,269 @@ ggplot(subset(natsonly_preds), aes(paste(ppt_trt, nut_trt), `.resid`, group = pa
   facet_grid(spp ~ herbicide, scales = "free_y")
 
 
-# model for background response
-# make grass reference group``
+
+# 1b) figure for nat effects ----- 
+
+# gather marginal means to compare with means from raw data
+summary(glht(nb_nats_seeded_mod1nb2,  emmeans::lsm(~ spp : herbicide : ppt_trt : nut_trt)))
+mod_means <- emmeans(nb_nats_seeded_mod1nb2, ~ herbicide + ppt_trt + nut_trt | spp , type = "response")
+nb_nats_margmeans <- data.frame(mod_means)
+
+
+natfig <- fxnltarget_long %>%
+  subset(spp %in% nats & grepl("Nat", seedtrt)) %>%
+  left_join(nb_nats_margmeans) %>%
+  mutate(fulltrt = recode(fulltrt, 'XCXC' = "Control", "XCD" = "D", "XCW" = "W",
+                          'FXC' = 'F', 'CXC' = 'C'),
+         ppt_trt = relevel(ppt_trt, ref = "D")) %>%
+  ggplot(aes(fulltrt, count, group = paste(spp, fulltrt, herbicide))) +
+  geom_vline(aes(xintercept = 3.5), lty = 2, col = "grey50") +
+  geom_vline(aes(xintercept = 6.5), lty = 2, col = "grey50") +
+  geom_line(position = position_nudge(x = -0.3)) +
+  #stat_summary(aes(fill = ppt_trt), position = position_nudge(x = -0.3), pch = 21, size = .7) +
+  geom_point(aes(fill = ppt_trt), position = position_nudge(x = -0.3), pch = 21, size = 2) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0, lwd = 1) +
+  geom_point(aes(fulltrt, response, fill = ppt_trt), pch = 21, size = 3) +
+  scale_color_brewer(name = "Precipitation\ntreatment", palette = "BrBG", 
+                     labels = c("Drought (D)", "Control", "Wet (W)")) +
+  scale_fill_brewer(name = "Precipitation\ntreatment", palette = "BrBG",
+                    labels = c("Drought (D)", "Control", "Wet (W)")) +
+  facet_grid(spp ~ herbicide, scales = "free_y") +
+  theme_ctw() +
+  theme(legend.justification.right = "top") +
+  labs(x = "Soil x precipitation treatment", y = "Abundance") +
+  theme(plot.margin = unit(c(1, 4, 1, 1), "lines"))
+
+# get anova stats
+nats_best_anova <- data.frame(car::Anova(nb_nats_seeded_mod1nb2)) %>%
+  mutate(term = rownames(.)) %>%
+  rename_all(function(x) gsub("[.]", "", x))
+
+
+natfig
+# manually add anova stats for now
+grid::grid.text(label = "Type II Wald Chisq\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide **\n spp:soil trt ***\n spp:precip trt ***", 
+                x = unit(0.8, "npc"), y = unit(0.65, "npc"), just = "left")
+
+cld(mod_means, adjust = "sidak", Letters = letters, alpha = 0.05)
+summary(glht(nb_nats_seeded_mod1nb2))
+summary(nb_nats_seeded_mod1nb2)
+
+
+
+# 2b) model for background response ----
+# make grass reference group
 fxnlexo_long <- subset(fxnltarget_long,!spp %in% nats) %>%
   mutate(spp = factor(spp, levels = c("Background Exotic Grass", "Background Exotic Forb", "Background Exotic N-fixer")))
 
+exomod0 <- as.formula(count ~ spp + seedtrt + herbicide + nut_trt + ppt_trt + (1|block/wholeplotID)) 
+exomod1 <- as.formula(count ~ spp * (seedtrt + herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID))
+exomod2 <- as.formula(count ~ seedtrt + herbicide + (spp * nut_trt * ppt_trt) + (1|block/wholeplotID))
+exomod3 <- as.formula(count ~ seedtrt + (spp * herbicide) + (spp * nut_trt * ppt_trt) + (1|block/wholeplotID))
+exomod4 <- as.formula(count ~ seedtrt + (spp * herbicide) + (herbicide * nut_trt * ppt_trt) + (1|block/wholeplotID))
+exomod5 <- as.formula(count ~ seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID))
+exomod6 <- as.formula(count ~ seedtrt + (spp * herbicide * nut_trt * ppt_trt) + (1|block/wholeplotID))
+exomod7 <- as.formula(count ~ (seedtrt * spp * herbicide) + (spp *nut_trt * ppt_trt) + (1|block/wholeplotID))
+exomod8 <- as.formula(count ~ (seedtrt * spp) + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID))
+exomod9 <- as.formula(count ~ seedtrt + (spp * herbicide) + spp * (nut_trt + ppt_trt) + (1|block/wholeplotID))
 
-# species specific effects just for herbicide, + env manips
-exo_allplots_seedadd <- glmmTMB(count ~ seedtrt + spp * (herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID),
-                            data = fxnlexo_long, family = "nbinom2")
+# run mods
+# > check which fit is best
+exo_allplots_mod0nb1 <- glmmTMB(formula = exomod0, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod0nb2 <- glmmTMB(formula = exomod0, data = fxnlexo_long, family = "nbinom2")
 
-# 3-way interactions between spp, ppt, and nut trt
-exo_allplots_2envx <- glmmTMB(count ~  spp * (seedtrt + herbicide + nut_trt * ppt_trt) + (1|block/wholeplotID), 
-                data = fxnlexo_long, family = "nbinom2")
+compare_performance(exo_allplots_mod0nb1, exo_allplots_mod0nb2)
+check_model(exo_allplots_mod0nb1)
+check_model(exo_allplots_mod0nb2)
+testResiduals(exo_allplots_mod0nb1)
+check_zeroinflation(exo_allplots_mod0nb1) # overfits zeros with nbinom1
+check_zeroinflation(exo_allplots_mod0nb2) # underfits zeros with nbinom2
+check_overdispersion(exo_allplots_mod0nb1) # no overdispersion
+check_overdispersion(exo_allplots_mod0nb2) # underdispersion
+plotResiduals(exo_allplots_mod0nb1)
+plotResiduals(exo_allplots_mod0nb2)
 
-# interactions with herbicide and env
-exo_allplots_3envx <- glmmTMB(count ~ seedtrt + spp * (herbicide * nut_trt * ppt_trt)+ (1|block/wholeplotID), 
-                             data = fxnlexo_long, family = "nbinom2")
+# try zinb or hurdle
+exo_allplots_mod0zinb1 <-glmmTMB(formula = exomod0, ziformula = as.formula(~1), data = fxnlexo_long, family = "truncated_nbinom1")
+plotResiduals(exo_allplots_mod0zinb1)
+check_overdispersion(exo_allplots_mod0zinb1) # even more underdispersed
 
-# all interactions (not expecting this to run?)
-exo_allplots_x <- glmmTMB(count ~  spp * seedtrt * herbicide * nut_trt * ppt_trt + (1|block/wholeplotID), 
-                          data = fxnlexo_long, family = "nbinom2")
+# nbinom2
+exo_allplots_mod1nb2 <- glmmTMB(formula = exomod1, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod2nb2 <- glmmTMB(formula = exomod2, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod3nb2 <- glmmTMB(formula = exomod3, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod4nb2 <- glmmTMB(formula = exomod4, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod5nb2 <- glmmTMB(formula = exomod5, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod6nb2 <- glmmTMB(formula = exomod6, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod7nb2 <- glmmTMB(formula = exomod7, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod8nb2 <- glmmTMB(formula = exomod8, data = fxnlexo_long, family = "nbinom2")
+exo_allplots_mod9nb2 <- glmmTMB(formula = exomod9, data = fxnlexo_long, family = "nbinom2")
 
-# build model that has 3-way interaction with nut and ppt separately 
-exo_allplots_splitenvx <- glmmTMB(count ~  seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID), 
-                                  data = fxnlexo_long, family = "nbinom2")
+# nbinom1
+exo_allplots_mod1nb1 <- glmmTMB(formula = exomod1, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod2nb1 <- glmmTMB(formula = exomod2, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod3nb1 <- glmmTMB(formula = exomod3, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod4nb1 <- glmmTMB(formula = exomod4, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod5nb1 <- glmmTMB(formula = exomod5, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod6nb1 <- glmmTMB(formula = exomod6, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod7nb1 <- glmmTMB(formula = exomod7, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod8nb1 <- glmmTMB(formula = exomod8, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod9nb1 <- glmmTMB(formula = exomod9, data = fxnlexo_long, family = "nbinom1")
 
-# use sum to one for average effect
-exo_allplots_splitenvx.sum <- glmmTMB(count ~  seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID), 
-                                  data = fxnlexo_long, family = "nbinom2", contrasts = list(spp = "contr.sum"))
 
-summary(exo_allplots_splitenvx.sum)
+# test dispersion on all
+par(mfrow = c(2,5))
+lapply(list(exo_allplots_mod0nb2, exo_allplots_mod1nb2, exo_allplots_mod2nb2, exo_allplots_mod3nb2,
+            exo_allplots_mod4nb2, exo_allplots_mod5nb2, exo_allplots_mod6nb2, 
+            exo_allplots_mod7nb2, exo_allplots_mod8nb2,exo_allplots_mod9nb2),
+       testDispersion) # underdispersed on all
+lapply(list(exo_allplots_mod0nb2, exo_allplots_mod1nb2, exo_allplots_mod2nb2, exo_allplots_mod3nb2,
+            exo_allplots_mod4nb2, exo_allplots_mod5nb2, exo_allplots_mod6nb2, 
+            exo_allplots_mod7nb2, exo_allplots_mod8nb2,exo_allplots_mod9nb2),
+       check_overdispersion) # underdispersed on all
+lapply(list(exo_allplots_mod0nb2, exo_allplots_mod1nb2, exo_allplots_mod2nb2, exo_allplots_mod3nb2,
+            exo_allplots_mod4nb2, exo_allplots_mod5nb2, exo_allplots_mod6nb2, 
+            exo_allplots_mod7nb2, exo_allplots_mod8nb2,exo_allplots_mod9nb2),
+       check_zeroinflation) # underpredicting 0s by 5-8 (mod 8 is least worst), probable zero inflation
+lapply(list(exo_allplots_mod0nb2, exo_allplots_mod1nb2, exo_allplots_mod2nb2, exo_allplots_mod3nb2,
+            exo_allplots_mod4nb2, exo_allplots_mod5nb2, exo_allplots_mod6nb2, 
+            exo_allplots_mod7nb2, exo_allplots_mod8nb2,exo_allplots_mod9nb2),
+       plotResiduals) 
+# compare with nbinom1
+lapply(list(exo_allplots_mod0nb1, exo_allplots_mod1nb1, exo_allplots_mod2nb1, exo_allplots_mod3nb1,
+            exo_allplots_mod4nb1, exo_allplots_mod5nb1, exo_allplots_mod6nb1, 
+            exo_allplots_mod7nb1, exo_allplots_mod8nb1,exo_allplots_mod9nb1),
+       testDispersion)
+lapply(list(exo_allplots_mod0nb1, exo_allplots_mod1nb1, exo_allplots_mod2nb1, exo_allplots_mod3nb1,
+            exo_allplots_mod4nb1, exo_allplots_mod5nb1, exo_allplots_mod6nb1, 
+            exo_allplots_mod7nb1, exo_allplots_mod8nb1,exo_allplots_mod9nb1),
+       check_overdispersion) # no overdispersion
+lapply(list(exo_allplots_mod0nb1, exo_allplots_mod1nb1, exo_allplots_mod2nb1, exo_allplots_mod3nb1,
+            exo_allplots_mod4nb1, exo_allplots_mod5nb1, exo_allplots_mod6nb1, 
+            exo_allplots_mod7nb1, exo_allplots_mod8nb1,exo_allplots_mod9nb1),
+       check_zeroinflation) # overfitting zeros (e.g., predict 39-40 but only 27 observed)
+lapply(list(exo_allplots_mod0nb1, exo_allplots_mod1nb1, exo_allplots_mod2nb1, exo_allplots_mod3nb1,
+            exo_allplots_mod4nb1, exo_allplots_mod5nb1, exo_allplots_mod6nb1, 
+            exo_allplots_mod7nb1, exo_allplots_mod8nb1,exo_allplots_mod9nb1),
+       plotResiduals) 
 
-anova(exo_allplots_seedadd, exo_allplots_2envx, exo_allplots_3envx, exo_allplots_splitenvx,exo_allplots_x)
-# seed add with interactions between all or split interaction mods are best
-car::Anova(exo_allplots_seedadd)
-car::Anova(exo_allplots_2envx)
-car::Anova(exo_allplots_3envx)
-car::Anova(exo_allplots_splitenvx)
-car::Anova(exo_allplots_x)
 
-anova(exo_allplots_splitenvx, exo_allplots_3envx) # can still use the 3-way even if full interaction not signif
+# test zinb
+exo_allplots_mod1zinb1 <- glmmTMB(formula = exomod1, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod2zinb1 <- glmmTMB(formula = exomod2, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod3zinb1 <- glmmTMB(formula = exomod3, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod4zinb1 <- glmmTMB(formula = exomod4, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod5zinb1 <- glmmTMB(formula = exomod5, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod6zinb1 <- glmmTMB(formula = exomod6, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod7zinb1 <- glmmTMB(formula = exomod7, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod8zinb1 <- glmmTMB(formula = exomod8, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
+exo_allplots_mod9zinb1 <- glmmTMB(formula = exomod9, ziformula = ~ herbicide, data = fxnlexo_long, family = "nbinom1")
 
-# review coeffs
-summary(exo_allplots_seedadd)
-summary(exo_allplots_splitenvx) # best mod
-summary(exo_allplots_3envx)
-summary(exo_allplots_2envx)
+# are zinb mods any better?
+lapply(list(exo_allplots_mod0zinb1, exo_allplots_mod1zinb1, exo_allplots_mod2zinb1, exo_allplots_mod3zinb1,
+            exo_allplots_mod4zinb1, exo_allplots_mod5zinb1, exo_allplots_mod6zinb1, 
+            exo_allplots_mod7zinb1, exo_allplots_mod8zinb1,exo_allplots_mod9zinb1),
+       check_overdispersion) # no overdispersion
+lapply(list(exo_allplots_mod0zinb1, exo_allplots_mod1zinb1, exo_allplots_mod2zinb1, exo_allplots_mod3zinb1,
+            exo_allplots_mod4zinb1, exo_allplots_mod5zinb1, exo_allplots_mod6zinb1, 
+            exo_allplots_mod7zinb1, exo_allplots_mod8zinb1,exo_allplots_mod9zinb1),
+       check_zeroinflation)
+lapply(list(exo_allplots_mod0zinb1, exo_allplots_mod1zinb1, exo_allplots_mod2zinb1, exo_allplots_mod3zinb1,
+            exo_allplots_mod4zinb1, exo_allplots_mod5zinb1, exo_allplots_mod6zinb1, 
+            exo_allplots_mod7zinb1, exo_allplots_mod8zinb1,exo_allplots_mod9zinb1),
+       plotResiduals) # zinb doesn't help any of these residuals
+
+# test zip?
+exo_allplots_mod5zip <- glmmTMB(formula = exomod5, ziformula = ~ herbicide, data = fxnlexo_long, family = "poisson")
+# hurdle
+exo_allplots_mod5hurd1 <- glmmTMB(formula = exomod5, ziformula = ~ herbicide, data = fxnlexo_long, family = "truncated_nbinom1")
+# lognorm
+exo_allplots_mod5lognorm <- glmmTMB(formula = exomod5, ziformula = ~ herbicide, data = fxnlexo_long, family = "lognormal")
+# generalized poisson
+exo_allplots_mod5p <- glmmTMB(formula = exomod5, data = fxnlexo_long, family = "genpois")
+
+par(mfrow = c(2,3))
+lapply(list(exo_allplots_mod5zip, exo_allplots_mod5nb1, exo_allplots_mod5nb2, exo_allplots_mod5zinb1, exo_allplots_mod5hurd1, exo_allplots_mod5p), plotResiduals)
+summary(exo_allplots_mod5zinb1) # zinb doesn't help, hurdle mod is worse, lognorm no good. get error messages with zinb + hurd models
+
+# compare nbinom vs zinb
+compare_performance(exo_allplots_mod5nb1, exo_allplots_mod5zinb1, exo_allplots_mod5p, rank = T) # simple nbinom1 is least terrible
+anova(exo_allplots_mod5p, exo_allplots_mod5nb1) # nb1 not an improvement
+
+summary(exo_allplots_mod5nb1)
+summary(exo_allplots_mod5p) # pretty similar
+
+check_zeroinflation(exo_allplots_mod5nb1)
+check_zeroinflation(exo_allplots_mod5p) # generalized predicts fewer zeros
+
+# test genp distributions for all mods
+exo_allplots_mod1genp <- glmmTMB(formula = exomod1, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod2genp <- glmmTMB(formula = exomod2, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod3genp <- glmmTMB(formula = exomod3, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod4genp <- glmmTMB(formula = exomod4, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod5genp <- glmmTMB(formula = exomod5, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod6genp <- glmmTMB(formula = exomod6, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod7genp <- glmmTMB(formula = exomod7, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod8genp <- glmmTMB(formula = exomod8, data = fxnlexo_long, family = "genpois")
+exo_allplots_mod9genp <- glmmTMB(formula = exomod9, data = fxnlexo_long, family = "genpois")
+
+# compare nbinom1 mods
+compare_performance(exo_allplots_mod1genp, exo_allplots_mod2genp, exo_allplots_mod3genp,
+                    exo_allplots_mod4genp, exo_allplots_mod5genp, exo_allplots_mod6genp, exo_allplots_mod7genp,
+                    exo_allplots_mod8genp, exo_allplots_mod9genp) # 5 still best then 8
+# heuristic rank performance
+compare_performance(exo_allplots_mod0nb1, exo_allplots_mod1nb1, exo_allplots_mod2nb1, exo_allplots_mod3nb1,
+                    exo_allplots_mod4nb1, exo_allplots_mod5nb1, exo_allplots_mod6nb1, exo_allplots_mod7nb1,
+                    exo_allplots_mod8nb1, exo_allplots_mod9nb1, rank = T) # mod 5 by far, then 8, 9, 6
+
+par(mfrow = c(3,3))
+lapply(list(exo_allplots_mod1genp, exo_allplots_mod2genp, exo_allplots_mod3genp,
+            exo_allplots_mod4genp, exo_allplots_mod5genp, exo_allplots_mod6genp, exo_allplots_mod7genp,
+            exo_allplots_mod8genp, exo_allplots_mod9genp), plotResiduals)
+compare_performance(exo_allplots_mod5genp, exo_allplots_mod6genp,
+                    exo_allplots_mod8genp, exo_allplots_mod4genp, rank = T) # still 5
+compare_performance(exo_allplots_mod5genp, exo_allplots_mod5nb1)
+check_overdispersion(exo_allplots_mod5genp) # not overdispersed, slightly overfits zeros 
+check_distribution(exo_allplots_mod5zinb1) # says most likely cauchy resids with zinb, but that model is not better
+
+summary(exo_allplots_mod5genp)
+
+
+# evaluate terms
+car::Anova(exo_allplots_mod5nb1) 
+car::Anova(exo_allplots_mod5genp) # all but herb x nut and nut 
+
+plot(emmeans(exo_allplots_mod5nb1, ~  nut_trt + ppt_trt | spp + seedtrt + herbicide)) # means look slightly reduced in seed trt across board
+plot(emmeans(exo_allplots_mod5genp, ~  nut_trt + ppt_trt | spp + seedtrt + herbicide)) # prettyy similar
+
 
 
 # create forb only model to compare
-exoforb_allplots_splitenvx <- glmmTMB(count ~  seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID), 
-                               data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
-
-summary(exoforb_allplots_splitenvx)
-car::Anova(exoforb_allplots_splitenvx)
+exoforb_allplots_mod0nb2 <- glmmTMB(formula = exomod0, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+exoforb_allplots_mod1nb2 <- glmmTMB(formula = exomod1, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+exoforb_allplots_mod2nb2 <- glmmTMB(formula = exomod2, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+exoforb_allplots_mod3nb2 <- glmmTMB(formula = exomod3, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+exoforb_allplots_mod4nb2 <- glmmTMB(formula = exomod4, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+exoforb_allplots_mod5nb2 <- glmmTMB(formula = exomod5, 
+                                    data = subset(fxnlexo_long, !grepl("Grass", spp)), family = "nbinom2")
+car::Anova(exoforb_allplots_mod3nb2)
+car::Anova(exoforb_allplots_mod4nb2)
+car::Anova(exoforb_allplots_mod1nb2)
+anova(exoforb_allplots_mod0nb2, exoforb_allplots_mod1nb2, exoforb_allplots_mod2nb2, 
+      exoforb_allplots_mod3nb2, exoforb_allplots_mod4nb2, exoforb_allplots_mod5nb2) 
+# mod 1 and 5 are better, but mods 2 and 3 too
+compare_performance(exoforb_allplots_mod0nb2, exoforb_allplots_mod1nb2, exoforb_allplots_mod2nb2, 
+                    exoforb_allplots_mod3nb2, exoforb_allplots_mod4nb2, exoforb_allplots_mod5nb2) # 5 seems best
+compare_performance(exoforb_allplots_mod0nb2, exoforb_allplots_mod1nb2, exoforb_allplots_mod2nb2, 
+                    exoforb_allplots_mod3nb2, exoforb_allplots_mod4nb2, exoforb_allplots_mod5nb2, rank = T) # 5 best in rank, followed by 4. mods 1-2 comparable
+par(mfrow = c(2,3))
+lapply(list(exoforb_allplots_mod0nb2, exoforb_allplots_mod1nb2, exoforb_allplots_mod2nb2, exoforb_allplots_mod3nb2, exoforb_allplots_mod4nb2, exoforb_allplots_mod5nb2), plotResiduals)
+# mod 1,2, 3 looks best ITO resids
 
 exoonly_coeffs <- rbind(
   cbind(tidy(exo_allplots_2envx, conf.int = T, exponentiate = T), mod = "exo, 2envx"),
@@ -813,7 +1012,7 @@ ggplot(exoadd_coeffs, aes(term2, estimate, col = spp, group = spp)) +
 
 
 # plot coefficients for best native model
-natssppx2_coeffs <- tidy(nb_nats_seeded_sppxadd2, effects = "fixed", conf.int = T, exponentiate = F) %>%
+natssppx2_coeffs <- tidy(exo_allplots_sppxadd2, effects = "fixed", conf.int = T, exponentiate = F) %>%
   mutate(spp = str_extract(term, "spp[A-Z]+"),
          spp = ifelse(is.na(spp), "BRCA", gsub("spp", "", spp)),
          term2 = gsub("spp[A-Z]+:", "", term),
@@ -826,7 +1025,7 @@ ggplot(subset(natssppx2_coeffs, !(grepl("C:.*D", term2) & spp == "NEMA")), aes(t
   coord_flip()
 
 
-natssppx2.sum_coeffs <- tidy(nb_nats_seeded_sppxadd2.sum, effects = "fixed", conf.int = T, exponentiate = F) %>%
+natssppx2.sum_coeffs <- tidy(exo_allplots_sppxadd2.sum, effects = "fixed", conf.int = T, exponentiate = F) %>%
   mutate(spp = str_extract(term, "spp[1-3]+"),
          spp = ifelse(is.na(spp), "BRCA", gsub("spp", "", spp)),
          term2 = gsub("spp[1-3]+:", "", term),
@@ -839,26 +1038,115 @@ ggplot(subset(natssppx2.sum_coeffs, !(grepl("C:.*D", term2) & spp == "NEMA")), a
   coord_flip()
 
 
-car::linearHypothesis(nb_nats_seeded_add, "0 = nut_trtF")
-plot(effects::allEffects(nb_nats_seeded_sppxadd2))
-emmeans::emmeans(nb_nats_seeded_add, ~ herbicide + nut_trt + ppt_trt | spp, type = "response")
+car::linearHypothesis(exo_allplots_add, "0 = nut_trtF")
+plot(effects::allEffects(exo_allplots_sppxadd2))
+emmeans::emmeans(exo_allplots_add, ~ herbicide + nut_trt + ppt_trt | spp, type = "response")
 emmeans::emmeans(exo_allplots_splitenvx, ~ seedtrt + herbicide + nut_trt + ppt_trt | spp, type = "response")
 plot(effects::allEffects.default(exo_allplots_splitenvx))
 
 
+# 2b) figure for background effects ------
+# pull marginal means to plot
+# gather marginal means to compare with means from raw data
+summary(glht(exo_allplots_mod5genp,  emmeans::lsm(~ spp : seedtrt: herbicide : ppt_trt : nut_trt)))
+exomod5  
+exo_mod_means<- emmeans(exo_allplots_mod5genp, ~ seedtrt + herbicide + ppt_trt + nut_trt | spp , type = "response")
+exo_margmeans <- data.frame(exo_mod_means)
 
-# -- SCREEN BEST LV ------
+
+exofig <- fxnltarget_long %>%
+  subset(!spp %in% nats) %>%
+  left_join(exo_margmeans) %>%
+  mutate(fulltrt = recode(fulltrt, 'XCXC' = "Con.", "XCD" = "D", "XCW" = "W",
+                          'FXC' = 'F', 'CXC' = 'C'),
+         ppt_trt = relevel(ppt_trt, ref = "D"),
+         spp = gsub("Background Exotic", "Non-native", spp),
+         spp = factor(spp),
+         spp = relevel(spp, ref = "Non-native Grass")) %>%
+  ggplot(aes(fulltrt, count, group = paste(spp, fulltrt, herbicide))) +
+  geom_vline(aes(xintercept = 3.5), lty = 2, col = "grey50") +
+  geom_vline(aes(xintercept = 6.5), lty = 2, col = "grey50") +
+  geom_line(position = position_nudge(x = -0.3)) +
+  #stat_summary(aes(fill = ppt_trt), position = position_nudge(x = -0.3), pch = 21, size = .7) +
+  geom_point(aes(fill = ppt_trt), position = position_nudge(x = -0.3), pch = 21, size = 2) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0, lwd = 1) +
+  geom_point(aes(fulltrt, response, fill = ppt_trt), pch = 21, size = 3) +
+  scale_color_brewer(name = "Precip trt", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
+  scale_fill_brewer(name = "Precip trt", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
+  #scale_color_manual(values = fxnltargcols, guide = "none") +
+  # scale_fill_manual(name = NULL, 
+  #                   values = fxnltargcols, labels = c("Non-native forb", "Non-native grass", "Non-native N-fixer", 
+  #                                                     "B. carinatus", "E. californica", "F. microstachys", "N. maculata")) +
+  facet_grid(spp ~ herbicide + seedtrt, scales = "free_y") +
+  theme_ctw() +
+  theme(legend.justification.right = "top",
+        plot.margin = unit(c(1, 6, 1, 1), "lines")) +
+  labs(x = "Soil x precipitation treatment", y = "Abundance")
+
+# get anova stats
+exo_best_anova <- data.frame(car::Anova(exo_allplots_mod5genp)) %>%
+  mutate(term = rownames(.)) %>%
+  rename_all(function(x) gsub("[.]", "", x))
+
+
+exofig
+# manually add anova stats for now
+grid::grid.text(label = "Type II Wald Chisq\n seedtrt ***\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide ***\n spp:soil trt ***\n spp:precip trt **\n herbicide:soil trt n.s.\n herbicide:precip trt **\n spp:herbicide:soil trt **\n spp:herbicide:precip trt ***", 
+                x = unit(0.83, "npc"), y = unit(0.6, "npc"), just = "left")
+
+
+
+
+
+# -- CTW USTOM GLLVM FUNCTIONS ------
 # above pcoa and rda suggest maybe 3, but 1 axis (diving hillslope) captures the most variation in data 
-bestlv <- function(y = ydat_count, X = NULL, numseq = 1:4, yform = as.formula(~ herbicide + seedtrt), smat = sDesign_full, rowform = as.formula(~ (1|block/wholeplotID)), seed = myseed){
+bestlv <- function(y = ydat_count, X = NULL, numseq = 1:4, yform = as.formula(~ herbicide + seedtrt), lvform = NA,
+                   smat = sDesign_full, rowform = as.formula(~ (1|block/wholeplotID)), seed = myseed){
   criteria <- NULL
-  for(i in numseq){
-    print(i) # print to know where you are in loop while waiting
-    fiti <- gllvm(y, X, family = "negative.binomial", num.lv = i, sd.errors = FALSE,
-                  formula = yform, studyDesign = smat, row.eff = rowform, seed = myseed)
-    criteria[i] <- summary(fiti)$AICc
-    names(criteria)[i] = i
-  }
+  if(!is.na(yform)){
+    for(i in numseq){
+      print(i) # print to know where you are in loop while waiting
+      fiti <- gllvm(y, X, family = "negative.binomial", num.lv = i, sd.errors = FALSE,
+                    formula = yform, studyDesign = smat, row.eff = rowform, seed = myseed)
+      criteria[i] <- summary(fiti)$AICc
+      names(criteria)[i] = i
+    }
+  }else{
+    for(i in numseq){
+      print(i) # print to know where you are in loop while waiting
+      fiti <- gllvm(y, X, family = "negative.binomial", num.lv.c = i, sd.errors = FALSE,
+                    lv.formula = lvform, studyDesign = smat, row.eff = rowform, seed = myseed)
+      criteria[i] <- summary(fiti)$AICc
+      names(criteria)[i] = i
+    }}
   return(criteria)
+}
+
+
+# to pull loadings from gllvm
+get_loadings <- function(mod){
+  # spp loadings
+  sppscores <- getLoadings(mod) %>%
+    data.frame() %>%
+    rownames_to_column("spp")
+  
+  # site loadings
+  sitescores <- data.frame(getLV(mod)) %>%
+    rownames_to_column("rowid")
+  # bind xdat
+  sitescores <- left_join(sitescores, rownames_to_column(data.frame(mod$lv.X),var = "rowid")) %>%
+    left_join(rownames_to_column(sDesign_full, "rowid"))
+  # get env scores
+  varscores <- coef(mod)$Canonical.coefficients %>%
+    data.frame() %>%
+    rownames_to_column("vari") %>%
+    # clean up labels
+    mutate(plot_label = gsub("Herbicided|nut_trt|ppt_trt|seedtrt", "", vari))
+  
+  # return dat
+  templist <- list(sppscores, sitescores, varscores)
+  names(templist) <- c("spp", "sites", "varscores")
+  return(templist)
 }
 
 
@@ -867,18 +1155,14 @@ bestlv <- function(y = ydat_count, X = NULL, numseq = 1:4, yform = as.formula(~ 
 # what are communiites like by block or hillslope?
 # 1. no predictors to show ordination
 gllvm_ordination_all <- gllvm(y = ydat_fxnl_wide,
-                              X = xdat, 
+                              #X = xdat, 
                               family = "negative.binomial", 
                               #reltol.c = 1e-15,
                               #starting.val = "zero",
-                              #num.lv = 2,
-                              num.lv.c = 4, 
-                              lv.formula = ~ seedtrt * herbicide + nut_trt * ppt_trt,
-                              #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
-                              # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                              num.lv = 3,
                               # nest subplot if can, but block/wholeplot captures most of the nested similarity
                               studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
-                              row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                              row.eff = ~ (1|block), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
                               seed = myseed)
 ordiplot(gllvm_ordination_all, rotate = T, jitter = T, biplot = F)
 summary(gllvm_ordination_all,rotate = T)
@@ -889,6 +1173,17 @@ plot(gllvm_ordination_all)
 coef(gllvm_ordination_all)
 corrplot::corrplot(getResidualCov(gllvm_ordination_all)$cov, is.corr = F,  method = "color")
 
+gllvm_ord_scores <- get_loadings(gllvm_ordination_all)
+gllvm_ord_scores$sites <- left_join(gllvm_ord_scores$sites, rownames_to_column(xdat, "rowid"))
+
+ggplot(gllvm_ord_scores$sites) +
+  geom_jitter( aes(LV1, LV2, col = paste(herbicide,seedtrt)),# shape = paste(herbicide, seedtrt)), 
+               width = 0.0, size = 3) +
+  #geom_text(data = subset(gllvm_ordrr_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+  #scale_shape_manual(values = c(1:8)) +
+  scale_color_brewer(palette = "Paired") +
+  facet_grid(ppt_trt ~ nut_trt) +
+  ggtitle("Unconstrained ordination")
 
 # how did communities separate by plot condition? (herb x seeded x env)
 
@@ -897,46 +1192,119 @@ gllvm_ordination_all_envpred <- gllvm(y = ydat_fxnl_wide, #[,!names(ydat_fxnl_wi
                                       X = xdat, 
                                       family = "negative.binomial", 
                                       #num.lv = 1,
-                                      num.lv = 2, 
-                                      formula = ~ herbicide + seedtrt + nut_trt * ppt_trt,
+                                      num.lv.c = 4, 
+                                      lv.formula = ~ seedtrt + (herbicide * nut_trt * ppt_trt),
                                       #lv.formula  = as.formula( ~  nut_trt * ppt_trt),
                                       # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
                                       # nest subplot if can, but block/wholeplot captures most of the nested similarity
                                       studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
                                       row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
                                       seed = myseed)
-ordiplot(gllvm_ordination_all_envpred, biplot =T)
+par(mfrow = c(1,1))
+ordiplot(gllvm_ordination_all_envpred, biplot =T, symbols = T, jitter = T, jitter.amount = 0.5)
 summary(gllvm_ordination_all_envpred)
 plotVarPartitioning(varPartitioning(gllvm_ordination_all_envpred), mar = c(10,10,10,10), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
-plot(gllvm_ordination_all)
+coefplot(gllvm_ordination_all_envpred, which = 1:4, cex.ylab = 2)
+
+bestlv(y = ydat_fxnl_wide, X = xdat, numseq = 1:4, yform = NA, 
+       lvform = as.formula(~ herbicide + seedtrt + ppt_trt * nut_trt))
+#     1        2        3        4 
+# 5365.453 5253.358 5218.548 5184.911 
+# get message aboutl selected optimizer not available for model. may need to run manually
+# try 5-6 constrained LVs since 4 best
+gllvm_ordination_all_envpred_clv5 <- update(gllvm_ordination_all_envpred, num.lv.c = 5)
+AICc(gllvm_ordination_all_envpred, gllvm_ordination_all_envpred_clv5) # 4 is better than 5
+# confirm 3 higher # <-- get singular fit error?
+gllvm_ordination_all_envpred_clv3 <- update(gllvm_ordination_all_envpred, num.lv.c = 3)
+gllvm_ordination_all_envpred_clv2 <- update(gllvm_ordination_all_envpred, num.lv.c = 2) # doesn't work with 2 either
+# 4 LVs is best
+par(mfrow = c(2,2))
+ordiplot(gllvm_ordination_all_envpred,which.lvs = c(1,2), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred,which.lvs = c(1,3), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred,which.lvs = c(3,2), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred,which.lvs = c(3,4), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+par(mfrow = c(1,1))
+
+
+# use informed lvs
+gllvm_ordination_all_envpred_rr <- gllvm(y = ydat_fxnl_wide[!grepl("NativeGra", names(ydat_fxnl_wide))], #[,!names(ydat_fxnl_wide) %in% nats], 
+                                         X = xdat, 
+                                         family = "negative.binomial", 
+                                         #num.lv = 1,
+                                         num.RR = 4, 
+                                         lv.formula = ~ seedtrt + (herbicide * nut_trt * ppt_trt),
+                                         #lv.formula  = as.formula( ~  nut_trt * ppt_trt),
+                                         # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                                         # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                                         studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                                         row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                                         seed = myseed)
+
+par(mfrow = c(2,2))
+ordiplot(gllvm_ordination_all_envpred_rr,which.lvs = c(1,2), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred_rr,which.lvs = c(1,3), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred_rr,which.lvs = c(3,2), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+ordiplot(gllvm_ordination_all_envpred_rr,which.lvs = c(3,4), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
+par(mfrow = c(1,1))
+# > seems similar to when variables are used to inform axes
+summary(gllvm_ordination_all_envpred_rr)
+summary(gllvm_ordination_all_envpred)
 
 
 
+gllvm_ordrr_scores <- get_loadings(gllvm_ordination_all_envpred_rr)
+gllvm_ordc_scores <- get_loadings(gllvm_ordination_all_envpred)
+
+
+plot_grid(
+ggplot(gllvm_ordrr_scores$sites) +
+  geom_point( aes(CLV1, CLV2, col = paste(nut_trt,ppt_trt), shape = paste(herbicide, seedtrt)),size = 3) +
+  #geom_text(data = subset(gllvm_ordrr_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+  geom_segment(data = gllvm_ordrr_scores$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+            arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(data = gllvm_ordrr_scores$varscores, aes(x = CLV1, y = CLV2, label = plot_label)) +
+  scale_shape_manual(values = c(1:8)) +
+  ggtitle("Reduced rank ordination"),
+ggplot(gllvm_ordc_scores$sites) +
+  geom_jitter( aes(CLV2, CLV3, col = paste(nut_trt, ppt_trt), shape = paste(herbicide, seedtrt)), width = 0, size = 3) +
+  geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV2, y = 0, yend = CLV3, group = vari), 
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(data = gllvm_ordc_scores$varscores, aes(x = CLV2, y = CLV3, label = plot_label)) +
+  #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+  scale_shape_manual(values = c(1:8)) +
+  ggtitle("Constrained LV ordination"),
+nrow = 2
+
+
+)
+dev.off()
+gllvm::plotVarPartitioning(gllvm::varPartitioning(gllvm_ordination_all_envpred_rr))
+coefplot(gllvm_ordination_all_envpred_rr,mfrow = c(4,5), xlim.list = rep(list(c(-100,100)),20))
 
 # -- SEEDED ONLY -----
 sDesign_seeded$hillpos <- ifelse(sDesign_seeded$block %in% c(1,2), "downhill", "uphill")
 # purpose: within the restored plots
 # > what is the effect of treatment on native and neighbor abundances?
-gllvm_seeded <- gllvm(y = ydat_count_seeded,
-                      X = xdat_seeded, 
-                      family = "negative.binomial", 
-                      #reltol.c = 1e-15,
-                      #starting.val = "zero",
-                      num.lv = 2,
-                      #num.RR = 1, 
-                      #lv.formula = ~ block,
-                      formula = ~ herbicide + (nut_trt + ppt_trt),
-                      #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
-                      # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
-                      # nest subplot if can, but block/wholeplot captures most of the nested similarity
-                      studyDesign = sDesign_seeded[c("hillpos", "block", "wholeplotID", "subplotID")], 
-                      row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
-                      seed = myseed)
-
+gllvm_seeded_ord <- gllvm(y = ydat_count_seeded,
+                          X = xdat_seeded, 
+                          family = "negative.binomial", 
+                          #reltol.c = 1e-15,
+                          #starting.val = "zero",
+                          num.lv.c = 2,
+                          #num.RR = 1, 
+                          #lv.formula = ~ block,
+                          lv.formula = ~ herbicide * (nut_trt + ppt_trt),
+                          #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
+                          # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                          # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                          studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                          row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                          seed = myseed)
+par(mfrow = c(1,1))
 gllvm::ordiplot(gllvm_seeded, jitter = T, biplot = T)
 summary(gllvm_seeded)
-coefplot(gllvm_seeded)
+coefplot(gllvm_seeded, which = 1:8, mfrow = c(2,4))
 dev.off()
 plotVarPartitioning(varPartitioning(gllvm_seeded), mar = c(10,10,10,10), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
@@ -947,148 +1315,365 @@ corrplot::corrplot(getResidualCov(gllvm_seeded)$cov, is.corr = F, type = "lower"
                    order = "hclust", method = "color")
 
 
-gllvm_seeded_hill <- gllvm(y = ydat_count_seeded,
-                      X = xdat_seeded, 
-                      family = "negative.binomial", 
-                      #reltol.c = 1e-15,
-                      starting.val = "zero",
-                      #num.lv = 2,
-                      num.lv.c= 3, 
-                      #lv.formula = ~ hillpos,
-                      lv.formula = ~ herbicide + nut_trt * ppt_trt,
-                      #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
-                      # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
-                      # nest subplot if can, but block/wholeplot captures most of the nested similarity
-                      studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                      row.eff = ~ (1|block), # with wholeplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
-                      seed = myseed)
+glmod0 <- as.formula(~ herbicide + nut_trt + ppt_trt)
+glmod1 <- as.formula(~ herbicide * (nut_trt + ppt_trt))
+glmod2 <- as.formula(~ herbicide + (nut_trt * ppt_trt))
+glmod3 <- as.formula(~ herbicide * ppt_trt + nut_trt)
+glmod4 <- as.formula(~ herbicide * nut_trt + ppt_trt)
+glmod5 <- as.formula(~ herbicide * nut_trt * ppt_trt)
 
-ordiplot(gllvm_seeded_hill, jitter = T, biplot = F)
-summary(gllvm_seeded_hill)
-coefplot(gllvm_seeded)
-dev.off()
-plotVarPartitioning(varPartitioning(gllvm_seeded_hill), mar = c(10,10,10,10), las = 2,
+# test best lv for seeded dat mods
+bestlv(y = ydat_count_seeded, X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod2)
+#    1        2        3        4 
+# 7783.786 7876.785 7982.025 8164.347
+# > 1 lv is a little better for mod 2
+bestlv(y = ydat_count_seeded,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod0)
+#    1        2        3        4 
+# 7608.197 7680.600 7771.695 7845.798 
+# > 1 lv is best for simple additive model
+bestlv(y = ydat_count_seeded,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod5)
+#    1        2        3        4 
+# 8451.329 8585.101 8725.222 8864.909 
+# > 1 lv by far
+
+
+gllvm_seeded_mod0 <- gllvm(y = ydat_count_seeded, #[!names(ydat_count_seeded) %in% c("HYRA", "CAPY", "APOC", "AICA", "HYGL", "LASE", "ExoticGrass")],
+                           X = xdat_seeded, 
+                           family = "negative.binomial",
+                           num.lv = 1,
+                           formula = glmod0,
+                           #gradient.check = T,
+                           #control = list(reltol = 1e-15, reltol.c = 1e-15),
+                           #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
+                           # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                           studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                           row.eff = ~ (1|block/wholeplotID), # with wholeplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                           seed = myseed)
+gllvm_seeded_mod1 <- update(gllvm_seeded_mod0, formula = glmod1)
+gllvm_seeded_mod2 <- update(gllvm_seeded_mod0, formula = glmod2)
+gllvm_seeded_mod3 <- update(gllvm_seeded_mod0, formula = glmod3)
+gllvm_seeded_mod4 <- update(gllvm_seeded_mod0, formula = glmod4)
+gllvm_seeded_mod5 <- update(gllvm_seeded_mod0, formula = glmod5)
+
+
+summary(gllvm_seeded_mod0)
+coefplot(gllvm_seeded_mod0, xlim.list = rep(list(c(-5,5)),5))
+coefplot(gllvm_seeded_mod0_within, xlim.list = rep(list(c(-5,5)),5)) # no difference for correlation within
+anova(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2,
+      gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
+# > models with herb x ppt, and herb x (ppt + nut) are better. mod1 and mod3
+anova(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod3, gllvm_seeded_mod5)
+anova(gllvm_seeded_mod1, gllvm_seeded_mod3) # 3 is not necessarily better than 1
+
+par(mfrow= c(2,3))
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =1))
+# > mods 1,2,4 are most on the line, but 4 has high AIC; mod 5 resids are clumped
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =2))
+# > mods 0, 1, 2, 3 seems better, in that order
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =3))
+# > mod 1 has smaller resid, is consistent with mixed mod formula
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =4))
+# mod 2 seems best
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =5))
+# pretty comparable
+lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) ordiplot(x, symbols = T, biplot = T))
+
+# compare other distributions for mod 2 to be sure
+gllvm_seeded_mod2zinb <- update(gllvm_seeded_mod2,family = "ZINB")
+gllvm_seeded_mod2zip <- update(gllvm_seeded_mod2,family = "ZIP") # does not like zip
+# plot to compare
+par(mfrow = c(2,3))
+lapply(list(gllvm_seeded_mod2, gllvm_seeded_mod2zinb, gllvm_seeded_mod2zip), function(x) plot(x, which = c(1,2)))
+# poisson is not good
+par(mfrow = c(2,2))
+lapply(list(gllvm_seeded_mod2, gllvm_seeded_mod2zinb), function(x) plot(x, which = c(3,4)))
+# not sure zero infl is an improvement enough over nb, which is consistent with results elsewhere
+par(mfrow = c(1,1))
+
+# plot predicted vs observed to gauge how well fits data
+# functions to grab predictions and residuals
+getgll_predred <- function(mod){
+  preds <- data.frame(predict.gllvm(mod))
+  preds <- cbind(rowid = rownames(mod$data), preds) %>%
+    data.frame() %>%
+    gather(spp, pred, 2:ncol(.)) %>%
+    mutate(pred_exp = round(exp(pred),4))
+  modat <- mod$data %>%
+    rownames_to_column("rowid") %>%
+    gather(spp, count, grep("[A-Z]{4}|Forb|Grass", names(.)))
+  modres <- data.frame(resid(mod)[["residuals"]]) %>%
+    rownames_to_column("rowid") %>%
+    gather(spp, res, grep("[A-Z]{4}|Grass|Forb", names(.)))
+  
+  # put it all together
+  alltog <- left_join(modat, preds) %>%
+    left_join(modres) %>%
+    mutate(diff_ctpred = count - pred_exp)
+  return(alltog)
+}
+
+# get predictions and residuals for all models in consideration
+# > note_ mod 4 has high AIC
+predred_mod0nb <- getgll_predred(gllvm_seeded_mod0)
+predred_mod1nb <- getgll_predred(gllvm_seeded_mod1)
+predred_mod2nb <- getgll_predred(gllvm_seeded_mod2)
+predred_mod2zinb <- getgll_predred(gllvm_seeded_mod2zinb)
+predred_mod3nb <- getgll_predred(gllvm_seeded_mod3)
+predred_mod4nb <- getgll_predred(gllvm_seeded_mod4)
+predred_mod5nb <- getgll_predred(gllvm_seeded_mod5)
+
+
+# join then plot
+alltog_predred <- rbind(cbind(predred_mod0nb, mod = "mod0"),
+                        cbind(predred_mod1nb, mod = "mod1"),
+                        cbind(predred_mod2nb, mod = "mod2"),
+                        cbind(predred_mod2zinb, mod = "mod2 zinb"),
+                        cbind(predred_mod3nb, mod = "mod3"),
+                        cbind(predred_mod4nb, mod = "mod4"),
+                        cbind(predred_mod5nb, mod = "mod5"))
+
+ggplot(alltog_predred, aes(spp, res, group = spp)) +
+  #geom_boxplot(width = 0.25) +
+  #geom_point(pch = 1) +
+  geom_hline(aes(yintercept = 0)) +
+  stat_summary(aes(col = spp %in% nats), position = position_nudge(x = -0.25)) +
+  coord_flip() +
+  facet_wrap(~mod, ncol = 4) +
+  theme_ctw()
+# mod 2 zinb looks worse compared to nb (average resid is more off)
+# mod 3 looks best ITO no directionality in residuals for most spp, including natives seeded
+# mod 2 and 5 are also ok. it looks like there are tradeoffs for predicting spp no matter what model is chosen bc spp are heterogeneous in response
+
+# plot predicted exponentiated values vs counts: means and SEs
+ggplot(subset(alltog_predred, !grepl("zinb", mod)), aes(spp, pred_exp, group = spp)) +
+  geom_hline(aes(yintercept = 0)) +
+  stat_summary(aes(col = spp %in% nats), position = position_nudge(x = -0.25)) +
+  stat_summary(aes(spp, count, group = spp), position = position_nudge(x = 0)) +
+  coord_flip() +
+  facet_wrap(~mod) +
+  theme_ctw()
+# > mod 4 looks better here (these are average predictions though)
+
+# plot observations and predictions for all plots: data points
+ggplot(alltog_predred, aes(spp, pred_exp, group = spp)) +
+  geom_boxplot(width = 0.25) +
+  geom_point(aes(col = spp %in% nats)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_line(aes(spp, count, group = spp), position = position_nudge(x = -0.5)) +
+  geom_point(aes(spp, count, group = spp), position = position_nudge(x = -0.5)) +
+  coord_flip() +
+  facet_wrap(~mod) +
+  theme_ctw()
+# > mod 4 actually looks best ITO not overpredicting high abundance spp
+# > mod2 zinb outlier predicted val is even further awayy
+
+# plot difference
+ggplot(subset(alltog_predred, !grepl("zinb", mod)), aes(spp, diff_ctpred, group = spp)) +
+  geom_boxplot(width = 0.25) +
+  geom_point(aes(col = spp %in% nats)) +
+  geom_hline(aes(yintercept = 0)) +
+  coord_flip() +
+  facet_wrap(~mod, scales = "free_x") +
+  theme_ctw()
+# mod 4 has lowest resid range. look at overall mean error
+sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) mean(abs(x)))
+# group it by spp to compare
+sppdiffs <- group_by(alltog_predred, spp, mod) %>%
+  reframe(mean_absdiff = mean(abs(diff_ctpred)),
+          med_absdiff = median(abs(diff_ctpred))) %>%
+  group_by(spp) %>%
+  mutate(rankmean = rank(mean_absdiff)) %>%
+  ungroup() %>%
+  mutate(seeded = spp %in% nats)
+# plot ranks for smallest mean abs resid
+ggplot(sppdiffs, aes(spp, rankmean, fill = mod)) +
+  geom_col(color = "black") +
+  coord_flip()
+# > mod 5 is best for most BUT not for abundant spp. mod 1 and 2 aren't terrible
+# FEMI: mod3 best, then mod 1 then mod 5
+# BRCA: mod 5, then 1 then 4
+# ESCA: mod 5, then 4, then 1
+# NEMA: mod 5, then mod2 zinb, then mod 2
+# > mod 5 is what comes up most conssitently
+ggplot(subset(sppdiffs, !grepl("zinb",mod)), aes(spp, mean_absdiff, fill = mod)) +
+  geom_point(pch = 21, size = 5, alpha = .75) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Spectral") +
+  facet_wrap(~spp %in% nats) +
+  theme_ctw()
+# > mod 5 has the lowest prediction error
+ggplot(subset(sppdiffs, !grepl("zinb",mod)), aes(spp, med_absdiff, fill = mod)) +
+  geom_point(pch = 21, size = 5, alpha = .75) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Spectral") +
+  facet_wrap(~spp %in% nats) +
+  theme_ctw()
+
+# rmspe
+sort(sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) mean(sqrt(x^2))))
+# > mod 5 has lowest error, followed by 1, 3
+
+AIC(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zinb,
+    gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
+# mod 0, then 2
+AICc(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zinb,
+     gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
+# mod 0, then 3, 4 .. 5 has highest score
+BIC(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zinb,
+    gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
+# mod 0 then 3, 4
+
+# plot coefficients
+listx <- list(c(-10,10))
+coefplot(gllvm_seeded_mod0, mfrow = c(2,3), cex.ylab = 1, xlim.list = rep(listx, 6))
+coefplot(gllvm_seeded_mod1, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(listx, 10))
+coefplot(gllvm_seeded_mod2, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(listx, 10))
+coefplot(gllvm_seeded_mod3, mfrow = c(2,4), cex.ylab = 1, xlim.list = rep(list(c(-20,20)), 8))
+coefplot(gllvm_seeded_mod4, mfrow = c(2,4), cex.ylab = 1, xlim.list = rep(listx, 8))
+coefplot(gllvm_seeded_mod5, mfrow = c(3,7), cex.ylab = 1, xlim.list = rep(list(c(-20,20)), 21))
+
+
+# plot variance
+par(mfrow = c(2,2))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod0), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod1), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod2), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod5), mar = c(8,3,5,1), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
 
 
 
-# -- 4th corner model -------
-traitmat_scaled <- mutate_at(traitmat_full_norm, .vars = names(traitmat_full_norm)[!grepl("code4|durat|fxnl_|nativ", names(traitmat_full_norm))], function(x) as.numeric(scale(x)))
 
 
 
-# seeded plots, only spp with traits available
-gllvm_seeded_4th <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
-                                        X = xdat_seeded,
-                                        TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
-                                        family = "negative.binomial", 
-                                        num.lv = 2, 
-                                        formula = y ~ (herbicide + (nut_trt * ppt_trt)) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
-                                        #lv.formula = ~ block,
-                                        studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                                        #corWithin = T,
-                                        row.eff = ~ (1|block/wholeplotID),
-                                        #  gradient.check = T,
-                                        seed = myseed)
-
-ordiplot(gllvm_seeded_4th)
-summary(gllvm_seeded_4th)
-coefplot(gllvm_seeded_4th, cex.ylab = 1, mar = c(5,20,2,2))
-gllvm_seeded_4th$fourth.corner
-
-# 4th but with herbicide interacting with env vars
-gllvm_seeded_4th_herbx <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
-                          X = xdat_seeded,
-                          TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
-                          family = "negative.binomial", 
-                          num.lv = 2, 
-                          formula = y ~ herbicide * (nut_trt + ppt_trt) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
-                          #lv.formula = ~ block,
-                          studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                          corWithin = F,
-                          row.eff = ~ (1|block/wholeplotID),
-                          #  gradient.check = T,
-                          seed = myseed)
-
-ordiplot(gllvm_seeded_4th_herbx, biplot = T)
-summary(gllvm_seeded_4th_herbx)
-coefplot(gllvm_seeded_4th_herbx, cex.ylab = 1, mar = c(5,20,2,2))
-gllvm_seeded_4th_herbx$X.design
-
-gllvm_seeded_4th_herbx$fourth.corner %>%
-  data.frame() %>%
-  rownames_to_column(var = "treatment") %>%
-  gather(trait, val, 2:ncol(.)) %>%
-  # mutate(trait = factor(trait#, 
-  #                       #levels = c("Coarse.root.diameter.mm", "Fine.root.specific.length.cm.g", "Root.volume.cm3", "RMF", "LDMC", "SLA.cm2.g", "Height.cm")
-  #                       )) %>%
-  ggplot(aes(treatment, trait)) +
-  geom_tile(aes(fill = val), col = "black") +
-  scale_x_discrete(expand = c(0,0)) +
-  scale_y_discrete(expand = c(0,0)) +
-  scale_fill_distiller(name = "Mean effect", type = "div", direction = 1) +
-  labs(x = NULL, y = "Functional trait") +
-  theme_ctw()
-
-# additive model onlyy
-gllvm_seeded_4th_add <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
-                                X = xdat_seeded,
-                                TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
-                                family = "negative.binomial", 
-                                num.lv = 2, 
-                                formula = y ~ (herbicide + nut_trt + ppt_trt) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
-                                #lv.formula = ~ block,
-                                studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                                #corWithin = T,
-                                row.eff = ~ (1|block/wholeplotID),
-                                #  gradient.check = T,
-                                seed = myseed)
-
-anova(gllvm_seeded_4th, gllvm_seeded_4th_herbx, gllvm_seeded_4th_add, gllvm_seeded_4th_traitadd)
-ordiplot(gllvm_seeded_4th_add)
-coefplot(gllvm_seeded_4th_add, cex.ylab = 1, mar = c(5,18,2,2))
-corrplot::corrplot(gllvm::getResidualCor(gllvm_seeded_4th_add), order = "hclust", method = "color")
-corrplot::corrplot(gllvm_seeded_4th_add$fourth.corner, is.corr = F, method = "color")
-
-gllvm_seeded_4th_add$fourth.corner %>%
-  data.frame() %>%
-  rownames_to_column(var = "treatment") %>%
-  gather(trait, val, 2:ncol(.)) %>%
-  mutate(trait = factor(trait, 
-                        levels = c("Coarse.root.diameter.mm", "Fine.root.specific.length.cm.g", "Root.volume.cm3", "RMF", "LDMC", "SLA.cm2.g", "Height.cm"))) %>%
-  ggplot(aes(treatment, trait)) +
-  geom_tile(aes(fill = val), col = "black") +
-  scale_x_discrete(expand = c(0,0)) +
-  scale_y_discrete(expand = c(0,0)) +
-  scale_fill_distiller(name = "Mean effect", type = "div", direction = 1) +
-  labs(x = NULL, y = "Functional trait") +
-  theme_ctw()
-
-  
 
 
 
-gllvm_seeded_4th_traitadd <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
-                              X = xdat_seeded,
-                              TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
-                              family = "negative.binomial", 
-                              num.lv = 2, 
-                              formula = ~ (herbicide + nut_trt + ppt_trt) + Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g,
-                              studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                              #corWithin = T,
-                              row.eff = ~ (1|block/wholeplotID),
-                              #  gradient.check = T,
-                              seed = myseed)
-ordiplot(gllvm_seeded_4th_traitadd)
-AIC(gllvm_seeded_4th_traitadd)
-summary(gllvm_seeded_4th_traitadd)
-coefplot(gllvm_seeded_4th_traitadd, cex.ylab = 1, mar = c(5,15,2,2))
-
-
-AIC(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
-anova(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
-anova(gllvm_seeded_4th_add, gllvm_seeded_4th_traitadd)
-BIC(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
+# # -- 4th corner model 
+# 
+# 
+# 
+# # seeded plots, only spp with traits available
+# gllvm_seeded_4th <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
+#                                         X = xdat_seeded,
+#                                         TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
+#                                         family = "negative.binomial", 
+#                                         num.lv = 2, 
+#                                         formula = y ~ (herbicide + (nut_trt * ppt_trt)) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
+#                                         #lv.formula = ~ block,
+#                                         studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+#                                         #corWithin = T,
+#                                         row.eff = ~ (1|block/wholeplotID),
+#                                         #  gradient.check = T,
+#                                         seed = myseed)
+# 
+# ordiplot(gllvm_seeded_4th)
+# summary(gllvm_seeded_4th)
+# coefplot(gllvm_seeded_4th, cex.ylab = 1, mar = c(5,20,2,2))
+# gllvm_seeded_4th$fourth.corner
+# 
+# # 4th but with herbicide interacting with env vars
+# gllvm_seeded_4th_herbx <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
+#                           X = xdat_seeded,
+#                           TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
+#                           family = "negative.binomial", 
+#                           num.lv = 2, 
+#                           formula = y ~ herbicide * (nut_trt + ppt_trt) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
+#                           #lv.formula = ~ block,
+#                           studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+#                           corWithin = F,
+#                           row.eff = ~ (1|block/wholeplotID),
+#                           #  gradient.check = T,
+#                           seed = myseed)
+# 
+# ordiplot(gllvm_seeded_4th_herbx, biplot = T)
+# summary(gllvm_seeded_4th_herbx)
+# coefplot(gllvm_seeded_4th_herbx, cex.ylab = 1, mar = c(5,20,2,2))
+# gllvm_seeded_4th_herbx$X.design
+# 
+# gllvm_seeded_4th_herbx$fourth.corner %>%
+#   data.frame() %>%
+#   rownames_to_column(var = "treatment") %>%
+#   gather(trait, val, 2:ncol(.)) %>%
+#   # mutate(trait = factor(trait#, 
+#   #                       #levels = c("Coarse.root.diameter.mm", "Fine.root.specific.length.cm.g", "Root.volume.cm3", "RMF", "LDMC", "SLA.cm2.g", "Height.cm")
+#   #                       )) %>%
+#   ggplot(aes(treatment, trait)) +
+#   geom_tile(aes(fill = val), col = "black") +
+#   scale_x_discrete(expand = c(0,0)) +
+#   scale_y_discrete(expand = c(0,0)) +
+#   scale_fill_distiller(name = "Mean effect", type = "div", direction = 1) +
+#   labs(x = NULL, y = "Functional trait") +
+#   theme_ctw()
+# 
+# # additive model onlyy
+# gllvm_seeded_4th_add <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
+#                                 X = xdat_seeded,
+#                                 TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
+#                                 family = "negative.binomial", 
+#                                 num.lv = 2, 
+#                                 formula = y ~ (herbicide + nut_trt + ppt_trt) * (Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g),
+#                                 #lv.formula = ~ block,
+#                                 studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+#                                 #corWithin = T,
+#                                 row.eff = ~ (1|block/wholeplotID),
+#                                 #  gradient.check = T,
+#                                 seed = myseed)
+# 
+# anova(gllvm_seeded_4th, gllvm_seeded_4th_herbx, gllvm_seeded_4th_add, gllvm_seeded_4th_traitadd)
+# ordiplot(gllvm_seeded_4th_add)
+# coefplot(gllvm_seeded_4th_add, cex.ylab = 1, mar = c(5,18,2,2))
+# corrplot::corrplot(gllvm::getResidualCor(gllvm_seeded_4th_add), order = "hclust", method = "color")
+# corrplot::corrplot(gllvm_seeded_4th_add$fourth.corner, is.corr = F, method = "color")
+# 
+# gllvm_seeded_4th_add$fourth.corner %>%
+#   data.frame() %>%
+#   rownames_to_column(var = "treatment") %>%
+#   gather(trait, val, 2:ncol(.)) %>%
+#   mutate(trait = factor(trait, 
+#                         levels = c("Coarse.root.diameter.mm", "Fine.root.specific.length.cm.g", "Root.volume.cm3", "RMF", "LDMC", "SLA.cm2.g", "Height.cm"))) %>%
+#   ggplot(aes(treatment, trait)) +
+#   geom_tile(aes(fill = val), col = "black") +
+#   scale_x_discrete(expand = c(0,0)) +
+#   scale_y_discrete(expand = c(0,0)) +
+#   scale_fill_distiller(name = "Mean effect", type = "div", direction = 1) +
+#   labs(x = NULL, y = "Functional trait") +
+#   theme_ctw()
+# 
+#   
+# 
+# 
+# 
+# gllvm_seeded_4th_traitadd <- gllvm(y = ydat_count_seeded[,names(ydat_count_seeded) %in% rownames(traitmat_scaled)], 
+#                               X = xdat_seeded,
+#                               TR = traitmat_scaled[rownames(traitmat_scaled) %in% names(ydat_count_seeded),c(reduced_traits)],
+#                               family = "negative.binomial", 
+#                               num.lv = 2, 
+#                               formula = ~ (herbicide + nut_trt + ppt_trt) + Coarse.root.diameter.mm + Fine.root.specific.length.cm.g + Root.volume.cm3 + Height.cm + LDMC + RMF + SLA.cm2.g,
+#                               studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+#                               #corWithin = T,
+#                               row.eff = ~ (1|block/wholeplotID),
+#                               #  gradient.check = T,
+#                               seed = myseed)
+# ordiplot(gllvm_seeded_4th_traitadd)
+# AIC(gllvm_seeded_4th_traitadd)
+# summary(gllvm_seeded_4th_traitadd)
+# coefplot(gllvm_seeded_4th_traitadd, cex.ylab = 1, mar = c(5,15,2,2))
+# 
+# 
+# AIC(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
+# anova(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
+# anova(gllvm_seeded_4th_add, gllvm_seeded_4th_traitadd)
+# BIC(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded_4th_traitadd)
 
 
 
@@ -1121,3 +1706,46 @@ BIC(gllvm_seeded_4th, gllvm_seeded_4th_add, gllvm_seeded_4th_herbx, gllvm_seeded
 #                   data = subset(fxnltarget_long, !grepl("Unse", seedtrt)),
 #                   family = "nbinom1")
 # summary(nb_all)
+
+
+# # species specific effects just for herbicide, + env manips
+# exo_allplots_seedadd <- glmmTMB(count ~ seedtrt + spp * (herbicide + nut_trt + ppt_trt) + (1|block/wholeplotID),
+#                                 data = fxnlexo_long, family = "nbinom2")
+# 
+# # 3-way interactions between spp, ppt, and nut trt
+# exo_allplots_2envx <- glmmTMB(count ~  spp * (seedtrt + herbicide + nut_trt * ppt_trt) + (1|block/wholeplotID), 
+#                               data = fxnlexo_long, family = "nbinom2")
+# 
+# # interactions with herbicide and env
+# exo_allplots_3envx <- glmmTMB(count ~ seedtrt + spp * (herbicide * nut_trt * ppt_trt)+ (1|block/wholeplotID), 
+#                               data = fxnlexo_long, family = "nbinom2")
+# 
+# # all interactions (not expecting this to run?)
+# exo_allplots_x <- glmmTMB(count ~  spp * seedtrt * herbicide * nut_trt * ppt_trt + (1|block/wholeplotID), 
+#                           data = fxnlexo_long, family = "nbinom2")
+# 
+# # build model that has 3-way interaction with nut and ppt separately 
+# exo_allplots_splitenvx <- glmmTMB(count ~  seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID), 
+#                                   data = fxnlexo_long, family = "nbinom2")
+# 
+# # use sum to one for average effect
+# exo_allplots_splitenvx.sum <- glmmTMB(count ~  seedtrt + (spp * herbicide) * (nut_trt + ppt_trt) + (1|block/wholeplotID), 
+#                                       data = fxnlexo_long, family = "nbinom2", contrasts = list(spp = "contr.sum"))
+# 
+# summary(exo_allplots_splitenvx.sum)
+# 
+# anova(exo_allplots_seedadd, exo_allplots_2envx, exo_allplots_3envx, exo_allplots_splitenvx,exo_allplots_x)
+# # seed add with interactions between all or split interaction mods are best
+# car::Anova(exo_allplots_seedadd)
+# car::Anova(exo_allplots_2envx)
+# car::Anova(exo_allplots_3envx)
+# car::Anova(exo_allplots_splitenvx)
+# car::Anova(exo_allplots_x)
+# 
+# anova(exo_allplots_splitenvx, exo_allplots_3envx) # can still use the 3-way even if full interaction not signif
+# 
+# # review coeffs
+# summary(exo_allplots_seedadd)
+# summary(exo_allplots_splitenvx) # best mod
+# summary(exo_allplots_3envx)
+# summary(exo_allplots_2envx)
