@@ -966,25 +966,27 @@ anpp$block <- factor(anpp$block)
 anpp_tot_sum <- subset(anpp, select = c(yr, clip_event, block, plotid, nut_trt, ppt_trt, fxnl_grp, dry_wgt_g)) %>%
   spread(fxnl_grp, dry_wgt_g) %>% # year 2020 has anpp missing for clip event 2 in 1NW and 2CD
   group_by(yr, block, plotid, nut_trt, ppt_trt) %>%
-  reframe(anppF_0.5 = sum(Forb, na.rm = T),
+  # scales: ANPP clipped at 0.25 x 0.25cm, once in april, once in may
+  # try sum april and may anpp
+  reframe(anppF_0.5 = sum(Forb, na.rm = T), # sum = 0.25 x 0.5m (scale by 8 to get 1m2)
           anppG_0.5 = sum(Grass, na.rm = T),
           # as holdover, double anpp in obs that were missing for 2020
           anppF_0.5 = ifelse(plotid %in% c("1NW", "2CD") & yr == 2020, anppF_0.5*2, anppF_0.5),
           anppG_0.5 = ifelse(plotid %in% c("1NW", "2CD") & yr == 2020, anppG_0.5*2, anppF_0.5),
           # scale to 1m2
-          anppF_1m = anppF_0.5*2,
-          anppG_1m = anppG_0.5*2,
+          anppF_1m = anppF_0.5*8,
+          anppG_1m = anppG_0.5*8,
           # sum for totanpp
           anpp_1m = anppF_1m + anppG_1m
           )
-hist(anpp_tot$anpp_1m) # not normal dist
-hist(scale(anpp_tot$anpp_1m))
-hist(log(anpp_tot$anpp_1m))
-hist(sqrt(anpp_tot$anpp_1m))
+hist(anpp_tot_sum$anpp_1m) # not normal dist
+hist(scale(anpp_tot_sum$anpp_1m))
+hist(log(anpp_to_sumt$anpp_1m))
+hist(sqrt(anpp_tot_sum$anpp_1m))
 
 anpp_tot <- subset(anpp, select = c(yr, clip_event, block, plotid, nut_trt, ppt_trt, fxnl_grp, dry_wgt_g)) %>%
   spread(fxnl_grp, dry_wgt_g) %>% # year 2020 has anpp missing for clip event 2 in 1NW and 2CD
-  mutate(anpp_1m = (Forb + Grass)*4)
+  mutate(anpp_1m = (Forb + Grass)*8) # scale 0.25clip by 8 for 1m2
 
 # look at data
 ggplot(subset(anpp, yr == 2021), aes(fxnl_grp, dry_wgt_g, pch = factor(clip_event), col = block)) +
@@ -1032,7 +1034,8 @@ performance::check_distribution(norm_totanpp_1m2)
 
 
 # try by clip event
-norm_clipanpp_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + factor(yr) + (1|block) + (1|clip_event), data = anpp_tot) # ideally would nest by plot id but cannot accomodate that error
+anpp_tot$clip_event <- factor(anpp_tot$clip_event)
+norm_clipanpp_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + factor(yr) + (1|block) + (1|clip_event), data = anpp_tot) # # ideally would nest by plot id but cannot accomodate that error
 plotResiduals(norm_clipanpp_1m2) # totally fine.. use this
 hist(anpp_tot$anpp_1m) # separating into forb v grass is what creates problem
 summary(norm_clipanpp_1m2)
@@ -1047,7 +1050,7 @@ summary(norm_clipanpp_1m2)
 # factor(yr)2021   44.876      6.705   6.693 2.18e-11 ***
 anpp_tot$yrfac <- factor(anpp_tot$yr)
 # compare with interactive model
-norm_clipanppx_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + yrfac + (1|block) + (1|clip_event), data = anpp_tot) # convergence issues if include interaction
+norm_clipanppx_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + yrfac + (1|block) + (1|clip_event), data = anpp_tot) # convergence issues if include interaction, convergence issues when include clip_event as well but leaving in..
 summary(norm_clipanppx_1m2)
 # pull marginal means from additive model
 anpp_margmean <- emmeans(norm_clipanpp_1m2, specs = ~ nut_trt + ppt_trt | yr)
@@ -1070,26 +1073,27 @@ ggplot(anpp_margmean_df, aes(ppt_trt, emmean, col = nut_trt)) + #col = ppt_trt, 
 norm_clipanpp2019_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + (1|block), data = subset(anpp_tot, yr == 2019)) # convergence issue if include clip_event
 summary(norm_clipanpp2019_1m2)
 # Conditional model:
-# Estimate Std. Error z value Pr(>|z|)    
-# (Intercept)     103.871     14.411   7.208 5.68e-13 ***
-# ppt_trtDrought  -13.563     10.593  -1.280   0.2004    
-# ppt_trtWet        7.139     10.593   0.674   0.5004    
-# nut_trtCompost   29.473     10.593   2.782   0.0054 ** 
-# nut_trtFert      -3.083     10.593  -0.291   0.7710 
+#   Estimate Std. Error z value Pr(>|z|)    
+#   (Intercept)     207.743     28.821   7.208 5.68e-13 ***
+#   ppt_trtDrought  -27.127     21.187  -1.280   0.2004    
+#   ppt_trtWet       14.277     21.187   0.674   0.5004    
+#   nut_trtCompost   58.947     21.187   2.782   0.0054 ** 
+#   nut_trtFert      -6.167     21.187  -0.291   0.7710    
 
 plot(emmeans(norm_clipanpp2019_1m2, ~ nut_trt | ppt_trt)) + theme_ctw() + ggtitle("Marginal means: ANPP 2019 model (additive effects only)")
 emmeans(norm_clipanpp2019_1m2, trt.vs.ctrl ~ nut_trt + ppt_trt)
 
 # $contrasts
 # contrast                          estimate   SE df t.ratio p.value
-# Compost Control - Control Control    29.47 10.6 65   2.782  0.0455 *** only one that is different
-# Fert Control - Control Control       -3.08 10.6 65  -0.291  0.9969
-# Control Drought - Control Control   -13.56 10.6 65  -1.280  0.6739
-# Compost Drought - Control Control    15.91 15.0 65   1.062  0.7989
-# Fert Drought - Control Control      -16.65 15.0 65  -1.111  0.7728
-# Control Wet - Control Control         7.14 10.6 65   0.674  0.9483
-# Compost Wet - Control Control        36.61 15.0 65   2.444  0.1026
-# Fert Wet - Control Control            4.06 15.0 65   0.271  0.9976
+# Compost Control - Control Control    58.95 21.2 65   2.782  0.0455 * this is the only one signif diff
+# Fert Control - Control Control       -6.17 21.2 65  -0.291  0.9969
+# Control Drought - Control Control   -27.13 21.2 65  -1.280  0.6739
+# Compost Drought - Control Control    31.82 30.0 65   1.062  0.7989
+# Fert Drought - Control Control      -33.29 30.0 65  -1.111  0.7728
+# Control Wet - Control Control        14.28 21.2 65   0.674  0.9483
+# Compost Wet - Control Control        73.22 30.0 65   2.444  0.1026 * marginal comp wet greater than control
+# Fert Wet - Control Control            8.11 30.0 65   0.271  0.9976
+
 # 
 # P value adjustment: dunnettx method for 8 tests 
 
@@ -1097,23 +1101,29 @@ emmeans(norm_clipanpp2019_1m2, trt.vs.ctrl ~ nut_trt + ppt_trt)
 norm_clipanpp2021_1m2 <- glmmTMB(anpp_1m ~ ppt_trt + nut_trt + (1|block), data = subset(anpp_tot, yr == 2021)) # (1|clip_event)
 norm_clipanpp2021x_1m2 <- glmmTMB(anpp_1m ~ ppt_trt * nut_trt + (1|block), data = subset(anpp_tot, yr == 2021)) # (1|clip_event)
 anova(norm_clipanpp2021_1m2, norm_clipanpp2021x_1m2) # additive model is better
+# Models:
+#   norm_clipanpp2021_1m2: anpp_1m ~ ppt_trt + nut_trt + (1 | block), zi=~0, disp=~1
+# norm_clipanpp2021x_1m2: anpp_1m ~ ppt_trt * nut_trt + (1 | block), zi=~0, disp=~1
+# Df    AIC    BIC  logLik deviance  Chisq Chi Df Pr(>Chisq)
+# norm_clipanpp2021_1m2   7 846.00 861.94 -416.00   832.00                         
+# norm_clipanpp2021x_1m2 11 851.83 876.88 -414.92   829.83 2.1713      4     0.7043
 summary(norm_clipanpp2021_1m2)
 # Conditional model:
 #   Estimate Std. Error z value Pr(>|z|)    
-#  (Intercept)     165.945     11.015  15.065  < 2e-16 ***
-#  ppt_trtDrought  -38.645     11.078  -3.488 0.000486 ***
-#  ppt_trtWet        2.367     11.078   0.214 0.830841    
-#  nut_trtCompost   11.857     11.078   1.070 0.284500    
-#  nut_trtFert      -7.205     11.078  -0.650 0.515442 
+#   (Intercept)     331.889     22.030  15.065  < 2e-16 ***
+#   ppt_trtDrought  -77.290     22.156  -3.488 0.000486 ***
+#   ppt_trtWet        4.733     22.156   0.214 0.830832    
+#   nut_trtCompost   23.713     22.156   1.070 0.284496    
+#   nut_trtFert     -14.410     22.156  -0.650 0.515447    
 
 confint(norm_clipanpp2021_1m2)
-#                             2.5 %    97.5 %   Estimate
-# (Intercept)               144.355490 187.53373 165.944612
-# ppt_trtDrought            -60.357958 -16.93234 -38.645150
-# ppt_trtWet                -19.346252  24.07936   2.366556
-# nut_trtCompost             -9.856223  33.56939  11.856584
-# nut_trtFert               -28.917908  14.50771  -7.205101
-# Std.Dev.(Intercept)|block   2.052536  37.14444   8.731569
+#                               2.5 %    97.5 %   Estimate
+# (Intercept)                288.710757 375.06698 331.888871
+# ppt_trtDrought            -120.715462 -33.86435 -77.289906
+# ppt_trtWet                 -38.692208  48.15890   4.733348
+# nut_trtCompost             -19.712264  67.13885  23.713292
+# nut_trtFert                -57.835561  29.01555 -14.410005
+# Std.Dev.(Intercept)|block    4.104954  74.28927  17.462932
 
 plotResiduals(norm_clipanpp2021_1m2) # ok
 plotConventionalResiduals(norm_clipanpp2021_1m2)
@@ -1121,18 +1131,20 @@ plotConventionalResiduals(norm_clipanpp2021_1m2)
 # get pairwise differences
 plot(emmeans(norm_clipanpp2021_1m2, ~ nut_trt | ppt_trt)) + 
   theme_ctw() + ggtitle("ANPP 2021 model: ANPP ~ nut_trt + ppt_trt + (1|block)") +
-  labs(x = "Estimated marginal mean (g per m^2) with 95% CI")
+  labs(x = "Estimated marginal mean ANPP (g per m^2) with 95% CI",
+       y = "Soil amendment")
 emm1 <- emmeans(norm_clipanpp2021_1m2, ~ nut_trt + ppt_trt)
-contrast(emm1, "trt.vs.ctrl") %>% confint()
+emm1
+tidy(contrast(emm1, "trt.vs.ctrl"), conf.int = T)
 # contrast                          estimate   SE df lower.CL upper.CL
-# Compost Control - Control Control    11.86 11.1 65    -18.6    42.27
-# Fert Control - Control Control       -7.21 11.1 65    -37.6    23.21
-# Control Drought - Control Control   -38.65 11.1 65    -69.1    -8.23
-# Compost Drought - Control Control   -26.79 15.7 65    -69.8    16.22
-# Fert Drought - Control Control      -45.85 15.7 65    -88.9    -2.84
-# Control Wet - Control Control         2.37 11.1 65    -28.0    32.78
-# Compost Wet - Control Control        14.22 15.7 65    -28.8    57.23
-# Fert Wet - Control Control           -4.84 15.7 65    -47.8    38.17
+# Compost Control - Control Control    23.71 22.2 65    -37.1    84.54
+# Fert Control - Control Control      -14.41 22.2 65    -75.2    46.41
+# Control Drought - Control Control   -77.29 22.2 65   -138.1   -16.47
+# Compost Drought - Control Control   -53.58 31.3 65   -139.6    32.44
+# Fert Drought - Control Control      -91.70 31.3 65   -177.7    -5.68
+# Control Wet - Control Control         4.73 22.2 65    -56.1    65.56
+# Compost Wet - Control Control        28.45 31.3 65    -57.6   114.47
+# Fert Wet - Control Control           -9.68 31.3 65    -95.7    76.34
 # 
 # Confidence level used: 0.95 
 # Conf-level adjustment: dunnettx method for 8 estimates 
