@@ -1,0 +1,41 @@
+# Exploratory Plant Community Analysis
+
+1.  Species responses
+
+    1.  **individual species**
+
+    2.  natives vs. exotics
+
+    3.  life forms
+
+    4.  **between years**
+
+    5.  between treatments
+
+    6.  between competitive groups
+
+    7.  traits
+
+        1.  above- and belowground
+
+[*Initial Goal:*]{.underline} *Get a sense of the general winners and losers of each treatments, then relate them by traits in ordinational space.*
+
+Author: Caryn D. Iwanaga
+
+Updated: 12/12/2024
+
+## Libraries
+
+```{r library, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+install.packages("rdrop2")
+```
+
+## Read in Data
+
+```{r readDat}
+
+read.csv("Data-cleaning/")
+```
