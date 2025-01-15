@@ -140,5 +140,39 @@ cover.dat %>%
   mutate( 
     nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
     ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA)))) %>%
-  filter(fulltrt == "NXC", yr == 2019)
+  select(plotid, pct_cover, species, nut_trt, ppt_trt, yr, sample_event, fxnl_grp:nativity) %>%
+  arrange(yr, nut_trt, ppt_trt, pct_cover)
+```
+
+See if there's closer similarities between blocks, should i toss some blocks out?
+
+```{r}
+cover.dat %>%
+  filter(code6 == "AVEBAR") %>%
+  group_by(block, yr, nut_trt, ppt_trt) %>%
+  # mutate(
+  #   nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
+  #   ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA)))) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(block, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9),  # Align with bars
+    width = 0.4,
+    alpha = 0.3
+  ) +
+  #  scale_fill_manual(
+  #   values = c(
+  #     "control" = rgb(195, 197, 193, maxColorValue = 250),
+  #     "+N fertilizer" = rgb(87, 62, 92, maxColorValue = 225),
+  #     "+compost" = rgb(167, 156, 109, maxColorValue = 225)
+  #   )
+  # ) +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "A.barbata cover response (2019-2021)"
+  )
 ```
