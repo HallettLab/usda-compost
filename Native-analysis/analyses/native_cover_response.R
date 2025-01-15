@@ -474,8 +474,63 @@ reduced_traits # be sure have the ones desired
 traitmat_scaled <- mutate_at(traitmat_full_norm, .vars = names(traitmat_full_norm)[!grepl("code4|durat|fxnl_|nativ", names(traitmat_full_norm))], function(x) as.numeric(scale(x)))
 
 
+# -- CTW CUSTOM FUNCTIONS FOR MIXED MODS ------
+# function to compare model stats and confidence intervals
+getmod_effects <- function(mod, modlab = "anpp 2021"){
+  coefdf <- tidy(mod, conf.int = T)
+  coefdf$call <- str_flatten(as.character(mod$call))
+  coefdf$mod <- modlab
+  coefdf <- cbind(coefdf, glance(mod)) # redundant info but so it's there
+  return(coefdf)
+}
+
+# function to compile emmeans, contrasts, with confidence intervals
+getemmeans <- function(emobj, conobj, modlab = "anpp 2021"){
+  marg <- tidy(emobj, conf.int = T)
+  marg$mod <- modlab
+  emdf <- tidy(conobj, conf.int = T)
+  emdf$mod <- modlab
+  tmplist <- list(marg, emdf)
+  names(tmplist) <- c("marginal_means", "comparisons") 
+  return(tmplist)  
+}
+
 
 # -- GLMMs FOR TREATMENT EFFECTS -----
+# means of seeded spp presence and cover
+subset(tidysp0_seeded, code4 %in% nats) %>%
+  group_by(code4) %>%
+  reframe(nobs = length(plot),
+          pres = (sum(count_cover > 0)/length(plot))*100,
+          meancov = mean(count_cover),
+          secov = sd(count_cover)/sqrt(length(plot)))
+
+# add plot size to widefxnl_count
+# seeded comp plots are 0.5x0.5m, main comp is 1x1m, main comp is 4x greater
+widefxnl_count <- mutate(widefxnl_count, plot_scale = ifelse(grepl("Unseed", seedtrt) & grepl("Non-", herbicide), 4, 1))
+
+# ---- herbicide effect on total cover -----
+# compare totcov in unseeded herbicide and no herbicide
+hist(widefxnl_count$AllNeighbors) # pretty normal looking, all neighbors is seeded + neighbors
+hist(widefxnl_count$AllNeighbors[widefxnl_count$seedtrt == "Unseeded"])
+summary(glmmTMB(formula = as.formula(AllNeighbors ~ herbicide + nut_trt + ppt_trt + (1|block/wholeplotID)), 
+                              data = subset(widefxnl_count, seedtrt == "Unseeded"))) # convergence issue with wholeplotID nested in blcok
+summary(glmmTMB(formula = as.formula(AllNeighbors ~ herbicide + nut_trt + ppt_trt + (1|block/wholeplotID) + (1|seedtrt)), 
+                data = widefxnl_count)) # still get a convergence error with seeded plots included
+
+#report this model for average effects on total cover. can run it with wholeplot ID nested
+totcov_trteffects <- glmmTMB(formula = as.formula(AllNeighbors ~ herbicide *seedtrt + nut_trt + ppt_trt + (1|block/wholeplotID) + (1|plot_scale)), 
+                             data = widefxnl_count) 
+plotResiduals(totcov_trteffects) # running with Gaussian is okay
+check_overdispersion(totcov_trteffects) # no dispersion
+summary(totcov_trteffects)
+emtoteffects <- emmeans(totcov_trteffects, ~ herbicide + seedtrt| ppt_trt + nut_trt)
+tidy(contrast(emtoteffects, "trt.vs.ctrl", simple = "herbicide", by = "seedtrt", combine = T), conf.int = T)
+tidy(contrast(emtoteffects, "trt.vs.ctrl", simple = "seedtrt", by = "herbicide", combine = T), conf.int = T)
+tidy(pairs(emtoteffects, simple = "seedtrt"), conf.int = T)
+# compare totcover in seeded herbicide vs seeded ambient
+tidy(contrast(emtoteffects, "pairwise", by = c("ppt_trt", "nut_trt")), conf.int = T)
+pairs(emtoteffects, simple = "herbicide")
 # try all spp model but may need to run separate models for each seeded spp
 
 # mod 0 = fully additive
@@ -603,12 +658,12 @@ anova(nb_nats_seeded_unherb, nb_nats_seeded_unherbx) # additive model is better
 nb_forbs_seeded_mod1nb2 <- glmmTMB(formula = mod1, 
                                    data = subset(fxnltarget_long, spp %in% c("NEMA", "ESCA") & !grepl("Unseed", seedtrt)),
                                    family = "nbinom2")
-summary(nb_forbs_seeded)
+summary(nb_forbs_seeded_mod1nb2)
 
 nb_grass_seeded_mod1nb2 <- glmmTMB(formula = mod1, 
                                    data = subset(fxnltarget_long, spp %in% c("FEMI", "BRCA") & !grepl("Unseed", seedtrt)),
                                    family = "nbinom2")
-summary(nb_grass_seeded)
+summary(nb_grass_seeded_mod1nb2)
 
 
 # compare BRCA coeffs across all mods but forb-only
@@ -666,9 +721,42 @@ ggplot(subset(natsonly_preds), aes(paste(ppt_trt, nut_trt), `.resid`, group = pa
 # gather marginal means to compare with means from raw data
 summary(glht(nb_nats_seeded_mod1nb2,  emmeans::lsm(~ spp : herbicide : ppt_trt : nut_trt)))
 mod_means <- emmeans(nb_nats_seeded_mod1nb2, ~ herbicide + ppt_trt + nut_trt | spp , type = "response")
+emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ herbicide | spp , type = "response")
+emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ nut_trt | spp , type = "response")
+emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ ppt_trt | spp , type = "response")
+contrast(mod_means, "trt.vs.ctrl")
+contrast(mod_means, "trt.vs.ctrl", simple = "herbicide", by ="spp")
+contrast(mod_means, "trt.vs.ctrl", simple = "nut_trt", by ="spp")
+cld(mod_means)
 nb_nats_margmeans <- data.frame(mod_means)
+mod_means_log <- emmeans(nb_nats_seeded_mod1nb2, ~ herbicide + ppt_trt + nut_trt | spp)
 
+nb_nats_logmeans <- data.frame(mod_means_log) %>%
+  # denote which ones have clear neg or pos trend
+  mutate(sig95 = (asymp.LCL * asymp.UCL) >0)
+# kns wants to see within which terms and interactions are significant
 
+# > may need to run separate model for each species for within differences until can figure out 
+brca_mod <- glmmTMB(formula = count ~ herbicide + (nut_trt * ppt_trt) + (1 | block), 
+                    data = subset(fxnltarget_long, spp %in% c("BRCA") & !grepl("Unseed", seedtrt)),
+                    family = "nbinom2")
+summary(brca_mod)
+car::Anova(brca_mod) # BRCA responds to each and interaction between ppt and nut
+femi_mod <- update(brca_mod, 
+                   formula = count ~ herbicide * (nut_trt + ppt_trt) + (1 | block),
+                   data = subset(fxnltarget_long, spp %in% c("FEMI") & !grepl("Unseed", seedtrt))) 
+car::Anova(femi_mod) # FEMI only cares about herbicide and herbicide x ppt
+esca_mod <- update(brca_mod, 
+                   data = subset(fxnltarget_long, spp %in% c("ESCA") & !grepl("Unseed", seedtrt))) 
+car::Anova(esca_mod) # ESCA doesn't care about anything
+nema_mod <- update(brca_mod, 
+                   data = subset(fxnltarget_long, spp %in% c("NEMA") & !grepl("Unseed", seedtrt))) 
+car::Anova(nema_mod) # NEMA cares about ppt most, then nutrient, then marginally herbicide
+
+# joint test from emmeans package
+data.frame(joint_tests(nb_nats_seeded_mod1nb2, by = "spp")) # this test does what i'm looking for, no need for separate mods
+
+# plot for seeded natives with marginal means
 natfig <- fxnltarget_long %>%
   subset(spp %in% nats & grepl("Nat", seedtrt)) %>%
   left_join(nb_nats_margmeans) %>%
@@ -703,10 +791,43 @@ natfig
 # manually add anova stats for now
 grid::grid.text(label = "Type II Wald Chisq\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide **\n spp:soil trt ***\n spp:precip trt ***", 
                 x = unit(0.8, "npc"), y = unit(0.65, "npc"), just = "left")
+# brca
+grid::grid.text(label = "herb. **\nsoil ***\nppt ***", 
+                x = unit(0.07, "npc"), y = unit(0.9, "npc"), just = "left")
+# esca
+grid::grid.text(label = "herb. n.s.\nsoil n.s.\nppt n.s.", 
+                x = unit(0.07, "npc"), y = unit(0.68, "npc"), just = "left")
+# femi
+grid::grid.text(label = "herb. ***\nsoil *\nppt n.s.", 
+                x = unit(0.07, "npc"), y = unit(0.46, "npc"), just = "left")
+# nema
+grid::grid.text(label = "herb. n.s.\nsoil *\nppt ***", 
+                x = unit(0.07, "npc"), y = unit(0.24, "npc"), just = "left")
 
-cld(mod_means, adjust = "sidak", Letters = letters, alpha = 0.05)
+# add significant terms to each spp row
+cld(mod_means, adjust = "sidak", Letters = letters, alpha = 0.05, by = "spp")
 summary(glht(nb_nats_seeded_mod1nb2))
 summary(nb_nats_seeded_mod1nb2)
+
+
+# 1c) nat seed tables, contrasts ------
+nats_bestcoeffs <- getmod_effects(nb_nats_seeded_mod1nb2, "native seeded glmmTMB")
+nats_emlist <- getemmeans(mod_means, contrast(mod_means, "trt.vs.ctrl"), "native seeded glmmTMB")
+# best model joint test, arrange by species
+write_csv(arrange(data.frame(joint_tests(nb_nats_seeded_mod1nb2, by = "spp")), spp), "Native-analysis/outputs/natglmmTMB_jointtest.csv")
+# wald test for best model
+write_csv(nats_best_anova, "Native-analysis/outputs/natglmmTMB_anova.csv")
+# model coeffs
+write_csv(nats_bestcoeffs, "Native-analysis/outputs/natglmmTMB_coeffs.csv")
+# marg means
+write_csv(nats_emlist$marginal_means, "Native-analysis/outputs/natglmmTMB_margmeans.csv")
+# contrasts
+write_csv(nats_emlist$comparisons, "Native-analysis/outputs/natglmmTMB_margmeans.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ herbicide | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_herbcontrast.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ nut_trt | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_nutcontrast.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ ppt_trt | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_pptcontrast.csv")
+
+
 
 
 
@@ -1053,6 +1174,11 @@ exomod5
 exo_mod_means<- emmeans(exo_allplots_mod5genp, ~ seedtrt + herbicide + ppt_trt + nut_trt | spp , type = "response")
 exo_margmeans <- data.frame(exo_mod_means)
 
+emmeans(exo_allplots_mod5genp, trt.vs.ctrl ~ herbicide | spp + seedtrt, type = "response")
+
+emmeans(exo_allplots_mod5genp, trt.vs.ctrl ~ ppt_trt | spp + seedtrt + nut_trt, type = "response")
+emmeans(exo_allplots_mod5genp, trt.vs.ctrl ~ nut_trt | spp + seedtrt + ppt_trt + herbicide, type = "response")
+
 
 exofig <- fxnltarget_long %>%
   subset(!spp %in% nats) %>%
@@ -1071,8 +1197,8 @@ exofig <- fxnltarget_long %>%
   geom_point(aes(fill = ppt_trt), position = position_nudge(x = -0.3), pch = 21, size = 2) +
   geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0, lwd = 1) +
   geom_point(aes(fulltrt, response, fill = ppt_trt), pch = 21, size = 3) +
-  scale_color_brewer(name = "Precip trt", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
-  scale_fill_brewer(name = "Precip trt", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
+  scale_color_brewer(name = "Precipitation\ntreatment", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
+  scale_fill_brewer(name = "Precipitation\ntreatment", palette = "BrBG", labels = c("Drought (D)", "Control", "Wet (W)")) +
   #scale_color_manual(values = fxnltargcols, guide = "none") +
   # scale_fill_manual(name = NULL, 
   #                   values = fxnltargcols, labels = c("Non-native forb", "Non-native grass", "Non-native N-fixer", 
@@ -1088,22 +1214,54 @@ exo_best_anova <- data.frame(car::Anova(exo_allplots_mod5genp)) %>%
   mutate(term = rownames(.)) %>%
   rename_all(function(x) gsub("[.]", "", x))
 
+joint_tests(exo_allplots_mod5genp, by = "spp")
 
 exofig
 # manually add anova stats for now
 grid::grid.text(label = "Type II Wald Chisq\n seedtrt ***\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide ***\n spp:soil trt ***\n spp:precip trt **\n herbicide:soil trt n.s.\n herbicide:precip trt **\n spp:herbicide:soil trt **\n spp:herbicide:precip trt ***", 
-                x = unit(0.83, "npc"), y = unit(0.6, "npc"), just = "left")
+                x = unit(0.80, "npc"), y = unit(0.56, "npc"), just = "left")
+# add signif terms for spp -- in two columns per row
+# non-nat grams
+grid::grid.text(label = "seed ***\nherb. ***\nsoil n.s.", 
+                x = unit(0.07, "npc"), y = unit(0.69, "npc"), just = "left")
+grid::grid.text(label = "ppt ***\nherb:soil n.s.\nherb:ppt ***", 
+                x = unit(0.13, "npc"), y = unit(0.69, "npc"), just = "left")
+# non-nat forb
+grid::grid.text(label = "seed ***\nherb. **\nsoil ***", 
+                x = unit(0.07, "npc"), y = unit(0.58, "npc"), just = "left")
+grid::grid.text(label = "ppt n.s.\nherb:soil **\nherb:ppt n.s.", 
+                x = unit(0.13, "npc"), y = unit(0.58, "npc"), just = "left")
+# non-nat n fixers
+grid::grid.text(label = "seed ***\nherb. n.s.\nsoil **", 
+                x = unit(0.07, "npc"), y = unit(0.3, "npc"), just = "left")
+grid::grid.text(label = "ppt ***\nherb:soil n.s.\nherb:ppt n.s.", 
+                x = unit(0.13, "npc"), y = unit(0.3, "npc"), just = "left")
 
 
+# 2c) background tables, contrasts ------
+exo_bestcoeffs <- getmod_effects(exo_allplots_mod5genp, "background fxnl glmmTMB")
+exo_emlist <- getemmeans(mod_means, contrast(mod_means, "trt.vs.ctrl"), "native seeded glmmTMB")
+# best model joint test, arrange by species
+write_csv(arrange(data.frame(joint_tests(nb_nats_seeded_mod1nb2, by = "spp")), spp), "Native-analysis/outputs/natglmmTMB_jointtest.csv")
+# wald test for best model
+write_csv(nats_best_anova, "Native-analysis/outputs/natglmmTMB_anova.csv")
+# model coeffs
+write_csv(exo_bestcoeffs, "Native-analysis/outputs/exoglmmTMB_coeffs.csv")
+# marg means
+write_csv(nats_emlist$marginal_means, "Native-analysis/outputs/natglmmTMB_margmeans.csv")
+# contrasts
+write_csv(nats_emlist$comparisons, "Native-analysis/outputs/natglmmTMB_margmeans.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ herbicide | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_herbcontrast.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ nut_trt | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_nutcontrast.csv")
+write_csv(data.frame(emmeans(nb_nats_seeded_mod1nb2, "trt.vs.ctrl" ~ ppt_trt | spp , type = "response")), "Native-analysis/outputs/natglmmTMB_pptcontrast.csv")
 
 
-
-# -- CTW USTOM GLLVM FUNCTIONS ------
+# -- CTW CUSTOM GLLVM FUNCTIONS ------
 # above pcoa and rda suggest maybe 3, but 1 axis (diving hillslope) captures the most variation in data 
 bestlv <- function(y = ydat_count, X = NULL, numseq = 1:4, yform = as.formula(~ herbicide + seedtrt), lvform = NA,
                    smat = sDesign_full, rowform = as.formula(~ (1|block/wholeplotID)), seed = myseed){
   criteria <- NULL
-  if(!is.na(yform)){
+  if(is_formula(yform)){
     for(i in numseq){
       print(i) # print to know where you are in loop while waiting
       fiti <- gllvm(y, X, family = "negative.binomial", num.lv = i, sd.errors = FALSE,
@@ -1149,45 +1307,142 @@ get_loadings <- function(mod){
   return(templist)
 }
 
+# plot predicted vs observed to gauge how well fits data
+# functions to grab predictions and residuals
+getgll_predred <- function(mod){
+  preds <- data.frame(predict.gllvm(mod))
+  preds <- cbind(rowid = rownames(mod$data), preds) %>%
+    data.frame() %>%
+    gather(spp, pred, 2:ncol(.)) %>%
+    mutate(pred_exp = round(exp(pred),4))
+  modat <- mod$data %>%
+    rownames_to_column("rowid") %>%
+    gather(spp, count, grep("[A-Z]{4}|Forb|Grass", names(.)))
+  modres <- data.frame(resid(mod)[["residuals"]]) %>%
+    rownames_to_column("rowid") %>%
+    gather(spp, res, grep("[A-Z]{4}|Grass|Forb", names(.)))
+  
+  # put it all together
+  alltog <- left_join(modat, preds) %>%
+    left_join(modres) %>%
+    mutate(diff_ctpred = count - pred_exp)
+  return(alltog)
+}
 
-# -- COMMUNITY ORDINATION -----
+
+# -- FXNL COMMUNITY ORDINATION -----
 # > run with ydat_count (all plots)
 # what are communiites like by block or hillslope?
 # 1. no predictors to show ordination
-gllvm_ordination_all <- gllvm(y = ydat_fxnl_wide,
-                              #X = xdat, 
-                              family = "negative.binomial", 
-                              #reltol.c = 1e-15,
-                              #starting.val = "zero",
-                              num.lv = 3,
-                              # nest subplot if can, but block/wholeplot captures most of the nested similarity
-                              studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
-                              row.eff = ~ (1|block), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
-                              seed = myseed)
-ordiplot(gllvm_ordination_all, rotate = T, jitter = T, biplot = F)
-summary(gllvm_ordination_all,rotate = T)
-gllvm_ordination_all$convergence
-plotVarPartitioning(varPartitioning(gllvm_ordination_all), mar = c(10,10,10,10), las = 2,
-                    col = palette(hcl.colors(10, "Roma")))
-plot(gllvm_ordination_all)
-coef(gllvm_ordination_all)
-corrplot::corrplot(getResidualCov(gllvm_ordination_all)$cov, is.corr = F,  method = "color")
+gllvm_ordination_all.lv4 <- gllvm(y = ydat_fxnl_wide,
+                                  #X = xdat, 
+                                  family = "negative.binomial", 
+                                  num.lv = 4,
+                                  # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                                  studyDesign = sDesign_full[c("block", "wholeplotID", "subplotID")], 
+                                  row.eff = ~ (1|block), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                                  seed = myseed)
+# compare AIC for different number of LVs
+gllvm_ordination_all.lv2 <- update(gllvm_ordination_all.lv4, num.lv = 2)
+gllvm_ordination_all.lv3 <- update(gllvm_ordination_all.lv4, num.lv = 3)
+gllvm_ordination_all.lv5 <- update(gllvm_ordination_all.lv4, num.lv = 5)
+#gllvm_ordination_all.lv6 <- update(gllvm_ordination_all.lv4, num.lv = 6) # error for this one
+AICc(gllvm_ordination_all.lv2, gllvm_ordination_all.lv3, gllvm_ordination_all.lv4, gllvm_ordination_all.lv5)
+# [1] 5636.675 5640.367 5653.286 5664.468
+# suggests 2 LVs is best.. but we 4 levels of manipulations. it could be treatments don't come in well at functional level
+par(mfrow = c(2,2))
+lapply(list(gllvm_ordination_all.lv2,gllvm_ordination_all.lv3,gllvm_ordination_all.lv4,gllvm_ordination_all.lv5), function(x) ordiplot(x, rotate = T, jitter = T, biplot = T))
+lapply(list(gllvm_ordination_all.lv3,gllvm_ordination_all.lv4,gllvm_ordination_all.lv5), function(x) ordiplot(x, which = c(2,3), rotate = T, jitter = T, biplot = T))
+plot.new()
+# plot without spp
+lapply(list(gllvm_ordination_all.lv2,gllvm_ordination_all.lv3,gllvm_ordination_all.lv4,gllvm_ordination_all.lv5), function(x) ordiplot(x, rotate = T, jitter = T, biplot = F))
+lapply(list(gllvm_ordination_all.lv3,gllvm_ordination_all.lv4,gllvm_ordination_all.lv5), function(x) ordiplot(x, which = c(2,3), rotate = T, jitter = T, biplot = F))
+# they each are picking up similar things
+par(mfrow = c(1,1))
 
-gllvm_ord_scores <- get_loadings(gllvm_ordination_all)
-gllvm_ord_scores$sites <- left_join(gllvm_ord_scores$sites, rownames_to_column(xdat, "rowid"))
-
-ggplot(gllvm_ord_scores$sites) +
+# pull scores for plotting
+scores.lv2 <- get_loadings(gllvm_ordination_all.lv2)
+scores.lv2$sites <- left_join(scores.lv2$sites, rownames_to_column(xdat, "rowid"))
+scores.lv3 <- get_loadings(gllvm_ordination_all.lv3)
+scores.lv3$sites <- left_join(scores.lv3$sites, rownames_to_column(xdat, "rowid"))
+scores.lv4 <- get_loadings(gllvm_ordination_all.lv4)
+scores.lv4$sites <- left_join(scores.lv4$sites, rownames_to_column(xdat, "rowid"))
+# plot
+ggplot(scores.lv2$sites, aes(LV1, LV2)) +
   geom_jitter( aes(LV1, LV2, col = paste(herbicide,seedtrt)),# shape = paste(herbicide, seedtrt)), 
                width = 0.0, size = 3) +
-  #geom_text(data = subset(gllvm_ordrr_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
-  #scale_shape_manual(values = c(1:8)) +
   scale_color_brewer(palette = "Paired") +
   facet_grid(ppt_trt ~ nut_trt) +
-  ggtitle("Unconstrained ordination")
+  ggtitle("Unconstrained ordination: 2 LVs")
+ggplot(scores.lv3$sites, aes(LV1, LV2)) +
+  geom_jitter( aes(LV1, LV2, col = paste(herbicide,seedtrt)),# shape = paste(herbicide, seedtrt)), 
+               width = 0.0, size = 3) +
+  scale_color_brewer(palette = "Paired") +
+  facet_grid(ppt_trt ~ nut_trt) +
+  ggtitle("Unconstrained ordination: 3 LVs")
+ggplot(scores.lv4$sites, aes(LV1, LV2)) +
+  geom_jitter( aes(LV1, LV2, col = paste(herbicide,seedtrt)),# shape = paste(herbicide, seedtrt)), 
+               width = 0.0, size = 3) +
+  scale_color_brewer(palette = "Paired") +
+  facet_grid(ppt_trt ~ nut_trt) +
+  ggtitle("Unconstrained ordination: 4 LVs")
+# nothing moves on first two axes between lv 3 and lv 4 mods
+# compare variance partition
+par(mfrow = c(2,2))
+lapply(list(gllvm_ordination_all.lv2, gllvm_ordination_all.lv3, gllvm_ordination_all.lv4, gllvm_ordination_all.lv5),
+       function(x) plotVarPartitioning(varPartitioning(x), mar = c(7,5,7,5), adj = 0.25, xlab = "", main = "",
+                                       las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 0.9, yjust = -0.4),
+                                       col = palette(hcl.colors(10, "Roma"))))
+# > 3 axes is the way for unconstrained ordination. Even when have more axes, it's mostly 3 that are picking up variation.
+par(mfrow = c(1,1))
+# covariance between spp and functional groups
+corrplot::corrplot(getResidualCov(gllvm_ordination_all.lv3)$cov, is.corr = F, type = "upper", method = "color")
+# > native grass (stipa pulchra mostly) does its own thing
+
+site_ord <- ggplot(scores.lv3$sites) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  geom_point( aes(LV1, LV2, col = paste(herbicide,seedtrt, sep = ", ")),# shape = paste(herbicide, seedtrt)), 
+              size = 3) +
+  #geom_text(data = subset(scores.lv3$spp, !grepl("NativeGrass", spp)), aes(LV1, LV2, label = spp)) +
+  scale_color_brewer(name = ("Herbicide, seeding"), palette = "Paired") +
+  labs(x = "LV1 (35.1% spp variance)", y = "LV2 (35.1% spp variance)") +
+  facet_grid(ppt_trt ~ nut_trt) +
+  theme_ctw() +
+  theme(legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.justification.right = "top")
+
+site_ord_legend <- cowplot::get_legend(site_ord)
+
+spp_ord <- ggplot(scores.lv3$sites) +
+  geom_hline(aes(yintercept = 0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty = 2, col = "grey") +
+  geom_point( aes(LV1, LV2,), color = "transparent",
+              size = 3) +
+  geom_point(data = subset(scores.lv3$spp), aes(LV1, LV2)) +
+  ggrepel::geom_text_repel(data = subset(scores.lv3$spp), aes(LV1, LV2, label = spp),  size = 5) +
+  labs(x = "LV1 (35.1% spp variance)", y = "LV2 (35.1% spp variance)") +
+  scale_color_brewer(name = ("Herbicide, seeding"), palette = "Paired") +
+  theme_ctw()
+spp_ord
+
+
+ord_panel <- plot_grid(site_ord_legend, spp_ord, nrow = 2,
+                       rel_heights = c(0.25, .75),labels = list("", "B"),
+                       axis = "t",
+                       align = "vh")
+# put it together
+plot_grid(site_ord + theme(legend.position = "none"), ord_panel,
+          labels = c("A"),
+          rel_widths = c(1.25,0.75),
+          nrow = 1,
+          align = "vh", axis = "t"
+)
+
+
 
 # how did communities separate by plot condition? (herb x seeded x env)
-
-gllvm::predict.gllvm(gllvm_ordination_all)
 gllvm_ordination_all_envpred <- gllvm(y = ydat_fxnl_wide, #[,!names(ydat_fxnl_wide) %in% nats], 
                                       X = xdat, 
                                       family = "negative.binomial", 
@@ -1203,7 +1458,10 @@ gllvm_ordination_all_envpred <- gllvm(y = ydat_fxnl_wide, #[,!names(ydat_fxnl_wi
 par(mfrow = c(1,1))
 ordiplot(gllvm_ordination_all_envpred, biplot =T, symbols = T, jitter = T, jitter.amount = 0.5)
 summary(gllvm_ordination_all_envpred)
-plotVarPartitioning(varPartitioning(gllvm_ordination_all_envpred), mar = c(10,10,10,10), las = 2,
+plotVarPartitioning(varPartitioning(gllvm_ordination_all_envpred), mar = c(8,5,2,20), las = 2,
+                    adj = 0.25,
+                    xlab = "", main = "",
+                    args.legend = list(horiz = F, cex = 1, xjust = -.05, yjust = 1),
                     col = palette(hcl.colors(10, "Roma")))
 coefplot(gllvm_ordination_all_envpred, which = 1:4, cex.ylab = 2)
 
@@ -1226,9 +1484,11 @@ ordiplot(gllvm_ordination_all_envpred,which.lvs = c(3,2), biplot =F, symbols = T
 ordiplot(gllvm_ordination_all_envpred,which.lvs = c(3,4), biplot =F, symbols = T, jitter = T, jitter.amount = 0.5)
 par(mfrow = c(1,1))
 
+varPartitioning(gllvm_ordination_all_envpred)
+
 
 # use informed lvs
-gllvm_ordination_all_envpred_rr <- gllvm(y = ydat_fxnl_wide[!grepl("NativeGra", names(ydat_fxnl_wide))], #[,!names(ydat_fxnl_wide) %in% nats], 
+gllvm_ordination_all_envpred_rr <- gllvm(y = ydat_fxnl_wide, #[!grepl("NativeGra", names(ydat_fxnl_wide))], #[,!names(ydat_fxnl_wide) %in% nats], 
                                          X = xdat, 
                                          family = "negative.binomial", 
                                          #num.lv = 1,
@@ -1258,185 +1518,357 @@ gllvm_ordc_scores <- get_loadings(gllvm_ordination_all_envpred)
 
 
 plot_grid(
-ggplot(gllvm_ordrr_scores$sites) +
-  geom_point( aes(CLV1, CLV2, col = paste(nut_trt,ppt_trt), shape = paste(herbicide, seedtrt)),size = 3) +
-  #geom_text(data = subset(gllvm_ordrr_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
-  geom_segment(data = gllvm_ordrr_scores$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
-            arrow = arrow(length = unit(0.25, "cm"))) +
-  ggrepel::geom_text_repel(data = gllvm_ordrr_scores$varscores, aes(x = CLV1, y = CLV2, label = plot_label)) +
-  scale_shape_manual(values = c(1:8)) +
-  ggtitle("Reduced rank ordination"),
-ggplot(gllvm_ordc_scores$sites) +
-  geom_jitter( aes(CLV2, CLV3, col = paste(nut_trt, ppt_trt), shape = paste(herbicide, seedtrt)), width = 0, size = 3) +
-  geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV2, y = 0, yend = CLV3, group = vari), 
-               arrow = arrow(length = unit(0.25, "cm"))) +
-  ggrepel::geom_text_repel(data = gllvm_ordc_scores$varscores, aes(x = CLV2, y = CLV3, label = plot_label)) +
-  #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
-  scale_shape_manual(values = c(1:8)) +
-  ggtitle("Constrained LV ordination"),
-nrow = 2
-
-
+  ggplot(gllvm_ordrr_scores$sites) +
+    geom_point( aes(CLV1, CLV2, col = paste(nut_trt,ppt_trt), shape = paste(herbicide, seedtrt)),size = 3) +
+    #geom_text(data = subset(gllvm_ordrr_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+    geom_segment(data = gllvm_ordrr_scores$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+                 arrow = arrow(length = unit(0.25, "cm"))) +
+    ggrepel::geom_text_repel(data = gllvm_ordrr_scores$varscores, aes(x = CLV1, y = CLV2, label = plot_label)) +
+    scale_shape_manual(values = c(1:8)) +
+    ggtitle("Reduced rank ordination"),
+  ggplot(gllvm_ordc_scores$sites) +
+    geom_jitter( aes(CLV2, CLV3, col = paste(nut_trt, ppt_trt), shape = paste(herbicide, seedtrt)), width = 0, size = 3) +
+    geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV2, y = 0, yend = CLV3, group = vari), 
+                 arrow = arrow(length = unit(0.25, "cm"))) +
+    ggrepel::geom_text_repel(data = gllvm_ordc_scores$varscores, aes(x = CLV2, y = CLV3, label = plot_label)) +
+    #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+    scale_shape_manual(values = c(1:8)) +
+    ggtitle("Constrained LV ordination"),
+  nrow = 2
+  
+  
 )
 dev.off()
 gllvm::plotVarPartitioning(gllvm::varPartitioning(gllvm_ordination_all_envpred_rr))
 coefplot(gllvm_ordination_all_envpred_rr,mfrow = c(4,5), xlim.list = rep(list(c(-100,100)),20))
 
+# add fulltrt to ordination scores
+gllvm_ordc_scores$sites <- left_join(gllvm_ordc_scores$sites, xdat)
+gllvm_ordrr_scores$sites <- left_join(gllvm_ordrr_scores$sites, xdat)
+# create cols for fulltrt
+
+fulltrt_cols <- c("darkorange", "darkorange3", "darkorange4", "orchid", "slateblue1", "slateblue4", "palegreen", "turquoise1", "turquoise4")
+names(fulltrt_cols ) <- levels(xdat$fulltrt)
+
+# plot arrows, sites, and spp separately
+ggplot(gllvm_ordrr_scores$sites) +
+  geom_point( aes(CLV1, CLV2, col = fulltrt, shape = paste(herbicide, seedtrt)), size = 3) +
+  geom_segment(data = gllvm_ordrr_scores$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  scale_color_manual(values = fulltrt_cols) +
+  ggrepel::geom_text_repel(data = gllvm_ordrr_scores$varscores, aes(x = CLV1, y = CLV2, label = plot_label)) +
+  #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp)) +
+  scale_shape_manual(values = c(16, 10, 15, 12))
+
+ggplot(gllvm_ordc_scores$sites) +
+  geom_hline(aes(yintercept =  0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept =  0), lty = 2, col = "grey") +
+  # geom_jitter( aes(CLV1, CLV2, col = fulltrt, shape = paste(herbicide, seedtrt)), width = 0, size = 3) +
+  geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari),
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  #scale_color_manual(values = fulltrt_cols) +
+  #scale_shape_manual(values = c(16, 10, 15, 12)) +
+  ggrepel::geom_text_repel(data = gllvm_ordc_scores$varscores, aes(x = CLV1, y = CLV2, label = plot_label))  +
+  #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp))
+  
+  ggplot(gllvm_ordc_scores$sites) +
+  geom_hline(aes(yintercept =  0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept =  0), lty = 2, col = "grey") +
+  geom_jitter( aes(CLV1, CLV2, col = fulltrt, shape = paste(herbicide, seedtrt)), width = 0, size = 3) +
+  # geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV3, y = 0, yend = CLV4, group = vari), 
+  #              arrow = arrow(length = unit(0.25, "cm"))) +
+  scale_color_manual(values = fulltrt_cols) +
+  scale_shape_manual(values = c(16, 10, 15, 12)) +
+  # ggrepel::geom_text_repel(data = gllvm_ordc_scores$varscores, aes(x = CLV3, y = CLV4, label = plot_label)) 
+  #geom_text(data = subset(gllvm_ordc_scores$spp, !grepl("NativeGrass", spp)), aes(CLV1, CLV2, label = spp))
+  
+  ggplot(gllvm_ordrr_scores$sites) +
+  geom_hline(aes(yintercept =  0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept =  0), lty = 2, col = "grey") +
+  geom_point(data = subset(gllvm_ordrr_scores$spp), aes(CLV1, CLV2)) + 
+  ggrepel::geom_text_repel(data = subset(gllvm_ordrr_scores$spp), aes(CLV1, CLV2, label = spp), max.overlaps = 20)
+
+
+ggplot(gllvm_ordrr_scores$sites) +
+  geom_hline(aes(yintercept =  0), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept =  0), lty = 2, col = "grey") +
+  geom_jitter( aes(CLV1, CLV2, col = fulltrt, shape = paste(herbicide, seedtrt)), width = 0.05, height = .05, size = 3) +
+  # geom_segment(data = gllvm_ordc_scores$varscores, aes(x = 0, xend = CLV3, y = 0, yend = CLV4, group = vari), 
+  #              arrow = arrow(length = unit(0.25, "cm"))) +
+  scale_color_manual(values = fulltrt_cols) +
+  scale_shape_manual(values = c(16, 10, 15, 12)) +
+  facet_grid(ppt_trt ~ nut_trt) +
+  theme_ctw()
+
 # -- SEEDED ONLY -----
 sDesign_seeded$hillpos <- ifelse(sDesign_seeded$block %in% c(1,2), "downhill", "uphill")
+# check distribution of species again (out of 70 plots)
+sort(sapply(ydat_count_seeded, function(x) sum(x>0))) # lump anything present in fewer than 7 plots. lump hypochaeris (into group that has greater count)
+# > note: APOC is noted in trait dataset as exotic and it is native
+# > drop exotic grass since not present enough
+ydat_count_seeded_common <- ydat_count_seeded
+# add HYGL counts to HYRA
+# add CAPY, LASE to ExoticForbNFix
+# add APOC to NativeForbNFix
+#ydat_count_seeded_common$Hypochaeris <- ydat_count_seeded_common$HYGL + ydat_count_seeded_common$HYRA
+ydat_count_seeded_common$NativeForbNfix <- with(ydat_count_seeded_common, NativeForbNfix + APOC)
+ydat_count_seeded_common$ExoticForbNfix <- with(ydat_count_seeded_common, ExoticForbNfix + LASE + CAPY + HYRA + HYGL)
+ydat_count_seeded_common <- dplyr::select(ydat_count_seeded_common, -c(CAPY, LASE, APOC, HYRA, HYGL, ExoticGrass))
+sort(sapply(ydat_count_seeded_common, function(x) sum(x>0))) # looks okay
+
+# -- unconstrained species ordination -----
+gllvm_seeded_unconstrained <- gllvm(y = ydat_count_seeded_common,#[!grepl("Hypo", names(ydat_count_seeded_common))],
+                                    #X = xdat_seeded, 
+                                    family = "negative.binomial", 
+                                    #num.lv.c = 2,
+                                    num.lv = 4, 
+                                    #lv.formula = ~ herbicide * (nut_trt + ppt_trt),
+                                    # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                                    # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                                    # studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                                    # row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                                    seed = myseed)
+
+summary(gllvm_seeded_unconstrained)
+ordiplot(gllvm_seeded_unconstrained, biplot = T, symbols = T)
+
+# -- constrained ordination ------
 # purpose: within the restored plots
 # > what is the effect of treatment on native and neighbor abundances?
-gllvm_seeded_ord <- gllvm(y = ydat_count_seeded,
-                          X = xdat_seeded, 
-                          family = "negative.binomial", 
-                          #reltol.c = 1e-15,
-                          #starting.val = "zero",
-                          num.lv.c = 2,
-                          #num.RR = 1, 
-                          #lv.formula = ~ block,
-                          lv.formula = ~ herbicide * (nut_trt + ppt_trt),
-                          #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
-                          # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
-                          # nest subplot if can, but block/wholeplot captures most of the nested similarity
-                          studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                          row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
-                          seed = myseed)
-par(mfrow = c(1,1))
-gllvm::ordiplot(gllvm_seeded, jitter = T, biplot = T)
-summary(gllvm_seeded)
-coefplot(gllvm_seeded, which = 1:8, mfrow = c(2,4))
+gllvm_seeded_r.lv2 <- gllvm(y = ydat_count_seeded_common,#[!grepl("Hypo", names(ydat_count_seeded_common))],
+                            X = xdat_seeded, 
+                            family = "negative.binomial", 
+                            #num.lv.c = 2,
+                            num.RR = 2, 
+                            lv.formula = ~ herbicide * (nut_trt + ppt_trt),
+                            # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                            # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                            studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                            row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                            seed = myseed)
+
+# try 3 axes
+gllvm_seeded_r.lv3 <- update(gllvm_seeded_r.lv2, num.RR = 3)
+gllvm_seeded_r.lv4 <- update(gllvm_seeded_r.lv2, num.RR = 4)
+AICc(gllvm_seeded_r.lv2, gllvm_seeded_r.lv3, gllvm_seeded_r.lv4) # two seems best but 3 ok
+#[1] 7463.544 7487.065 7530.632 # with hypochaeris
+# 7385.271 7406.619 7441.368 without hypochaeris
+# [1] 7417.701 7439.855 7472.930 # with hypochaeris added to exotic forbs
+lmtest::lrtest(gllvm_seeded_r.lv2, gllvm_seeded_r.lv3, gllvm_seeded_r.lv4) # 3 axes different (but not sure what test is doing w/out predictors)
+par(mfrow = c(1,3))
+lapply(list(gllvm_seeded_r.lv2, gllvm_seeded_r.lv3, gllvm_seeded_r.lv4), function(x) ordiplot(x, jitter = T, symbols = T, biplot = T))
+# not 4 axes
+ordiplot(gllvm_seeded_r.lv2, which = c(1,2), jitter = T, symbols = T, biplot = T)
+ordiplot(gllvm_seeded_r.lv3, which = c(1,2), jitter = T, symbols = T, biplot = T)
+ordiplot(gllvm_seeded_r.lv3, which = c(2,3), jitter = T, symbols = T, biplot = T)
+# 3 axes, without hypochaeris, seems best
+par(mfrow = c(1,2))
+lapply(list(gllvm_seeded_r.lv2, gllvm_seeded_r.lv3), function(x) plotVarPartitioning(varPartitioning(x)))
+# 3 axes seems best
+coefplot(gllvm_seeded_r.lv3, which = 1:9, mfrow = c(2,5))
+par(mfrow = c(2,3))
+plot(gllvm_seeded_r.lv3)
 dev.off()
-plotVarPartitioning(varPartitioning(gllvm_seeded), mar = c(10,10,10,10), las = 2,
+plotVarPartitioning(varPartitioning(gllvm_seeded_r.lv3), mar = c(10,10,10,10), las = 2,
+                    adj = 0.25,
+                    xlab = "", main = "",
+                    args.legend = list(horiz = F, cex = 0.75, xjust = 0.9, yjust = -0.2),
                     col = palette(hcl.colors(10, "Roma")))
-plot(gllvm_seeded)
-corrplot::corrplot(getResidualCor(gllvm_seeded), is.corr = F, type = "lower",diag = F,
-                   order = "hclust", method = "color")
-corrplot::corrplot(getResidualCov(gllvm_seeded)$cov, is.corr = F, type = "lower",diag = F,
-                   order = "hclust", method = "color")
 
 
+
+# informed ordination
+gllvm_seeded_c.lv2 <- gllvm(y = ydat_count_seeded_common,#[!grepl("Hypo", names(ydat_count_seeded_common))],
+                            X = xdat_seeded, 
+                            family = "negative.binomial", 
+                            num.lv.c = 2,
+                            #num.RR = 2, 
+                            lv.formula = ~ herbicide * (nut_trt + ppt_trt),
+                            # formula = as.formula(~ herbicide + seedtrt), # if have seeedtrt and 3 latent vars, have zero in covar matrix
+                            # nest subplot if can, but block/wholeplot captures most of the nested similarity
+                            studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
+                            row.eff = ~ (1|block/wholeplotID), # with subplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                            seed = myseed)
+
+ordiplot(gllvm_seeded_c.lv2, biplot = T)
+
+gllvm_seeded_c.lv3 <- update(gllvm_seeded_c.lv2, num.lv.c = 3) # does not like 3 with lv.formula ("canoncial coeffs are not orthogonal")
+gllvm_seeded_c.lv3_mod0 <- update(gllvm_seeded_c.lv2,  lv.formula = ~ herbicide + nut_trt + ppt_trt, num.lv.c = 3) # did not converge with 3
+gllvm_seeded_c.lv4_mod0 <- update(gllvm_seeded_c.lv2,  lv.formula = ~ herbicide + nut_trt + ppt_trt, num.lv.c = 4)
+gllvm_seeded_c.lv4_mod2 <- update(gllvm_seeded_c.lv2,  lv.formula = ~ herbicide + nut_trt * ppt_trt, num.lv.c = 4)
+gllvm_seeded_c.lv2_mod2 <- update(gllvm_seeded_c.lv2,  lv.formula = ~ herbicide + nut_trt * ppt_trt)
+
+par(mfrow = c(2,2))
+ordiplot(gllvm_seeded_c.lv4_mod0, biplot = T, which = c(1,2))
+ordiplot(gllvm_seeded_c.lv4_mod0, biplot = T, which = c(2,3))
+ordiplot(gllvm_seeded_c.lv4_mod0, biplot = T, which = c(3,4)) # odd how species separate from site so much
+ordiplot(gllvm_seeded_c.lv4_mod0, biplot = T, which = c(1,4))
+# additive model but with 2 lvs
+gllvm_seeded_c.lv2_mod0 <- update(gllvm_seeded_c.lv2,  lv.formula = ~ herbicide + nut_trt + ppt_trt)
+ordiplot(gllvm_seeded_c.lv2_mod0)
+AIC(gllvm_seeded_c.lv2_mod0) # additive better than mod with interaction (lower AIC: 7318.321)
+AIC(gllvm_seeded_c.lv2) # AIC 7328.315
+AIC(gllvm_seeded_c.lv4_mod0) # 4 lvs better than 2, AIC: 7305.585
+summary(gllvm_seeded_c.lv4_mod0)
+summary(gllvm_seeded_c.lv2_mod0)
+summary(gllvm_seeded_c.lv4_mod2)
+summary(gllvm_seeded_c.lv2_mod2)
+AIC(gllvm_seeded_c.lv2_mod2) # 7314.922 worse
+AIC(gllvm_seeded_c.lv4_mod2) # 7370.138 worst
+
+
+
+
+# ---- variables as predictors ---------
 glmod0 <- as.formula(~ herbicide + nut_trt + ppt_trt)
 glmod1 <- as.formula(~ herbicide * (nut_trt + ppt_trt))
 glmod2 <- as.formula(~ herbicide + (nut_trt * ppt_trt))
 glmod3 <- as.formula(~ herbicide * ppt_trt + nut_trt)
 glmod4 <- as.formula(~ herbicide * nut_trt + ppt_trt)
 glmod5 <- as.formula(~ herbicide * nut_trt * ppt_trt)
+glmod6 <- as.formula(~ herbicide * ppt_trt + (nut_trt * ppt_trt))
 
 # test best lv for seeded dat mods
-bestlv(y = ydat_count_seeded, X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod2)
+bestlv(y = ydat_count_seeded_common, lvform = NA, X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod2)
 #    1        2        3        4 
-# 7783.786 7876.785 7982.025 8164.347
-# > 1 lv is a little better for mod 2
-bestlv(y = ydat_count_seeded,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod0)
+# 7783.786 7876.785 7982.025 8164.347 # with less common spp
+# 7499.236 7571.034 7653.345 7834.354 # with common only
+# > 1 lv is best
+bestlv(y = ydat_count_seeded_common,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod1)
+#     1        2        3        4 
+# 7526.828 7596.674 7675.429 7760.961 
+# > 1 best
+bestlv(y = ydat_count_seeded_common,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod0)
 #    1        2        3        4 
-# 7608.197 7680.600 7771.695 7845.798 
+# 7608.197 7680.600 7771.695 7845.798 # with less common spp
+# 7409.269 7468.211 7536.093 7850.801 
 # > 1 lv is best for simple additive model
-bestlv(y = ydat_count_seeded,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod5)
+bestlv(y = ydat_count_seeded_common,  X = xdat_seeded, numseq = 1:4, smat = sDesign_seeded, yform = glmod5)
 #    1        2        3        4 
-# 8451.329 8585.101 8725.222 8864.909 
+# 8451.329 8585.101 8725.222 8864.909 # with less common spp
+# 8026.290 8129.948 8243.309 8364.310 # with common only
 # > 1 lv by far
 
 
-gllvm_seeded_mod0 <- gllvm(y = ydat_count_seeded, #[!names(ydat_count_seeded) %in% c("HYRA", "CAPY", "APOC", "AICA", "HYGL", "LASE", "ExoticGrass")],
+# additive model only
+gllvm_seeded_mod0 <- gllvm(y = ydat_count_seeded_common,
                            X = xdat_seeded, 
                            family = "negative.binomial",
                            num.lv = 1,
                            formula = glmod0,
-                           #gradient.check = T,
-                           #control = list(reltol = 1e-15, reltol.c = 1e-15),
-                           #lv.formula  = as.formula( ~ herbicide +  nut_trt * ppt_trt),
                            # nest subplot if can, but block/wholeplot captures most of the nested similarity
                            studyDesign = sDesign_seeded[c("block", "wholeplotID", "subplotID")], 
-                           row.eff = ~ (1|block/wholeplotID), # with wholeplot throws singular fit error, also throws error with wholeplotID nested [if have 3 lvs]
+                           row.eff = ~ (1|block/wholeplotID),
                            seed = myseed)
+# herb interacts with each env
 gllvm_seeded_mod1 <- update(gllvm_seeded_mod0, formula = glmod1)
+# hypothesis model
 gllvm_seeded_mod2 <- update(gllvm_seeded_mod0, formula = glmod2)
+# herb x ppt
 gllvm_seeded_mod3 <- update(gllvm_seeded_mod0, formula = glmod3)
+# herb x nut
 gllvm_seeded_mod4 <- update(gllvm_seeded_mod0, formula = glmod4)
+# interactions between all
 gllvm_seeded_mod5 <- update(gllvm_seeded_mod0, formula = glmod5)
+# env interaction and interaction btwn herbicide and ppt
+gllvm_seeded_mod6 <- update(gllvm_seeded_mod0, formula = glmod6)
 
-
-summary(gllvm_seeded_mod0)
-coefplot(gllvm_seeded_mod0, xlim.list = rep(list(c(-5,5)),5))
-coefplot(gllvm_seeded_mod0_within, xlim.list = rep(list(c(-5,5)),5)) # no difference for correlation within
+# compare models
+AIC(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6)
+# df      AIC
+# gllvm_seeded_mod0 242 7302.798
+# gllvm_seeded_mod1 362 7375.526
+# gllvm_seeded_mod2 362 7347.933
+# gllvm_seeded_mod3 302 7332.909
+# gllvm_seeded_mod4 302 7343.230
+# gllvm_seeded_mod5 602 7541.312
+# gllvm_seeded_mod6 422 7380.426
+# > suggests mod 0, 3, 4, 2, then 1. not 5.6 is not too much worse than mod 1
+AICc(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6)
+# [1] 7366.133 7526.828 7499.236 7434.752 7445.073 8026.290 7593.314
+# > mods 0, 3, 4, 2 should consider. this suggests 0 best ITO AIC penality for small sample size
+lmtest::lrtest(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2,
+               gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod6, gllvm_seeded_mod5) # they are all different
+# compare non-additive model
+lmtest::lrtest(gllvm_seeded_mod1, gllvm_seeded_mod2,
+               gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod6, gllvm_seeded_mod5) # they are all different from 
 anova(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2,
-      gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
-# > models with herb x ppt, and herb x (ppt + nut) are better. mod1 and mod3
-anova(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod3, gllvm_seeded_mod5)
-anova(gllvm_seeded_mod1, gllvm_seeded_mod3) # 3 is not necessarily better than 1
-
-par(mfrow= c(2,3))
+      gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6)
+# this suggests models 3, 1, and 6 are different. 5 marginal
+anova(gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod3, gllvm_seeded_mod6) # 3 is not necessarily better than 1
+# mod 6 is maybe
+dev.off()
+par(mfrow= c(2,4))
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =1))
-# > mods 1,2,4 are most on the line, but 4 has high AIC; mod 5 resids are clumped
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6), function(x) plot(x, which =1))
+plot.new()
+# > mods 1,2,3 are most on the line; mod 5 resids are clumped
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =2))
-# > mods 0, 1, 2, 3 seems better, in that order
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5,gllvm_seeded_mod6), function(x) plot(x, which =2))
+plot.new()
+# > mods 0, 3, 2, 1 seems okay
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =3))
-# > mod 1 has smaller resid, is consistent with mixed mod formula
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6), function(x) plot(x, which =3))
+plot.new()
+# > residuals all look pretty okay, mod 3 has more equal residual range
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =4))
-# mod 2 seems best
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6), function(x) plot(x, which =4))
+plot.new()
+# 1-3 good. mod 1 might have smaller range overall
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) plot(x, which =5))
-# pretty comparable
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6), function(x) plot(x, which =5))
+plot.new()
+# mods 0, 1, 3
 lapply(list(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, 
-            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5), function(x) ordiplot(x, symbols = T, biplot = T))
+            gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6), function(x) ordiplot(x, symbols = T, biplot = T))
 
 # compare other distributions for mod 2 to be sure
 gllvm_seeded_mod2zinb <- update(gllvm_seeded_mod2,family = "ZINB")
-gllvm_seeded_mod2zip <- update(gllvm_seeded_mod2,family = "ZIP") # does not like zip
+gllvm_seeded_mod2zip <- update(gllvm_seeded_mod2,family = "ZIP")
 # plot to compare
 par(mfrow = c(2,3))
 lapply(list(gllvm_seeded_mod2, gllvm_seeded_mod2zinb, gllvm_seeded_mod2zip), function(x) plot(x, which = c(1,2)))
-# poisson is not good
+# not zip model; QQ plot is more in line with zinb but there is a trend in residuals
 par(mfrow = c(2,2))
 lapply(list(gllvm_seeded_mod2, gllvm_seeded_mod2zinb), function(x) plot(x, which = c(3,4)))
-# not sure zero infl is an improvement enough over nb, which is consistent with results elsewhere
+# zero infl is an improvement enough over nb, which is consistent with results elsewhere
 par(mfrow = c(1,1))
 
-# plot predicted vs observed to gauge how well fits data
-# functions to grab predictions and residuals
-getgll_predred <- function(mod){
-  preds <- data.frame(predict.gllvm(mod))
-  preds <- cbind(rowid = rownames(mod$data), preds) %>%
-    data.frame() %>%
-    gather(spp, pred, 2:ncol(.)) %>%
-    mutate(pred_exp = round(exp(pred),4))
-  modat <- mod$data %>%
-    rownames_to_column("rowid") %>%
-    gather(spp, count, grep("[A-Z]{4}|Forb|Grass", names(.)))
-  modres <- data.frame(resid(mod)[["residuals"]]) %>%
-    rownames_to_column("rowid") %>%
-    gather(spp, res, grep("[A-Z]{4}|Grass|Forb", names(.)))
-  
-  # put it all together
-  alltog <- left_join(modat, preds) %>%
-    left_join(modres) %>%
-    mutate(diff_ctpred = count - pred_exp)
-  return(alltog)
-}
+
+#creating 2lv mods here so code runs (originally below)
+gllvm_seeded_mod0.2lv <- update(gllvm_seeded_mod0, num.lv = 2)
+gllvm_seeded_mod1.2lv <- update(gllvm_seeded_mod1, num.lv = 2)
+gllvm_seeded_mod2.2lv <- update(gllvm_seeded_mod2, num.lv = 2)
+gllvm_seeded_mod3.2lv <- update(gllvm_seeded_mod3, num.lv = 2)
+gllvm_seeded_mod6.2lv <- update(gllvm_seeded_mod6, num.lv = 2)
 
 # get predictions and residuals for all models in consideration
 # > note_ mod 4 has high AIC
 predred_mod0nb <- getgll_predred(gllvm_seeded_mod0)
 predred_mod1nb <- getgll_predred(gllvm_seeded_mod1)
+predred_mod1nb.2lv <- getgll_predred(gllvm_seeded_mod1.2lv)
 predred_mod2nb <- getgll_predred(gllvm_seeded_mod2)
 predred_mod2zinb <- getgll_predred(gllvm_seeded_mod2zinb)
+predred_mod2nb.2lv <- getgll_predred(gllvm_seeded_mod2.2lv)
 predred_mod3nb <- getgll_predred(gllvm_seeded_mod3)
 predred_mod4nb <- getgll_predred(gllvm_seeded_mod4)
 predred_mod5nb <- getgll_predred(gllvm_seeded_mod5)
+predred_mod6nb <- getgll_predred(gllvm_seeded_mod6)
+predred_mod6nb.2lv <- getgll_predred(gllvm_seeded_mod6.2lv)
 
 
 # join then plot
 alltog_predred <- rbind(cbind(predred_mod0nb, mod = "mod0"),
                         cbind(predred_mod1nb, mod = "mod1"),
+                        cbind(predred_mod1nb.2lv, mod = "mod1.2lv"),
                         cbind(predred_mod2nb, mod = "mod2"),
                         cbind(predred_mod2zinb, mod = "mod2 zinb"),
+                        cbind(predred_mod2nb.2lv, mod = "mod2.2lv"),
                         cbind(predred_mod3nb, mod = "mod3"),
                         cbind(predred_mod4nb, mod = "mod4"),
-                        cbind(predred_mod5nb, mod = "mod5"))
+                        cbind(predred_mod5nb, mod = "mod5"),
+                        cbind(predred_mod6nb, mod = "mod6"),
+                        cbind(predred_mod6nb.2lv, mod = "mod6.2lv"))
 
 ggplot(alltog_predred, aes(spp, res, group = spp)) +
   #geom_boxplot(width = 0.25) +
@@ -1458,7 +1890,7 @@ ggplot(subset(alltog_predred, !grepl("zinb", mod)), aes(spp, pred_exp, group = s
   coord_flip() +
   facet_wrap(~mod) +
   theme_ctw()
-# > mod 4 looks better here (these are average predictions though)
+# > mod 3 might be best?, mod 1 maybe better overall
 
 # plot observations and predictions for all plots: data points
 ggplot(alltog_predred, aes(spp, pred_exp, group = spp)) +
@@ -1470,19 +1902,23 @@ ggplot(alltog_predred, aes(spp, pred_exp, group = spp)) +
   coord_flip() +
   facet_wrap(~mod) +
   theme_ctw()
-# > mod 4 actually looks best ITO not overpredicting high abundance spp
-# > mod2 zinb outlier predicted val is even further awayy
+# 2 or 3
 
 # plot difference
 ggplot(subset(alltog_predred, !grepl("zinb", mod)), aes(spp, diff_ctpred, group = spp)) +
   geom_boxplot(width = 0.25) +
-  geom_point(aes(col = spp %in% nats)) +
+  geom_point(aes(col = spp %in% nats), position = position_nudge(x = - 0.5)) +
   geom_hline(aes(yintercept = 0)) +
   coord_flip() +
   facet_wrap(~mod, scales = "free_x") +
   theme_ctw()
-# mod 4 has lowest resid range. look at overall mean error
-sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) mean(abs(x)))
+# look at overall mean error
+sort(sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) mean(abs(x)))) 
+# mean pulls mod 2 error greater than mod 1 and 3
+sort(sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) median(abs(x)))) 
+# median error lower for mod 2
+# mod 6 has relative lower error in mean and median
+
 # group it by spp to compare
 sppdiffs <- group_by(alltog_predred, spp, mod) %>%
   reframe(mean_absdiff = mean(abs(diff_ctpred)),
@@ -1496,20 +1932,20 @@ ggplot(sppdiffs, aes(spp, rankmean, fill = mod)) +
   geom_col(color = "black") +
   coord_flip()
 # > mod 5 is best for most BUT not for abundant spp. mod 1 and 2 aren't terrible
-# FEMI: mod3 best, then mod 1 then mod 5
-# BRCA: mod 5, then 1 then 4
-# ESCA: mod 5, then 4, then 1
+# FEMI: mod 1 best, then mod 5, 6, then mod 3
+# BRCA: mod 5, then 6, 2, then 3 (ignore zinb)
+# ESCA: mod 5, then 6, 4, then 1
 # NEMA: mod 5, then mod2 zinb, then mod 2
 # > mod 5 is what comes up most conssitently
 ggplot(subset(sppdiffs, !grepl("zinb",mod)), aes(spp, mean_absdiff, fill = mod)) +
-  geom_point(pch = 21, size = 5, alpha = .75) +
+  geom_jitter(pch = 21, size = 5, width = 0.2, height = 0.1, alpha = .75) +
   coord_flip() +
   scale_fill_brewer(palette = "Spectral") +
   facet_wrap(~spp %in% nats) +
   theme_ctw()
-# > mod 5 has the lowest prediction error
+# > mod 6 is relatively low
 ggplot(subset(sppdiffs, !grepl("zinb",mod)), aes(spp, med_absdiff, fill = mod)) +
-  geom_point(pch = 21, size = 5, alpha = .75) +
+  geom_jitter(pch = 21, size = 5, width = 0.2, height = 0.1, alpha = .75) +
   coord_flip() +
   scale_fill_brewer(palette = "Spectral") +
   facet_wrap(~spp %in% nats) +
@@ -1517,10 +1953,10 @@ ggplot(subset(sppdiffs, !grepl("zinb",mod)), aes(spp, med_absdiff, fill = mod)) 
 
 # rmspe
 sort(sapply(split(alltog_predred$diff_ctpred, alltog_predred$mod), function(x) mean(sqrt(x^2))))
-# > mod 5 has lowest error, followed by 1, 3
+# > mod 5 has lowest error, followed by 1, 3 (but big outliers in residuals pull those up)
 
 AIC(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zinb,
-    gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
+    gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5, gllvm_seeded_mod6)
 # mod 0, then 2
 AICc(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zinb,
      gllvm_seeded_mod3, gllvm_seeded_mod4, gllvm_seeded_mod5)
@@ -1530,34 +1966,789 @@ BIC(gllvm_seeded_mod0, gllvm_seeded_mod1, gllvm_seeded_mod2, gllvm_seeded_mod2zi
 # mod 0 then 3, 4
 
 # plot coefficients
-listx <- list(c(-10,10))
+listx <- list(c(-20,20))
 coefplot(gllvm_seeded_mod0, mfrow = c(2,3), cex.ylab = 1, xlim.list = rep(listx, 6))
-coefplot(gllvm_seeded_mod1, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(listx, 10))
-coefplot(gllvm_seeded_mod2, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(listx, 10))
+coefplot(gllvm_seeded_mod1, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(list(c(-30,30)), 10))
+coefplot(gllvm_seeded_mod2, mfrow = c(2,5), cex.ylab = 1, xlim.list = rep(list(c(-30,30)), 10))
 coefplot(gllvm_seeded_mod3, mfrow = c(2,4), cex.ylab = 1, xlim.list = rep(list(c(-20,20)), 8))
 coefplot(gllvm_seeded_mod4, mfrow = c(2,4), cex.ylab = 1, xlim.list = rep(listx, 8))
 coefplot(gllvm_seeded_mod5, mfrow = c(3,7), cex.ylab = 1, xlim.list = rep(list(c(-20,20)), 21))
+coefplot(gllvm_seeded_mod6, mfrow = c(2,6), cex.ylab = 1, xlim.list = rep(list(c(-30,30)), 12))
 
 
 # plot variance
-par(mfrow = c(2,2))
+par(mfrow = c(2,3))
 plotVarPartitioning(varPartitioning(gllvm_seeded_mod0), mar = c(8,3,5,1), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
 plotVarPartitioning(varPartitioning(gllvm_seeded_mod1), mar = c(8,3,5,1), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
 plotVarPartitioning(varPartitioning(gllvm_seeded_mod2), mar = c(8,3,5,1), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod3), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod4), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
 plotVarPartitioning(varPartitioning(gllvm_seeded_mod5), mar = c(8,3,5,1), las = 2,
                     col = palette(hcl.colors(10, "Roma")))
 
+par(mfrow = c(1,1))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod6), mar = c(8,3,5,1), las = 2,
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod1), mar = c(8,3,10,1), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.4),
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod2), mar = c(8,3,10,1), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.4),
+                    col = palette(hcl.colors(10, "Roma")))
+dev.off()
+
+
+# try with two 2lvs for biplot
+gllvm_seeded_mod2.2lv <- update(gllvm_seeded_mod2, num.lv = 2)
+gllvm_seeded_mod1.2lv <- update(gllvm_seeded_mod1, num.lv = 2)
+gllvm_seeded_mod6.2lv <- update(gllvm_seeded_mod6, num.lv = 2)
+par(mfrow = c(1,3))
+ordiplot(gllvm_seeded_mod2.2lv, biplot = T, symbols = T)
+ordiplot(gllvm_seeded_mod1.2lv, biplot = T, symbols = T) # pretty similar
+ordiplot(gllvm_seeded_mod6.2lv, biplot = T, symbols = T) # pretty similar
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod2.2lv), mar = c(8,3,10,1), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.4),
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod1.2lv), mar = c(8,3,10,1), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.4),
+                    col = palette(hcl.colors(10, "Roma")))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod6.2lv), mar = c(8,3,10,1), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 0.75, xjust = 1, yjust = -0.4),
+                    col = palette(hcl.colors(10, "Roma")))
+
+names(summary(gllvm_seeded_mod6.2lv))$Call
+summary(gllvm_seeded_mod6.2lv)$Call
+logLik.gllvm(gllvm_seeded_mod0)
+
+# pull model performance stats
+get_gllvmstats <- function(mod){
+  tempstats <- data.frame(summary(mod)[c("family", "AIC", "AICc", "BIC", "log-likelihood", "df", "num.lv")])
+  tempstats$formula <- as.character(mod$formula)[2]
+  tempstats$row.eff <- as.character(mod$row.eff)[2]
+  tempstats$sigma.lv1 <- summary(mod)$sigma.lv[1]
+  if(unique(tempstats$num.lv) == 1){
+    tempstats$sigma.lv2 <- NA
+  }else{
+    tempstats$sigma.lv2 <- summary(mod)$sigma.lv[2]
+  }
+  # rearrange cols
+  tempstats <- dplyr::select(tempstats, family, formula, row.eff, AIC:num.lv, sigma.lv1, sigma.lv2)
+  return(tempstats)
+}
+
+# notes mods in the environment to summarize
+seedmods <- ls()[grep("gllvm_seeded_mod[0-9]",ls())]
+gllvm_seeded_modstats <- data.frame()
+for(i in seedmods){
+  mod <- get(i)
+  gllvm_seeded_modstats <- rbind(gllvm_seeded_modstats, cbind(mod = i, get_gllvmstats(mod)))
+}
+
+# add prediction error to model stats
+sppdiff_sum <- group_by(sppdiffs, mod) %>%
+  reframe(rmspe = mean(mean_absdiff),
+          median_abserror = median(med_absdiff))
+
+
+# -- FINAL GLLVM FIGS -----
+# order spp by their fxnl grps
+sppfac <- data.frame(spp = names(ydat_count_seeded_common)) %>%
+  left_join(spplist[c("code4", "species", "fxnl_grp", "nativity")], by = c("spp" = "code4")) %>%
+  mutate(nativity = gsub("Exotic", "Non-native", nativity),
+         grp = paste(nativity, fxnl_grp),
+         grp = ifelse(spp == "NativeForbNfix", "Native Forb/Nfix",
+                      ifelse(spp == "ExoticForbNfix", "Non-native Forb/Nfix", grp)),
+         grp2 = ifelse(spp %in% nats, "Native seeded", 
+                       gsub("Forb/Nfix", "Forb", grp)),
+         species = ifelse(is.na(species), grp, species),
+         species = gsub("fix", "-fixer", species),
+         sppcol = "orchid4")
+# manually assign colors
+sppfac$sppcol[sppfac$grp2 == "Non-native Grass"] <- "seagreen4"
+sppfac$sppcol[sppfac$grp2 == "Non-native N-Fixer"] <- "chocolate3"
+sppfac$sppcol[sppfac$grp2 == "Native Forb"] <- "purple2"
+sppfac$sppcol[sppfac$grp == "Native Grass"] <- "chartreuse3"
+sppfac <- mutate(sppfac, grp3 = ifelse(spp %in% c("ESCA", "NEMA"), "Native Forb (seeded)",
+                                       ifelse(spp %in% c("BRCA", "FEMI"), "Native Grass (seeded)", 
+                                              gsub("Forb/Nfix", "Forb", grp))))
+fxnltargcols <- c("orchid4", "seagreen4", "chocolate3", "seagreen1", "orchid1", "chartreuse3", "purple2")
+
+# go with mod 2 with 2 lv
+
+# -- variance partition plot ----
+
+# make variance plot with spp x sorted by functional group
+
+modvp <- varPartitioning(gllvm_seeded_mod2.2lv)
+modvp_exp <- data.frame(modvp$PropExplainedVarSp) %>%
+  rename_all(function(x) gsub("Random.effect..", "", x)) %>%
+  rownames_to_column("spp") %>%
+  gather(vari, varexp, herbicide:ncol(.)) %>%
+  # set factors
+  mutate(vari = factor(vari, 
+                       levels = c("herbicide", "nut_trt", "ppt_trt", "nut_trt.ppt_trt", "LV1", "LV2", "block", "wholeplotID.block"),
+                       labels = c("herbicide", "soil amendment", "precipitation", "soil:precipitation", "LV1", "LV2", "RE: block", "RE: plot/block"))) %>%
+  # left join functional info
+  left_join(dplyr::select(spplist, code4, fxnl_grp, nativity), by = c("spp" = "code4")) %>%
+  mutate(nativity = gsub("Exotic", "Non-native", nativity),
+         grp = paste(nativity, fxnl_grp),
+         grp = ifelse(spp == "NativeForbNfix", "Native Forb/Nfix",
+                      ifelse(spp == "ExoticForbNfix", "Non-native Forb/Nfix", grp)),
+         grp = ifelse(spp %in% nats, "Seeded", grp),
+         grp = factor(grp, 
+                      level = c("Seeded", "Native Forb", "Native Forb/Nfix", "Non-native Forb", "Non-native Forb/Nfix", "Non-native N-fixer", "Non-native Grass"),
+                      labels = c("Native Seeded", "Native Forb", "", "Non-native Forb", " ", "Non-native N-fixer", "Non-native Grass")),
+  )
+
+# reverse levels of vari so herbicide on bottom
+modvp_exp$vari <- factor(modvp_exp$vari, levels = rev(levels(modvp_exp$vari)))
+
+# get mean variance to include in legend like in gllvm
+meanvar <- group_by(modvp_exp, vari) %>%
+  reframe(meanvar_full = mean(varexp),
+    meanvar = round(mean(varexp),3),
+          medvar = round(median(varexp),3),
+          sevar = round(sd(varexp)/sqrt(length(varexp)), 3))
+
+varleg_labels <- paste0(meanvar$vari, "\n(mean prop:", meanvar$meanvar, " ± ", meanvar$sevar, " se)")
+names(varleg_labels) <- meanvar$vari
+varleg_labels
+# variance plot
+ggplot(modvp_exp, aes(spp, varexp, fill = vari)) +
+  geom_col(col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_fill_brewer(name = NULL, palette = "BrBG", labels = varleg_labels) + #guide = guide_legend(reverse = T)) +
+  facet_grid(~grp, scales = "free", space = "free_x", labeller = label_wrap_gen(width = 10))+
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.key.spacing.y = unit(5, "pt"),
+        axis.title.y = element_text(size = 14),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 12, face = "bold")) +
+  labs(x = NULL, y = "Proportion variance explained")
+
+
+# -- variance for best mod (additive) -----
+
+modvp0 <- varPartitioning(gllvm_seeded_mod0.2lv)
+modvp0_exp <- data.frame(modvp0$PropExplainedVarSp) %>%
+  rename_all(function(x) gsub("Random.effect..", "", x)) %>%
+  rownames_to_column("spp") %>%
+  gather(vari, varexp, herbicide:ncol(.)) %>%
+  # set factors
+  mutate(vari = factor(vari, 
+                       levels = c("herbicide", "nut_trt", "ppt_trt", "nut_trt.ppt_trt", "LV1", "LV2", "block", "wholeplotID.block"),
+                       labels = c("herbicide", "soil amendment", "precipitation", "soil:precipitation", "LV1", "LV2", "RE: block", "RE: plot/block"))) %>%
+  # left join functional info
+  left_join(dplyr::select(spplist, code4, fxnl_grp, nativity), by = c("spp" = "code4")) %>%
+  mutate(nativity = gsub("Exotic", "Non-native", nativity),
+         grp = paste(nativity, fxnl_grp),
+         grp = ifelse(spp == "NativeForbNfix", "Native Forb/Nfix",
+                      ifelse(spp == "ExoticForbNfix", "Non-native Forb/Nfix", grp)),
+         grp = ifelse(spp %in% nats, "Seeded", grp),
+         grp = factor(grp, 
+                      level = c("Seeded", "Native Forb", "Native Forb/Nfix", "Non-native Forb", "Non-native Forb/Nfix", "Non-native N-fixer", "Non-native Grass"),
+                      labels = c("Native Seeded", "Native Forb", "", "Non-native Forb", " ", "Non-native N-fixer", "Non-native Grass")),
+  )
+
+# reverse levels of vari so herbicide on bottom
+modvp0_exp$vari <- factor(modvp0_exp$vari, levels = rev(levels(modvp0_exp$vari)))
+
+# get mean variance to include in legend like in gllvm
+meanvar0 <- group_by(modvp0_exp, vari) %>%
+  reframe(meanvar_full = mean(varexp),
+          meanvar = round(mean(varexp),3),
+          medvar = round(median(varexp),3),
+          sevar = round(sd(varexp)/sqrt(length(varexp)), 3))
+
+varleg0_labels <- paste0(meanvar0$vari, "\n(mean prop:", meanvar0$meanvar, " ± ", meanvar0$sevar, " se)")
+names(varleg0_labels) <- meanvar0$vari
+varleg0_labels
+# variance plot
+ggplot(modvp0_exp, aes(spp, varexp, fill = vari)) +
+  geom_col(col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_fill_brewer(name = NULL, palette = "BrBG", labels = varleg0_labels) + #guide = guide_legend(reverse = T)) +
+  facet_grid(~grp, scales = "free", space = "free_x", labeller = label_wrap_gen(width = 10))+
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.key.spacing.y = unit(5, "pt"),
+        axis.title.y = element_text(size = 14),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 12, face = "bold")) +
+  labs(x = NULL, y = "Proportion variance explained")
+
+
+# -- coeff plot -----
+# plots gllvm_seeded_mod2.lv2 but also grab info from others models to compare
+
+# get coeffs
+get_gllvmcoeffs <- function(mod){ 
+  coefftemp <- data.frame(summary(mod)$Coef.tableX) %>%
+    rownames_to_column("term") %>%
+    # clean up duplicate periods
+    rename_all(function(x) casefold(gsub("[.]+", ".", x))) %>%
+    # remove trailing period
+    rename_all(function(x) gsub("z.", "z", x))
+  intertemp <- data.frame(summary(mod)$Coefficients) %>%
+    rownames_to_column("term") %>%
+    mutate(term = paste0("Intercept.", term)) %>%
+    rename(estimate = Intercept) %>%
+    mutate(std.error = NA, zvalue = NA, pr.z = NA)
+  # add columns to rbind with coefftemp
+  
+  # pull confidence interval
+  conftemp <- data.frame(confint(mod)) %>% # use base R (confint.gllvm does the same)
+    rownames_to_column("term") %>%
+    mutate(term = gsub("Xcoef.", "", term))
+  # clean up colnames
+  names(conftemp) <- gsub("X", "ci", names(conftemp))
+  names(conftemp) <- gsub("5..", "5", names(conftemp))
+  
+  # don't think i care about theta or inv phi so drop those
+  # merge to drop
+  tempcoef <- rbind(intertemp, coefftemp) %>%
+    merge(conftemp) %>%
+    mutate(spp = str_extract(term, "[A-Z]{4}|Native.*|Exotic.*"),
+           term = gsub(":[A-Z]{4}|:Native.*|:Exotic.*", "", term),
+           term = ifelse(grepl("Inter", term), "intercept", term),
+           term = gsub("herbicideHerbicided", "herbicide", term))
+  return(tempcoef)
+}
+
+coefs_mod2seed.2lv <- get_gllvmcoeffs(gllvm_seeded_mod2.2lv)
+coefs_mod6seed.2lv <- get_gllvmcoeffs(gllvm_seeded_mod6.2lv)
+coefs_mod1seed.2lv <- get_gllvmcoeffs(gllvm_seeded_mod1.2lv)
+coefs_mod0seed.2lv <- get_gllvmcoeffs(gllvm_seeded_mod0.2lv)
+coefs_mod1seed <- get_gllvmcoeffs(gllvm_seeded_mod1)
+coefs_mod2seed <- get_gllvmcoeffs(gllvm_seeded_mod2)
+coefs_mod3seed <- get_gllvmcoeffs(gllvm_seeded_mod3)
+
+coefdf <- rbind(cbind(coefs_mod1seed.2lv, mod = "mod1 2lv"),
+                cbind(coefs_mod0seed.2lv, mod = "mod0 2lv"),
+                cbind(coefs_mod2seed.2lv, mod = "mod2 2lv"),
+                cbind(coefs_mod6seed.2lv, mod = "mod6 2lv"),
+                cbind(coefs_mod2seed, mod = "mod2 1lv"),
+                cbind(coefs_mod1seed, mod = "mod1 1lv"),
+                cbind(coefs_mod3seed, mod = "mod3 1lv")) %>%
+  # terms got switched in label for mod 5 (ppt before nut), not sure why. mod formula is correct
+  mutate(term = recode(term, "nut_trtF:ppt_trtW" = "ppt_trtW:nut_trtF", "nut_trtC:ppt_trtW" = "ppt_trtW:nut_trtC", 
+                       "nut_trtF:ppt_trtD" = "ppt_trtD:nut_trtF",  "nut_trtC:ppt_trtD" = "ppt_trtD:nut_trtC"))
+
+ggplot(subset(coefdf, grepl("lv", mod)), aes(spp, estimate)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_line()+
+  geom_point(aes(col = mod, size = (ci2.5 * ci97.5) >0), position = position_dodge(width = 0.5)) +
+  facet_wrap(~term, nrow = 3, scales = "free_x") +
+  coord_flip() +
+  scale_color_brewer(palette = "Paired") +
+  scale_size_discrete(range = c(3,5)) +
+  theme_bw() +
+  theme_ctw()
+
+ggplot(subset(coefdf, spp %in% nats), aes(spp, estimate)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_line()+
+  geom_point(aes(col = mod, size = (ci2.5 * ci97.5) >0), position = position_dodge(width = 0.5)) +
+  facet_wrap(~term, nrow = 3, scales = "free_x") +
+  coord_flip() +
+  scale_color_brewer(palette = "Paired") +
+  scale_size_discrete(range = c(3,5)) +
+  theme_bw() +
+  theme_ctw()
+
+# assign spp factor levels
+coefs_mod2seed.2lv <- left_join(coefs_mod2seed.2lv, sppfac) %>%
+  mutate(spp = as.character(spp))
+
+natforb <- sppfac$spp[sppfac$grp3 == "Native Forb"]
+exoforb <- sppfac$spp[sppfac$grp3 == "Non-native Forb"]
+exonfix <- sppfac$spp[sppfac$grp3 == "Non-native N-fixer"]
+exogram <- sppfac$spp[sppfac$grp3 == "Non-native Grass"]
+coefs_mod2seed.2lv$term <- factor(coefs_mod2seed.2lv$term, levels = c("herbicide", "nut_trtF", "nut_trtC", "ppt_trtD", "ppt_trtW",
+                                                   "nut_trtF:ppt_trtD", "nut_trtF:ppt_trtW", "nut_trtC:ppt_trtD", "nut_trtC:ppt_trtW"))
+
+coefs_mod2seed.2lv$spp <- factor(coefs_mod2seed.2lv$spp, levels = c(c("BRCA", "ESCA", "FEMI", "NEMA"), natforb, exoforb, exonfix, exogram))
+# check levels
+levels(coefs_mod2seed.2lv$spp) # looks good
+coefs_mod2seed.2lv$spp <-factor(coefs_mod2seed.2lv$spp, levels= rev(levels(coefs_mod2seed.2lv$spp)))
+# factor fxnl grps for display
+coefs_mod2seed.2lv$grp3 <- factor(coefs_mod2seed.2lv$grp3, levels = c("Native Forb", "Native Forb (seeded)", "Native Grass (seeded)",
+                                                                      "Non-native Forb", "Non-native N-fixer", "Non-native Grass"))
+
+ggplot(data = subset(coefs_mod2seed.2lv, term != "intercept"), aes(spp, estimate)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_vline(aes(xintercept = (0.5 + length(exogram))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix)))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix, exoforb)))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix, exoforb, natforb)))), lty = 2, col = "grey") +
+  # have to plot points before error bar, otherwise 
+  geom_point(aes(shape = pr.z < 0.05, col = grp3), size = 3) +
+  geom_errorbar(data = subset(coefs_mod2seed.2lv, term != "intercept" & pr.z < 0.05), aes(ymin = ci2.5, ymax = ci97.5), width = 0)+
+  #geom_errorbar(data = subset(coefdf, grepl("mod2 2", mod) & term != "intercept" & pr.z < 0.05), aes(ymin = estimate - std.error, ymax = estimate + std.error), width = 0)+
+  geom_point(aes(shape = pr.z < 0.05, col = grp3), size = 3) +
+  labs(y = "Mean effect (log scale), with 95% CI when p<0.05", x = NULL) +
+  scale_color_manual(name = NULL, values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "orange","chartreuse3")) +
+  #scale_size_discrete(range = c(3,5)) +
+  scale_shape_manual(values = c(1,19)) +
+  coord_flip() +
+  facet_wrap(~term, nrow = 3) +
+  theme_ctw() +
+  theme(axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        strip.text = element_text(size = 14))
+
+
+
+# make best mod coefplot (best was simple mod 0 with 1 lv)
+coefs_mod0seed.2lv <- left_join(coefs_mod0seed.2lv, sppfac) %>%
+  mutate(spp = as.character(spp))
+
+coefs_mod0seed.2lv$term <- factor(coefs_mod0seed.2lv$term, levels = c("herbicide", "nut_trtF", "nut_trtC", "ppt_trtD", "ppt_trtW"),
+                                  labels = c("Herbicide", "Fertilizer", "Compost", "Drought", "Wet"))
+
+coefs_mod0seed.2lv$spp <- factor(coefs_mod0seed.2lv$spp, levels = c(c("BRCA", "ESCA", "FEMI", "NEMA"), natforb, exoforb, exonfix, exogram))
+# check levels
+levels(coefs_mod0seed.2lv$spp) # looks good
+coefs_mod0seed.2lv$spp <-factor(coefs_mod0seed.2lv$spp, levels= rev(levels(coefs_mod0seed.2lv$spp)))
+# factor fxnl grps for display
+coefs_mod0seed.2lv$grp3 <- factor(coefs_mod0seed.2lv$grp3, levels = c("Native Forb", "Native Forb (seeded)", "Native Grass (seeded)",
+                                                                      "Non-native Forb", "Non-native N-fixer", "Non-native Grass"))
+ggplot(data = subset(coefs_mod0seed.2lv, term != "intercept"), aes(spp, estimate)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_vline(aes(xintercept = (0.5 + length(exogram))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix)))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix, exoforb)))), lty = 2, col = "grey") +
+  geom_vline(aes(xintercept = (0.5 + length(c(exogram, exonfix, exoforb, natforb)))), lty = 2, col = "grey") +
+  # have to plot points before error bar, otherwise 
+  geom_point(aes(shape = pr.z < 0.05, col = grp3), size = 3) +
+  geom_errorbar(data = subset(coefs_mod0seed.2lv, term != "intercept" & pr.z < 0.05), aes(ymin = ci2.5, ymax = ci97.5), width = 0)+
+  #geom_errorbar(data = subset(coefdf, grepl("mod2 2", mod) & term != "intercept" & pr.z < 0.05), aes(ymin = estimate - std.error, ymax = estimate + std.error), width = 0)+
+  geom_point(aes(shape = pr.z < 0.05, col = grp3), size = 3) +
+  labs(y = "Mean effect (log scale), with 95% CI when p<0.05", x = NULL) +
+  scale_color_manual(name = "Functional group", values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "orange","chartreuse3")) +
+  #scale_size_discrete(range = c(3,5)) +
+  scale_shape_manual(values = c(1,19)) +
+  coord_flip() +
+  facet_wrap(~term, nrow = 2, scales = "free_x") +
+  theme_ctw() +
+  theme(axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 14),
+        axis.title.x = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 16),
+        strip.text = element_text(size = 14),
+        legend.position = "inside",
+        legend.justification.inside = c("right", "bottom"))
+
+
+# for quick comparison
+par(mfrow = c(3,1))
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod0.2lv), mar = c(8,3,2,19), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 1.2, xjust = 0, yjust = 1),
+                    col = palette(hcl.colors(10, "Roma")))
+title(main = "Variance partitioning: Additive model", cex.main = 2)
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod3.2lv), mar = c(8,3,2,19), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 1.2, xjust = 0, yjust = 1),
+                    col = palette(hcl.colors(10, "Roma")))
+title(main = "Variance partitioning: with herbicide x precipitation interaction", cex.main = 2)
+plotVarPartitioning(varPartitioning(gllvm_seeded_mod2.2lv), mar = c(8,3,2,19), las = 2,
+                    adj = 0.25, xlab = "", main = "",
+                    las = 2, args.legend = list(horiz = F, cex = 1.2, xjust = 0, yjust = 1),
+                    col = palette(hcl.colors(10, "Roma")))
+title(main = "Variance partitioning: with soil x precipitation interaction", cex.main = 2)
+
+
+
+# -- residuals plot ----
+# residual ordination plot
+mod2lv2_loading <- get_loadings(gllvm_seeded_mod2.2lv)
+# join spp info
+mod2lv2_loading$spp <- left_join(mod2lv2_loading$spp, sppfac)
+mod2lv2_loading$sites <- left_join(mod2lv2_loading$sites, rownames_to_column(xdat_seeded, "rowid"))
+
+# panel plot showing sites then spp
+plot_grid(
+  ggplot() +
+    geom_hline(aes(yintercept = 0), lty= 2, col = "grey") +
+    geom_vline(aes(xintercept = 0), lty= 2, col = "grey") +
+    geom_point(data = mod2lv2_loading$sites, aes(LV1, LV2, fill = block), pch = 21, size = 4) +
+    geom_point(data = mod2lv2_loading$spp, aes(LV1, LV2, col = grp), size = 0.5, color = "transparent") +
+    #scale_fill_brewer(name = "Block", palette = "Paired") +
+    scale_fill_manual(name = "Block", values = c("white", "grey80", "grey55", "black")) +
+    theme_ctw() +
+    theme(axis.text = element_text(size = 14), 
+          axis.title =element_text(size = 16),
+          legend.background = element_rect(fill = "transparent"),
+          legend.position = "inside",
+          legend.justification.inside = c(0.01, 0.01),
+          legend.text = element_text(size = 14),
+          legend.title = element_text(size = 14)),
+  ggplot() +
+    geom_hline(aes(yintercept = 0), lty= 2, col = "grey") +
+    geom_vline(aes(xintercept = 0), lty= 2, col = "grey") +
+    geom_point(data = mod2lv2_loading$sites, aes(LV1, LV2), size = 1, color = "transparent") +
+    #geom_point(data = mod2lv2_loading$spp, aes(LV1, LV2), size = 1) +
+    ggrepel::geom_label_repel(data = mod2lv2_loading$spp, aes(LV1, LV2, fill = grp3, label = spp, size = spp %in% nats),
+                              #color = "floralwhite",
+                              min.segment.length = unit(3, "pt"),
+                              # point.padding = unit(3, "pt"), 
+                              max.overlaps = 100,
+                              #label.padding = unit(3, "pt"), 
+                              fontface = "bold"
+                              ) +
+    # ggrepel::geom_text_repel(data = subset(mod2lv2_loading$spp), aes(LV1, LV2, label = spp, size = spp %in% nats), seed = 13, 
+    #                          min.segment.length = unit(10, "pt"),
+    #                          box.padding = unit(5, "pt")) +
+    # scale_fill_brewer(name = "Block", palette = "Paired") +
+    scale_fill_manual(name = NULL, values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "chartreuse3",  "orange")) +
+    scale_size_manual(values = c(`TRUE` = 5, `FALSE`=4), guide = "none") +
+    theme_ctw() +
+    theme(axis.text = element_text(size = 14), 
+          axis.title =element_text(size = 16),
+          legend.key.size = unit(1, "pt"),
+          legend.background = element_rect(fill = "transparent"),
+          legend.position = "inside",
+          legend.justification.inside = c(0.01,0.01),
+          legend.text = element_text(size = 14)),
+  align = "vh", axis = "top", nrow = 2
+)
+
+
+
+
+# alternate point plot
+ggplot() +
+  geom_hline(aes(yintercept = 0), lty= 2, col = "grey") +
+  geom_vline(aes(xintercept = 0), lty= 2, col = "grey") +
+  geom_point(data = mod2lv2_loading$sites, aes(LV1, LV2), size = 1, color = "transparent") +
+  geom_point(data = mod2lv2_loading$spp, aes(LV1, LV2, col = grp3), size = 3) +
+  ggrepel::geom_text_repel(data = subset(mod2lv2_loading$spp), aes(LV1, LV2, label = spp, size = spp %in% nats), seed = 13, 
+                           min.segment.length = unit(10, "pt"),
+                           box.padding = unit(5, "pt")) +
+  scale_fill_brewer(name = "Block", palette = "Paired") +
+  scale_color_manual(name = NULL, values = c("purple2", "orchid4", "seagreen2", "orchid1", "chartreuse3",  "orange")) +
+  scale_size_manual(values = c(`TRUE` = 6, `FALSE`=5), guide = "none") +
+  theme_ctw() +
+  theme(axis.text = element_text(size = 14), 
+        axis.title =element_text(size = 16),
+        legend.key.size = unit(1, "pt"),
+        legend.background = element_rect(fill = "transparent"),
+        legend.position = "inside",
+        legend.justification.inside = c(0.01,0.01),
+        legend.text = element_text(size = 14))
+
+
+# pull residual spp correlation
+# > KNS says just show seeded spp cor
+modrescor_tidy <- getResidualCov(gllvm_seeded_mod2.2lv)$cov %>%
+  data.frame() %>%
+  rownames_to_column("spp") %>%
+  gather(spp_pair, corval, AICA:ncol(.))
+
+ggplot(subset(modrescor_tidy, spp %in% nats), aes(spp_pair, spp, fill = corval)) +
+  geom_tile(col = "black") +
+  scale_fill_distiller(palette = "RdBu", direction = -1) +
+  coord_flip()
+
+modrescor <- getResidualCor(gllvm_seeded_mod2.2lv)
+modrescor <- modrescor[rownames(modrescor) %in% nats,!colnames(modrescor) %in% nats]
+
+modrescov <- getResidualCov(gllvm_seeded_mod2.2lv)$cov
+modrescov <- modrescov[rownames(modrescov) %in% nats,!colnames(modrescov) %in% nats]
+
+library(ComplexHeatmap)
+hmap <- ComplexHeatmap::Heatmap(t(modrescor), row_dend_width = unit(2, "cm"))
+orderspp <- colnames(modrescor)[row_order(draw(hmap))]
+sppfac
+labeltest <- with(subset(sppfac, !spp %in% nats), grp[order(factor(spp, levels = colnames(modrescor)))])
+labeltest <- gsub("Forb/Nfix", "Forb", labeltest)
+coltest <- with(subset(sppfac, !spp %in% nats), sppcol[order(factor(spp, levels = colnames(modrescor)))])
+row_ha <- rowAnnotation(border = T, simple_anno_size = unit(1, "cm"),
+                        annotation_legend_param = list(title_gp = gpar(fontsize = 14),
+                                                       labels_gp = gpar(fontsize = 12)),
+                        Group = labeltest, 
+                        col = list(Group = c("Non-native Forb" = "orchid1", "Non-native N-fixer" = "orange", "Non-native Grass" = "chartreuse3", "Native Grass" = "seagreen1", "Native Forb"= "purple2"))
+)
+Heatmap(t(modrescor), row_dend_width = unit(2, "cm"), name = "Residual correlation", left_annotation = row_ha,
+        border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 2,
+        heatmap_legend_param = list(direction = "horizontal", 
+                                    title_gp = gpar(fontsize = 14),
+                                    labels_gp = gpar(fontsize = 12)))
+
+# repeat for covariance
+Heatmap(t(modrescov), row_dend_width = unit(2, "cm"), name = "Residual covariance", left_annotation = row_ha, 
+        border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 2, 
+        heatmap_legend_param = list(direction = "horizontal", 
+                                    title_gp = gpar(fontsize = 14),
+                                    labels_gp = gpar(fontsize = 12)))
 
 
 
 
 
 
+# --residuals plot with additive model ----
+# residual ordination plot
+mod0lv2_loading <- get_loadings(gllvm_seeded_mod0.2lv)
+# join spp info
+mod0lv2_loading$spp <- left_join(mod0lv2_loading$spp, sppfac)
+mod0lv2_loading$sites <- left_join(mod0lv2_loading$sites, rownames_to_column(xdat_seeded, "rowid"))
+
+# panel plot showing sites then spp
+plot_grid(
+  ggplot() +
+    geom_hline(aes(yintercept = 0), lty= 2, col = "grey") +
+    geom_vline(aes(xintercept = 0), lty= 2, col = "grey") +
+    geom_point(data = mod0lv2_loading$sites, aes(LV1, LV2, fill = block), pch = 21, size = 4) +
+    geom_point(data = mod0lv2_loading$spp, aes(LV1, LV2, col = grp), size = 0.5, color = "transparent") +
+    #scale_fill_brewer(name = "Block", palette = "Paired") +
+    scale_fill_manual(name = "Block", values = c("white", "grey80", "grey55", "black")) +
+    theme_ctw() +
+    theme(axis.text = element_text(size = 14), 
+          axis.title =element_text(size = 16),
+          legend.background = element_rect(fill = "transparent"),
+          legend.position = "inside",
+          legend.justification.inside = c(0.01, 0.01),
+          legend.text = element_text(size = 14),
+          legend.title = element_text(size = 14)),
+  ggplot() +
+    geom_hline(aes(yintercept = 0), lty= 2, col = "grey") +
+    geom_vline(aes(xintercept = 0), lty= 2, col = "grey") +
+    geom_point(data = mod0lv2_loading$sites, aes(LV1, LV2), size = 1, color = "transparent") +
+    #geom_point(data = mod0lv2_loading$spp, aes(LV1, LV2, color = grp3), size = 3) +
+    ggrepel::geom_label_repel(data = mod0lv2_loading$spp, aes(LV1, LV2, label = spp, size = spp %in% nats),seed = 9, fill = "transparent", #alpha = 0.75,
+                              color = "black",
+                              min.segment.length = unit(3, "pt"),
+                              # point.padding = unit(3, "pt"),
+                              max.overlaps = 100,
+                              #label.padding = unit(3, "pt"),
+                              fontface = "bold"
+    ) +
+    ggrepel::geom_label_repel(data = mod0lv2_loading$spp, aes(LV1, LV2, fill = grp3, label = spp, size = spp %in% nats), seed = 9,
+                              alpha = 0.75,
+                              #color = "floralwhite",
+                              min.segment.length = unit(3, "pt"),
+                              # point.padding = unit(3, "pt"),
+                              max.overlaps = 100,
+                              #label.padding = unit(3, "pt"),
+                              fontface = "bold"
+    ) +
+    # ggrepel::geom_text_repel(data = subset(mod0lv2_loading$spp), aes(LV1, LV2, label = spp, size = spp %in% nats), seed = 13,
+    #                          min.segment.length = unit(10, "pt"),
+    #                          box.padding = unit(5, "pt")) +
+    # scale_fill_brewer(name = "Block", palette = "Paired") +
+    scale_fill_manual(name = NULL, values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "chartreuse3",  "orange")) +
+    scale_size_manual(values = c(`TRUE` = 5, `FALSE`=4), guide = "none") +
+    theme_ctw() +
+    theme(axis.text = element_text(size = 14), 
+          axis.title =element_text(size = 16),
+          legend.key.size = unit(1, "pt"),
+          legend.background = element_rect(fill = "transparent"),
+          legend.position = "inside",
+          legend.justification.inside = c(0.01,0.01),
+          legend.text = element_text(size = 14)),
+  align = "vh", axis = "top", nrow = 2
+)
+
+modrescor0 <- getResidualCor(gllvm_seeded_mod0.2lv)
+modrescor0 <- modrescor0[rownames(modrescor0) %in% nats,!colnames(modrescor0) %in% nats]
+
+modrescov0 <- getResidualCov(gllvm_seeded_mod0.2lv)$cov
+modrescov0 <- modrescov0[rownames(modrescov0) %in% nats,!colnames(modrescov0) %in% nats]
+
+library(ComplexHeatmap)
+hmap0 <- ComplexHeatmap::Heatmap(t(modrescor0), row_dend_width = unit(2, "cm"))
+orderspp0 <- colnames(modrescor0)[row_order(draw(hmap0))]
+sppfac
+labeltest0 <- with(subset(sppfac, !spp %in% nats), grp[order(factor(spp, levels = colnames(modrescor0)))])
+labeltest0 <- gsub("Forb/Nfix", "Forb", labeltest0)
+coltest0 <- with(subset(sppfac, !spp %in% nats), sppcol[order(factor(spp, levels = colnames(modrescor0)))])
+row_ha0 <- rowAnnotation(border = T, simple_anno_size = unit(1, "cm"),
+                        annotation_legend_param = list(title_gp = gpar(fontsize = 14),
+                                                       labels_gp = gpar(fontsize = 12),
+                                                       labels = c("Native Forb", "Non-native Forb", "Non-native N-fixer","Non-native Grass"),
+                                                       at = c("Native Forb", "Non-native Forb","Non-native N-fixer","Non-native Grass")
+                                                       ),
+                        Group = labeltest0, 
+                        col = list(Group = c("Non-native Forb" = "orchid1", "Non-native N-fixer" = "orange", "Non-native Grass" = "chartreuse3", "Native Grass" = "seagreen1", "Native Forb"= "purple2"))
+)
+Heatmap(t(modrescor0), row_dend_width = unit(2, "cm"), name = "Residual correlation", left_annotation = row_ha0,
+        border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 1,
+        heatmap_legend_param = list(direction = "horizontal", 
+                                    title_gp = gpar(fontsize = 14),
+                                    labels_gp = gpar(fontsize = 12)))
+
+# repeat for covariance
+Heatmap(t(modrescov0), row_dend_width = unit(2, "cm"), name = "Residual covariance", left_annotation = row_ha0, 
+        border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 1, 
+        heatmap_legend_param = list(direction = "horizontal",
+                                    title_gp = gpar(fontsize = 14),
+                                    labels_gp = gpar(fontsize = 12)))
 
 
+
+# -- unconstrained ordination pretty plot -----
+unconstrained_seeded_loading <- get_loadings(gllvm_seeded_unconstrained) 
+unconstrained_seeded_loading$spp <- left_join(unconstrained_seeded_loading$spp, distinct(coefs_mod0seed.2lv, spp, grp2, grp3)) %>%
+  mutate(grp3 = factor(grp3, levels = c("Native Forb (seeded)", "Native Grass (seeded)", "Native Forb", "Non-native Forb", "Non-native N-fixer", "Non-native Grass")))
+unconstrained_seeded_loading$sites <- left_join(unconstrained_seeded_loading$sites, cbind(rowid = rownames(xdat_seeded), xdat_seeded))
+
+# spp plot
+uncon_spp <- 
+  ggplot(unconstrained_seeded_loading$spp, aes(LV1, LV2)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_point(aes(col = grp3, size = spp %in% nats)) +
+  # add nats text to plot
+  geom_text(data = subset(unconstrained_seeded_loading$spp, spp %in% nats), aes(label = spp), 
+            vjust = -1, hjust = -0.2, nudge_y = -0.01) +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  scale_color_manual(name = NULL, values = c("mediumpurple1", "seagreen2", "purple1", "orchid1", "orange","chartreuse3")) +
+  scale_size_manual(name = "Native seeded", values = c(`TRUE` = 5, `FALSE` = 4), guide = "none") +
+  theme_ctw() +
+  theme(legend.position = "top")
+
+# site plot
+uncon_site <- unconstrained_seeded_loading$sites %>%
+  mutate(nut_trt = factor(nut_trt, labels = c("Control", "Fertilizer", "Compost")),
+         ppt_trt = factor(ppt_trt, labels = c("Control", "Drought", "Wet"))) %>%
+  ggplot(aes(LV1, LV2)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_jitter(aes(shape = herbicide, fill = factor(block)), size = 4) +# width = 0.005, height = 0.005) +
+  # geom_segment(data = informed_ord$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+  #              arrow = arrow(length = unit(0.25, "cm"))) +
+  # ggrepel::geom_text_repel(data = informed_ord$varscores, aes(label = plot_label)) +
+  scale_fill_manual(name = "Block", values = c("white", "grey80", "grey55", "black")) +
+  scale_shape_manual(name = NULL, values = c(21, 22)) +
+  guides(fill = guide_legend(override.aes = list(pch = 21))) +
+  theme_ctw() +
+  theme(legend.position = "top") +
+  facet_grid(nut_trt ~ ppt_trt)
+
+plot_grid(uncon_site, uncon_spp, align = "v", axis = "t", labels = "AUTO", label_size = 24)
+
+# best informed mod is additive only (just like best predictive model, and 4 LVs)
+informed_ord <- get_loadings(gllvm_seeded_c.lv4_mod0)
+# pair spp info to spp table
+informed_ord$spp <- left_join(informed_ord$spp, distinct(coefs_mod0seed.2lv, spp, grp2, grp3))  %>%
+  mutate(grp3 = factor(grp3, levels = c("Native Forb (seeded)", "Native Grass (seeded)", "Native Forb", "Non-native Forb", "Non-native N-fixer", "Non-native Grass")))
+
+informed_spp <- ggplot(informed_ord$spp, aes(CLV1, CLV2)) +
+  #geom_point(data = informed_ord$sites, size = 0.25, col = "transparent", pch = 1) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_point(aes(col = grp3, size = spp %in% nats)) +
+  geom_text(data = subset(informed_ord$spp, spp %in% c("BRCA", "ESCA", "FEMI")), aes(label = spp), 
+            nudge_y = -0.07, vjust = 1, hjust = 0.35) +
+  geom_text(data = subset(informed_ord$spp, spp == "NEMA"), aes(label = spp), 
+            nudge_y = 0.07, vjust = 0, hjust = 0.35) +
+  # ggrepel::geom_text_repel(data = subset(informed_ord$spp, spp %in% nats), aes(label = spp), seed  = 1,
+  #                          point.padding = unit(5, "pt"),
+  #                          box.padding = unit(5, "pt")) +
+  # geom_segment(data = informed_ord$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+  #              arrow = arrow(length = unit(0.25, "cm"))) +
+  # ggrepel::geom_text_repel(data = informed_ord$varscores, aes(label = plot_label)) +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  scale_color_manual(name = NULL, values = c("mediumpurple1", "seagreen2", "purple1", "orchid1", "orange","chartreuse3")) +
+  scale_size_manual(name = "Native seeded", values = c(`TRUE` = 5, `FALSE` = 4), guide = "none") +
+  theme_ctw() +
+  theme(legend.position = "top" #,
+        #legend.justification.inside = c("right", "top")
+        )
+
+ggplot(informed_ord$spp, aes(CLV3, CLV4)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_point(aes(col = grp3, size = spp %in% nats)) +
+  geom_segment(data = informed_ord$varscores, aes(x = 0, xend = CLV3, y = 0, yend = CLV4, group = vari), 
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(data = informed_ord$varscores, aes(label = plot_label)) +
+  scale_color_manual(name = "Functional group", values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "orange","chartreuse3")) +
+  scale_size_manual(name = "Native seeded", values = c(`TRUE` = 5, `FALSE` = 3)) +
+  theme_ctw()
+
+informed_sites <-  informed_ord$sites %>%
+  mutate(nut_trt = factor(nut_trt, labels = c("Control", "Fertilizer", "Compost")),
+         ppt_trt = factor(ppt_trt, labels = c("Control", "Drought", "Wet"))) %>%
+  ggplot(aes(CLV1, CLV2)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_jitter(aes(shape = herbicide, fill = factor(block)), size = 4) +# width = 0.005, height = 0.005) +
+  # geom_segment(data = informed_ord$varscores, aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+  #              arrow = arrow(length = unit(0.25, "cm"))) +
+  # ggrepel::geom_text_repel(data = informed_ord$varscores, aes(label = plot_label)) +
+  scale_fill_manual(name = "Block", values = c("white", "grey80", "grey55", "black")) +
+  scale_shape_manual(name = NULL, values = c(21, 22)) +
+  guides(fill = guide_legend(override.aes = list(pch = 21))) +
+  theme_ctw() +
+  facet_grid(nut_trt ~ ppt_trt) +
+  theme(legend.position = "top")
+
+
+ggplot(informed_ord$sites, aes(CLV3, CLV4)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_jitter(aes(shape = herbicide, fill = factor(block)), size = 3, width = 0.005, height = 0.005) +
+  scale_fill_manual(name = "Block", values = c("white", "grey80", "grey55", "black")) +
+  guides(fill = guide_legend(override.aes = list(pch = 21))) +
+  theme_ctw() +
+  scale_shape_manual(values = c(21, 22)) +
+  facet_grid(nut_trt ~ ppt_trt) +
+  theme(legend.position = "top")
+# 2 and 3, and 3 and 4 isn't revealing much else
+
+# show gradients
+informed_grad <- 
+informed_ord$varscores %>%
+  mutate(plot_label = recode(plot_label, "C" = "Compost", "D" = "Drought", "W" = "Wet", "F" = "Fertilizer", "herbicide" = "Herbicide")) %>%
+  ggplot(aes(CLV1, CLV2)) +
+  geom_hline(aes(yintercept = 0), col = "grey50", lty = 2) +
+  geom_vline(aes(xintercept = 0), col = "grey50", lty = 2) +
+  geom_segment(aes(x = 0, xend = CLV1, y = 0, yend = CLV2, group = vari), 
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(aes(label = plot_label),vjust = 1, nudge_y = 0.005, point.padding = unit(6, "pt"), box.padding = unit(6, "pt")) +
+  #geom_text(data = subset(informed_ord$varscores, plot_label ), aes(label = plot_label), nudge_y = 0.005, hjust = 1) +
+  theme_ctw()
+
+
+plot_grid(informed_sites,
+          plot_grid(informed_spp, informed_grad, 
+                    #align = "h", 
+                    #axis = "l",
+                    rel_heights = c(1,0.5),
+                    nrow = 2,
+                    labels = c("B", "C"), 
+                    label_y = c(0.85, 1), label_x = -0.025,
+                    label_size = 20),
+          align = "v", axis = "t",
+          labels = c("A"),
+          label_size = 20, label_y = 0.9,
+          rel_widths = c(1,0.85))
+
+# -- EXTRA CODE, not needed ----
 # # -- 4th corner model 
 # 
 # 
@@ -1678,7 +2869,7 @@ plotVarPartitioning(varPartitioning(gllvm_seeded_mod5), mar = c(8,3,5,1), las = 
 
 
 
-# -- EXTRA CODE, not needed ----
+
 # nb2_seedspp <- glmmTMB(count ~  spp + seedtrt + (1|block) + (1|nut_trt/ppt_trt/herbicide), 
 #                        data = subset(fxnltarget_long, spp %in% nats),
 #                        family = "nbinom1")
