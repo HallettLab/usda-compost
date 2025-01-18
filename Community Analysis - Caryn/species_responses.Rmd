@@ -48,6 +48,47 @@ trt.codes <- read.csv("https://www.dropbox.com/scl/fi/czb2oehii9m1n0iill57k/Comp
 sp.list <- read.csv("https://www.dropbox.com/scl/fi/b43mka47sp7hfubz2vsi1/Compost_SppList.csv?rlkey=auz8vb9ftjlfdtc4q64f8m9ax&st=3p7hex2z&dl=1")
 ```
 
+## Custom Theme
+
+```{r}
+cover.dat.labels <- cover.dat %>%
+  mutate(
+    nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
+    ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA))))
+
+
+# Define a reusable color scale
+custom_colors <- scale_fill_manual(
+  values = c(
+    "control" = rgb(195, 197, 193, maxColorValue = 250),
+    "+N fertilizer" = rgb(87, 62, 92, maxColorValue = 225),
+    "+compost" = rgb(167, 156, 109, maxColorValue = 225)
+  )
+)
+
+# Set a global theme
+theme_set(theme_bw())
+
+# Update default aesthetics for geom_errorbar
+update_geom_defaults("errorbar", list(width = 0.4, alpha = 0.3))
+
+# cover.dat.labels %>%
+#   filter(code6 == "AVEBAR") %>%
+#   group_by(block, yr, nut_trt, ppt_trt) %>%
+#   summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+#   ggplot(aes(ppt_trt, cover, fill = nut_trt)) +
+#   geom_col(position = "dodge") +
+#   geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+#   geom_errorbar(
+#     aes(ymin = cover - sd, ymax = cover + sd), 
+#     position = position_dodge(width = 0.9)) +
+#    custom_colors +
+#   facet_grid(yr~block) +
+#   labs(
+#     title = "A.barbata cover response by block (2019-2021)"
+#   )
+```
+
 ## Individual Species Responses (exploratory)
 
 Divide the individual species responses to treatments, year, plots and see how they do
@@ -60,28 +101,26 @@ Could group species and see if there's anything there as well.
 
 2019 - 2020 years
 
-+-------------------------------------+--------------------------+-------------+----------------+
-| Nutrient Treatments (confirm codes) | Precipitation Treatments | Year        | Sample Events  |
-+=====================================+==========================+=============+================+
-| Compost (C)                         | Dry (D)                  | 2019        | 1 (2019-04-19) |
-|                                     |                          |             |                |
-|                                     |                          |             | 2 (2019-05-07) |
-+-------------------------------------+--------------------------+-------------+----------------+
-| N Fertilizer (F)                    | Control (XC)             | 2020        | 1 (2020-04-28) |
-|                                     |                          |             |                |
-|                                     |                          |             | 2 (NA)         |
-+-------------------------------------+--------------------------+-------------+----------------+
-| Control or None (N)                 | Wet (W)                  | 2021        | 1 (2021-04-07) |
-|                                     |                          |             |                |
-|                                     |                          |             | 2 (2021-05-13) |
-+-------------------------------------+--------------------------+-------------+----------------+
++--------------------------------------+--------------------------+-------------+----------------+
+| N,utrient Treatments (confirm codes) | Precipitation Treatments | Year        | Sample Events  |
++======================================+==========================+=============+================+
+| Compost (C)                          | Dry (D)                  | 2019        | 1 (2019-04-19) |
+|                                      |                          |             |                |
+|                                      |                          |             | 2 (2019-05-07) |
++--------------------------------------+--------------------------+-------------+----------------+
+| N Fertilizer (F)                     | Control (XC)             | 2020        | 1 (2020-04-28) |
+|                                      |                          |             |                |
+|                                      |                          |             | 2 (NA)         |
++--------------------------------------+--------------------------+-------------+----------------+
+| Control or None (N)                  | Wet (W)                  | 2021        | 1 (2021-04-07) |
+|                                      |                          |             |                |
+|                                      |                          |             | 2 (2021-05-13) |
++--------------------------------------+--------------------------+-------------+----------------+
 
 ```{r}
 cover.dat %>%
   group_by(fxnl_grp, nativity, genus, epithet, code6) %>%
   summarise(unique(species))
-  
-
 ```
 
 Starting species:
@@ -95,30 +134,21 @@ Starting species:
 
 make boxplots of cover values of species with different treatments, years, prec.
 
+### A. barbata
+
 ```{r Avena}
-response.avebar <- cover.dat %>%
+response.avebar <- cover.dat.labels %>%
   filter(code6 == "AVEBAR") %>%
   group_by(nut_trt, ppt_trt, yr) %>%
-  mutate( 
-    nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
-    ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA)))) %>%
   summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
   ggplot(aes(nut_trt, cover, fill = nut_trt)) +
   geom_col(position = "dodge") +
   geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
   geom_errorbar(
     aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
-    position = position_dodge(width = 0.9),  # Align with bars
-    width = 0.4,
-    alpha = 0.3
+    position = position_dodge(width = 0.9)
   ) +
-   scale_fill_manual(
-    values = c(
-      "control" = rgb(195, 197, 193, maxColorValue = 250),
-      "+N fertilizer" = rgb(87, 62, 92, maxColorValue = 225),
-      "+compost" = rgb(167, 156, 109, maxColorValue = 225)
-    )
-  ) +
+   custom_colors +
   facet_grid(yr~ppt_trt) +
   theme_bw()+
   labs(
@@ -126,20 +156,17 @@ response.avebar <- cover.dat %>%
   )
 
 # ggsave(
-#   filename = "AVEBAR_cover_TrtsYr.png",
+#   filename = "individual sp responses/AVEBAR_cover_TrtsYr.png",
 #   plot = response.avebar,
 #   width = 11,
 #   height = 7)
 ```
 
 ```{r looksee}
-cover.dat %>%
+cover.dat.labels %>%
   filter(code6 == "AVEBAR") %>%
   group_by(nut_trt, ppt_trt, yr) %>%
   # group_by(nut_trt, yr) %>%
-  mutate( 
-    nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
-    ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA)))) %>%
   select(plotid, pct_cover, species, nut_trt, ppt_trt, yr, sample_event, fxnl_grp:nativity) %>%
   arrange(yr, nut_trt, ppt_trt, pct_cover)
 ```
@@ -147,32 +174,343 @@ cover.dat %>%
 See if there's closer similarities between blocks, should i toss some blocks out?
 
 ```{r}
-cover.dat %>%
+response.avebar.blocks <- 
+  cover.dat.labels %>%
   filter(code6 == "AVEBAR") %>%
   group_by(block, yr, nut_trt, ppt_trt) %>%
-  # mutate(
-  #   nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
-  #   ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA)))) %>%
   summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
   ggplot(aes(block, cover, fill = nut_trt)) +
   geom_col(position = "dodge") +
   geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
   geom_errorbar(
     aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
-    position = position_dodge(width = 0.9),  # Align with bars
-    width = 0.4,
-    alpha = 0.3
+    position = position_dodge(width = 0.9)
   ) +
-  #  scale_fill_manual(
-  #   values = c(
-  #     "control" = rgb(195, 197, 193, maxColorValue = 250),
-  #     "+N fertilizer" = rgb(87, 62, 92, maxColorValue = 225),
-  #     "+compost" = rgb(167, 156, 109, maxColorValue = 225)
-  #   )
-  # ) +
+  custom_colors +
+  facet_grid(yr~ppt_trt) +
+  labs(
+    title = "A.barbata cover response by block (2019-2021)"
+  )
+
+
+# ggsave(
+#   filename = "individual sp responses/AVEBAR_cover_Blocks.png",
+#   plot = response.avebar.blocks,
+#   width = 15,
+#   height = 7)
+
+```
+
+### Taeniatherum caput-medusae
+
+```{r TAECAP}
+response.taecap <-
+  cover.dat.labels %>%
+  filter(code6 == "TAECAP") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
   facet_grid(yr~ppt_trt) +
   theme_bw()+
   labs(
-    title = "A.barbata cover response (2019-2021)"
+    title = "T.caput-medusae cover response (2019-2021)"
   )
+
+# ggsave(
+#   filename = "individual sp responses/TAECAP_cover_TrtsYr.png",
+#   plot = response.taecap,
+#   width = 11,
+#   height = 7)
+  
+response.taecap.blocks <-
+  cover.dat.labels %>%
+  filter(code6 == "TAECAP") %>%
+  group_by(block, yr, nut_trt, ppt_trt) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(block, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+  custom_colors +
+  facet_grid(yr~ppt_trt) +
+  labs(
+    title = "T.caput-medusae cover response by block (2019-2021)"
+  )
+  
+# ggsave(
+#   filename = "individual sp responses/TAECAP_cover_Blocks.png",
+#   plot = response.taecap.blocks,
+#   width = 15,
+#   height = 7)
+```
+
+### Hordeum murinum
+
+```{r}
+response.hormur <-
+  cover.dat.labels %>%
+  filter(code6 == "HORMUR") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "H.murinum cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "individual sp responses/HORMUR_cover_TrtsYr.png",
+#   plot = response.hormur,
+#   width = 11,
+#   height = 7)
+  
+response.hormur.blocks <-
+  cover.dat.labels %>%
+  filter(code6 == "HORMUR") %>%
+  group_by(block, yr, nut_trt, ppt_trt) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(block, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+  custom_colors +
+  facet_grid(yr~ppt_trt) +
+  labs(
+    title = "H.murinum cover response by block (2019-2021)"
+  )
+  
+# ggsave(
+#   filename = "individual sp responses/HORMUR_cover_Blocks.png",
+#   plot = response.hormur.blocks,
+#   width = 15,
+#   height = 7)
+```
+
+### Aira caryophyllea
+
+```{r}
+response.aircar <-
+  cover.dat.labels %>%
+  filter(code6 == "AIRCAR") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "A.caryophyllea cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "individual sp responses/AIRCAR_cover_TrtsYr.png",
+#   plot = response.aircar,
+#   width = 11,
+#   height = 7)
+  
+response.aircar.blocks <-
+  cover.dat.labels %>%
+  filter(code6 == "AIRCAR") %>%
+  group_by(block, yr, nut_trt, ppt_trt) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(block, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+  custom_colors +
+  facet_grid(yr~ppt_trt) +
+  labs(
+    title = "A.caryophyllea cover response by block (2019-2021)"
+  )
+  
+# ggsave(
+#   filename = "individual sp responses/AIRCAR_cover_Blocks.png",
+#   plot = response.aircar.blocks,
+#   width = 15,
+#   height = 7)
+```
+
+### Bromus diandrus 
+
+```{r}
+# response.brodia <-
+  cover.dat.labels %>%
+  filter(code6 == "BRODIA") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "B.diandrus cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "individual sp responses/BRODIA_cover_TrtsYr.png",
+#   plot = response.brodia,
+#   width = 11,
+#   height = 7)
+  
+# response.brodia.blocks <-
+  cover.dat.labels %>%
+  filter(code6 == "BRODIA") %>%
+  group_by(block, yr, nut_trt, ppt_trt) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(block, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+  custom_colors +
+  facet_grid(yr~ppt_trt) +
+  labs(
+    title = "B.diandrus cover response by block (2019-2021)"
+  )
+  
+# ggsave(
+#   filename = "individual sp responses/BRODIA_cover_Blocks.png",
+#   plot = response.brodia.blocks,
+#   width = 15,
+#   height = 7)
+```
+
+## Across functional groups
+
+```{r}
+response.grasses <- 
+  cover.dat.labels %>%
+  filter(fxnl_grp == "Grass") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "Functional group: GRASS cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "community responses/grass_cover.png",
+#   plot = response.grasses,
+#   width = 15,
+#   height = 7)
+
+response.forbs <- 
+  cover.dat.labels %>%
+  filter(fxnl_grp == "Forb") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "Functional group: FORB cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "community responses/forb_cover.png",
+#   plot = response.forbs,
+#   width = 15,
+#   height = 7)
+
+response.nfixers <- 
+  cover.dat.labels %>%
+  filter(fxnl_grp == "N-fixer") %>%
+  group_by(nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = nut_trt)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+   custom_colors +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "Functional group: N-fixer cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "community responses/nfixer_cover.png",
+#   plot = response.nfixers,
+#   width = 15,
+#   height = 7)
+
+response.fxnl_grps <-
+  cover.dat.labels %>%
+  group_by(fxnl_grp, nut_trt, ppt_trt, yr) %>%
+  summarise(cover = mean(pct_cover), sd = sd(pct_cover)) %>%
+  ggplot(aes(nut_trt, cover, fill = fxnl_grp)) +
+  geom_col(position = "dodge") +
+  geom_col(position = position_dodge(width = 0.9), width = 0.7) +  # Bar plot
+  geom_errorbar(
+    aes(ymin = cover - sd, ymax = cover + sd),  # Error bars
+    position = position_dodge(width = 0.9)
+  ) +
+  facet_grid(yr~ppt_trt) +
+  theme_bw()+
+  labs(
+    title = "Functional group cover response (2019-2021)"
+  )
+
+# ggsave(
+#   filename = "community responses/fxnlgrp_cover.png",
+#   plot = response.fxnl_grps,
+#   width = 15,
+#   height = 7)
 ```
