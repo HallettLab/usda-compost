@@ -1,0 +1,122 @@
+# Trait Ordination Plant Community Analysis
+
+1.  traits
+
+    1.  above- and belowground
+
+        1.  height & SLA\
+
+    2.  acquisitive vs. conservative resource-use strategies
+
+        1.  rooting depth
+
+    3.  collaborative vs. individual resource-use strategies
+
+        1.  fine root proportion
+
+        2.  thickness of roots
+
+[Goal]{.underline}: Examine how traits shift in community compositional (ordinational) space, placing each trait on an axis.
+
+Author: Caryn D. Iwanaga
+
+Updated: 01/24/2025
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(httr) # read out Dropbox folders
+library(vegan)
+```
+
+## Read in Data
+
+```{r}
+cover.dat.labels <- read.csv("https://www.dropbox.com/scl/fi/up8nnzkcpchsr45f8cm92/Compost_Cover_LongClean.csv?rlkey=z2tvaj8t6khadef7ydz782zka&st=qwef9ys0&dl=1") %>%
+  mutate(
+    nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
+    ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA))))
+
+```
+
+## Make site x species matrix
+
+1.  Calculate relative abundances of species for each site
+    1.  confused how to aggregate abundances because even grouping by plotid (nut_trt and ppt_trt), year, species, and grazing history (block 1&2 -- high, block 3&4 -- low) and averaged, the sd are as high as 45.96!
+        1.  proceeded with these high sd to see what happens (ask Lauren)
+
+```{r}
+site.df <- 
+  cover.dat.labels[, c(1:7, 18:19)] %>% #subset columns
+  mutate(
+    grazing_hist = ifelse(block == 1 | block == 2, "high", ifelse(block == 3 | block == 4, "low", NA))
+  ) %>% # separate by block (grazing intensities)
+  group_by(nut_trt, ppt_trt, yr, code4, grazing_hist) %>% # make each code unique -- one value for species abundance for each trt
+  summarise(
+    # pct_cover,
+    abundance = mean(pct_cover)
+    # sd = sd(pct_cover)
+  )
+
+matrix0 <- spread(
+  site.df, 
+  code4, 
+  abundance, 
+  fill = 0)
+
+# make rownames ----
+rownames(matrix0) <- paste(matrix0$nut_trt, matrix0$ppt_trt, matrix0$yr, matrix0$grazing_hist, sep = "_")
+
+# delete columns ---- 
+matrix <- matrix0[, c(5:79)]
+
+# relativize data with Bray-Curtis dissimilarity
+matrix.bray <- decostand(matrix, "total")
+rownames(matrix.bray) <- rownames(matrix0)
+```
+
+## Run NMDS
+
+Rules of thumb:
+
+-   \< 0.05 is **excellent**
+
+-   0.05-0.1 is **good**
+
+-   0.1-0.2 is **fair**
+
+-   0.2-0.3 **is cause for concern...**
+
+-   \> 0.3 **is poor, random**
+
+```{r}
+nmds.comp <- metaMDS(matrix.bray, k=2, trymax = 25)
+nmds.comp #pretty not great stress
+stressplot(nmds.comp)
+plot(nmds.comp, type="t")
+
+nmds1 <- as.data.frame(scores(nmds.comp, choices=c(1), display=c("sites"))) %>%
+  mutate(matrix0[, c(0:4)])
+nmds2 <- as.data.frame(scores(nmds.comp, choices=c(2), display=c("sites")))
+
+nmds_dat <- cbind(nmds1, nmds2) %>%
+  select(nut_trt:grazing_hist, NMDS1, NMDS2)
+
+ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(yr), shape = nut_trt)) +
+  geom_point() 
+```
+
+## Make species x trait matrix
+
+```{r}
+# read in trait data
+
+# subset trait data to match comp data
+
+# set matching row names
+
+
+```
