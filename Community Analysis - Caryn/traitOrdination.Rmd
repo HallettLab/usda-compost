@@ -1,3 +1,12 @@
+---
+title: "Trait Ordination Plant Community Analysis"
+author: "Caryn D. Iwanaga"
+date: "`r Sys.Date()`"
+output: 
+  html_notebook: 
+    toc: yes
+---
+
 # Trait Ordination Plant Community Analysis
 
 1.  traits
@@ -40,6 +49,28 @@ cover.dat.labels <- read.csv("https://www.dropbox.com/scl/fi/up8nnzkcpchsr45f8cm
     nut_trt = factor(ifelse(nut_trt =="C", "+compost", ifelse(nut_trt =="F", "+N fertilizer", ifelse(nut_trt =="N", "control", NA))), levels = c("control", "+N fertilizer", "+compost")),
     ppt_trt = ifelse(ppt_trt == "D", "dry", ifelse(ppt_trt == "XC", "control", ifelse(ppt_trt == "W", "wet", NA))))
 
+
+# Define a reusable color scale
+# custom_colors <- scale_fill_manual(
+#   values = c(
+#     "control" = rgb(195, 197, 193, maxColorValue = 250),
+#     "+N fertilizer" = rgb(87, 62, 92, maxColorValue = 225),
+#     "+compost" = rgb(167, 156, 109, maxColorValue = 225)
+#   )
+# )
+
+custom_colors <- scale_fill_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+
+# Set a global theme
+theme_set(theme_bw())
 ```
 
 ## Make site x species matrix
@@ -122,41 +153,166 @@ nmds_dat <- cbind(nmds1, nmds2) %>%
 ##### plot
 
 ```{r}
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = nut_trt)) +
-  geom_point() +
+ggplot(nmds_dat, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
   stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
-  labs(title = "Grouped by Nutrient Treatment")
+  labs(title = "Grouped by Nutrient Treatment") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
 
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(yr))) +
-  geom_point() +
+ggplot(nmds_dat, aes(NMDS1, NMDS2, color = as.factor(yr), fill = as.factor(yr))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
   stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
   labs(title = "Grouped by Year")
 
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(ppt_trt))) +
-  geom_point() +
+ggplot(nmds_dat, aes(NMDS1, NMDS2, fill = as.factor(ppt_trt), color = as.factor(ppt_trt))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
   stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
-  labs(title = "Grouped by Precipitation Treatment")
+  labs(title = "Grouped by Precipitation Treatment") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
 
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(grazing_hist))) +
-  geom_point() +
+ggplot(nmds_dat, aes(NMDS1, NMDS2,  fill = as.factor(grazing_hist), color = as.factor(grazing_hist))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
   stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
   labs(title = "Grouped by Grazing History")
 
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(grazing_hist), shape = as.factor(yr))) +
-  geom_point() +
+ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(grazing_hist), fill = as.factor(yr))) +
+  geom_point(aes(fill = as.factor(yr)), shape = 21, size = 4, stroke = 1) +
   stat_ellipse(aes(color = as.factor(yr)), 
-                 geom = "polygon", alpha = 0.3)
-  labs(title = "Grouped by Grazing History & Year")
+                geom = "polygon",
+               fill = NA,
+               size = 1) +
+  labs(title = "Grouped by Grazing History & Year") +
+  scale_color_manual(
+  values = c(
+    "low" = "cyan",
+    "high" = "brown",
+  "2019" = "salmon",
+  "2020" = "limegreen",
+  "2021" = "cornflowerblue")
+  )
   
-ggplot(nmds_dat, aes(NMDS1, NMDS2,  color = as.factor(yr))) +
-  geom_point() +
-  stat_ellipse(aes(color = as.factor(nut_trt)), 
-                 
-                 geom = "polygon", alpha = 0.3)
-  labs(title = "Grouped by Grazing History & Year")
+ggplot(nmds_dat, aes(NMDS1, NMDS2, color = nut_trt, fill = as.factor(yr))) +
+  geom_point(shape = 21, size = 4, stroke = 1) +
+  stat_ellipse(aes(color = as.factor(nut_trt)),
+             geom = "polygon",
+             fill = NA,  # Makes the ellipse transparent inside
+             size = 1) +
+  labs(title = "Grouped by Nutrient Treatment & Year") +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+
 ```
 
-Make each individual year NMDS to see if there's better stress
+### All years - LOW GRAZING ONLY
+
+[Stress:]{.underline} *fair*
+
+```         
+0.1869068
+```
+
+#### data wrangling
+
+```{r}
+# relativize data with Bray-Curtis dissimilarity
+matrix.low <- matrix0 %>%
+  filter(grazing_hist == "low")
+
+row.low <- paste(matrix.low$nut_trt, matrix.low$ppt_trt, matrix.low$yr, matrix.low$grazing_hist, sep = "_")
+
+matrix.low <- matrix.low[, c(5:79)]
+
+rownames(matrix.low) <- row.low
+
+matrix.bray.low <- decostand(matrix.low, "total")
+```
+
+#### metaMDS()
+
+```{r}
+nmds.comp.low <- metaMDS(matrix.bray.low, k=2, trymax = 25)
+nmds.comp.low # pretty not great stress
+stressplot(nmds.comp.low)
+plot(nmds.comp.low, type="t")
+
+nmds1 <- as.data.frame(scores(nmds.comp.low, choices=c(1), display=c("sites"))) %>%
+  mutate(
+    nut_trt = sapply(strsplit(rownames(matrix.low), "_"), `[`, 1),
+    ppt_trt = sapply(strsplit(rownames(matrix.low), "_"), `[`, 2),
+    yr = sapply(strsplit(rownames(matrix.low), "_"), `[`, 3),
+    grazing_hist = sapply(strsplit(rownames(matrix.low), "_"), `[`, 4)
+  )
+nmds2 <- as.data.frame(scores(nmds.comp.low, choices=c(2), display=c("sites")))
+
+nmds_low_dat <- cbind(nmds1, nmds2) %>%
+  select(nut_trt:grazing_hist, NMDS1, NMDS2)
+```
+
+#### plot
+
+```{r}
+ggplot(nmds_low_dat, aes(NMDS1, NMDS2,  color = as.factor(yr), shape = nut_trt)) +
+  geom_point(size = 3, stroke = 1) + 
+  labs(title = "2019-2021 (LOW) - Grouping by Year & Nutrient Treatment")
+
+ggplot(nmds_low_dat, aes(NMDS1, NMDS2,  fill = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  labs(title = "2019-2021 (LOW) - Grouping by Nutrient Treatment")+ 
+  custom_colors
+
+
+ggplot(nmds_low_dat, aes(NMDS1, NMDS2,  fill = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2019-2021 (LOW) - Grouping by Precipitation Treatment") 
+
+# add year ellipses ---- 
+ggplot(nmds_low_dat, aes(NMDS1, NMDS2,  fill = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(aes(color = as.factor(yr)), 
+                geom = "polygon",
+               fill = NA,
+               size = 1) +
+  labs(title = "2019-2021 (LOW) - Grouping by Nutrient Treatment")+ 
+  custom_colors
+
+
+ggplot(nmds_low_dat, aes(NMDS1, NMDS2,  fill = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+    stat_ellipse(aes(color = as.factor(yr)), 
+                geom = "polygon",
+               fill = NA,
+               size = 1) +
+  custom_colors + 
+  labs(title = "2019-2021 (LOW) - Grouping by Precipitation Treatment") 
+```
+
+## Make each individual year NMDS to see if there's better stress
 
 ### 2019
 
@@ -190,7 +346,7 @@ matrix.bray.2019 <- decostand(matrix.2019, "total")
 nmds.2019 <- metaMDS(matrix.bray.2019, k=2, trymax = 25)
 nmds.2019 # pretty not great stress
 stressplot(nmds.2019)
-# plot(nmds.2019, type="t")
+plot(nmds.2019, type="t")
 
 nmds1.2019 <- as.data.frame(scores(nmds.2019, choices=c(1), display=c("sites"))) %>%
   mutate(
@@ -209,29 +365,23 @@ nmds_2019_dat <- cbind(nmds1.2019, nmds2.2019) %>%
 
 ```{r}
 ggplot(nmds_2019_dat, aes(NMDS1, NMDS2,  color = grazing_hist, shape = nut_trt)) +
-  geom_point() + 
+  geom_point(size = 3, stroke = 1) + 
   labs(title = "2019 - Grouping by Grazing History & Nutrient Treatment")
 
-ggplot(nmds_2019_dat, aes(NMDS1, NMDS2,  color = nut_trt, shape = ppt_trt)) +
-  geom_point() + 
-  labs(title = "2019 - Grouping by Nutrient Treatment & Precipitation Treatment")
+ggplot(nmds_2019_dat, aes(NMDS1, NMDS2,  fill = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  labs(title = "2019 - Grouping by Nutrient Treatment")+ 
+  custom_colors
 
-ggplot(nmds_2019_dat, aes(NMDS1, NMDS2,  color = ppt_trt, shape = nut_trt)) +
-  geom_point() + 
-  labs(title = "2019 - Grouping by Precipitation Treatment & Nutrient Treatment")
+
+ggplot(nmds_2019_dat, aes(NMDS1, NMDS2,  fill = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2019 - Grouping by Precipitation Treatment") 
 
 ```
 
-## Make species x trait matrix
-
-```{r}
-# read in trait data
-
-# subset trait data to match comp data
-
-# set matching row names
-
-
+```         
 ```
 
 ### 2020
@@ -266,7 +416,7 @@ matrix.bray.2020 <- decostand(matrix.2020, "total")
 nmds.2020 <- metaMDS(matrix.bray.2020, k=2, trymax = 25)
 nmds.2020
 stressplot(nmds.2020)
-# plot(nmds.2020, type="t")
+plot(nmds.2020, type="t")
 
 nmds1.2020 <- as.data.frame(scores(nmds.2020, choices=c(1), display=c("sites"))) %>%
   mutate(
@@ -285,16 +435,18 @@ nmds_2020_dat <- cbind(nmds1.2020, nmds2.2020) %>%
 
 ```{r}
 ggplot(nmds_2020_dat, aes(NMDS1, NMDS2,  color = grazing_hist, shape = nut_trt)) +
-  geom_point() + 
-  labs(title = "2020 - Grouping by Grazing History & Nutrient Treatment")
+  geom_point(size = 4, stroke = 1) + 
+  labs(title = "2020 - Grouping by Grazing History & Nutrient Treatment") 
 
-ggplot(nmds_2020_dat, aes(NMDS1, NMDS2,  color = nut_trt, shape = ppt_trt)) +
-  geom_point() + 
-  labs(title = "2020 - Grouping by Nutrient Treatment & Precipitation Treatment")
+ggplot(nmds_2020_dat, aes(NMDS1, NMDS2,  fill = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2020 - Grouping by Nutrient Treatment")
 
-ggplot(nmds_2020_dat, aes(NMDS1, NMDS2,  color = ppt_trt, shape = nut_trt)) +
-  geom_point() + 
-  labs(title = "2020 - Grouping by Precipitation Treatment & Nutrient Treatment")
+ggplot(nmds_2020_dat, aes(NMDS1, NMDS2,  fill = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2020 - Grouping by Precipitation Treatment")
 ```
 
 ### 2021
@@ -329,7 +481,7 @@ matrix.bray.2021 <- decostand(matrix.2021, "total")
 nmds.2021 <- metaMDS(matrix.bray.2021, k=2, trymax = 25)
 nmds.2021
 stressplot(nmds.2021)
-# plot(nmds.2021, type="t")
+plot(nmds.2021, type="t")
 
 nmds1.2021 <- as.data.frame(scores(nmds.2021, choices=c(1), display=c("sites"))) %>%
   mutate(
@@ -348,14 +500,38 @@ nmds_2021_dat <- cbind(nmds1.2021, nmds2.2021) %>%
 
 ```{r}
 ggplot(nmds_2021_dat, aes(NMDS1, NMDS2,  color = grazing_hist, shape = nut_trt)) +
-  geom_point() + 
+  geom_point(size = 4, stroke = 0.5) +
   labs(title = "2021 - Grouping by Grazing History & Nutrient Treatment")
 
-ggplot(nmds_2021_dat, aes(NMDS1, NMDS2,  color = nut_trt, shape = ppt_trt)) +
-  geom_point() + 
-  labs(title = "2021 - Grouping by Nutrient Treatment & Precipitation Treatment")
+ggplot(nmds_2021_dat, aes(NMDS1, NMDS2,  fill = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 - Grouping by Nutrient Treatment")
 
-ggplot(nmds_2021_dat, aes(NMDS1, NMDS2,  color = ppt_trt, shape = nut_trt)) +
-  geom_point() + 
-  labs(title = "2021 - Grouping by Precipitation Treatment & Nutrient Treatment")
+ggplot(nmds_2021_dat, aes(NMDS1, NMDS2,  fill = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 - Grouping by Precipitation Treatment")
 ```
+
+## Make species x trait matrix
+
+Greenhouse traits
+
+-   height, leaf dry matter content, specific leaf area, root mass fraction, relative growth rate, coarse root diameter, root density, specific root length of fine roots, specific root length of coarse roots
+
+Field traits
+
+-   height, leaf dry matter content, specific leaf area, seed mass, leaf C, leaf N
+
+```{r}
+# read in trait data
+
+# subset trait data to match comp data
+
+# set matching row names
+
+
+```
+
+### 
