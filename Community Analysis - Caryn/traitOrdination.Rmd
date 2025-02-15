@@ -29,7 +29,7 @@ output:
 
 Author: Caryn D. Iwanaga
 
-Updated: 01/24/2025
+Updated: 02/06/2025
 
 ## Libraries
 
@@ -149,7 +149,7 @@ matrix.block.bray <- decostand(matrix.block, "total")
 rownames(matrix.block.bray) <- rownames(matrix0.block)
 ```
 
-## Run NMDS 
+## Run NMDS
 
 Rules of thumb:
 
@@ -987,15 +987,46 @@ Workflow plan:
 ### Read in trait data
 
 ```{r}
-# read in greenhouse trait data
-traits.gh <- read.csv("https://www.dropbox.com/scl/fi/c8vk31a807xg48jez1j03/GreenhouseTraits.csv?rlkey=ca736ea27k79mo7h8dbn67qiq&st=ya1ck6p7&dl=1")
+# # read in greenhouse trait data
+# traits.gh <- read.csv("https://www.dropbox.com/scl/fi/c8vk31a807xg48jez1j03/GreenhouseTraits.csv?rlkey=ca736ea27k79mo7h8dbn67qiq&st=ya1ck6p7&dl=1")
+# 
+# # read in field trait data
+# # download.file("https://www.dropbox.com/scl/fi/trqrnz54dkjoa9do4tle5/leaf-area-data_NG.xlsx?rlkey=s0kic2a5yqknikc4icek8y7rn&st=dl4x634h&dl=1",destfile = "field_sla.xlsx")
+# traits.sla.field <- 
+#   read_excel("field_sla.xlsx",col_names = TRUE,col_types = "text")
+# 
+# rda(traits.gh, scale = TRUE)
+```
 
-# read in field trait data
-# download.file("https://www.dropbox.com/scl/fi/trqrnz54dkjoa9do4tle5/leaf-area-data_NG.xlsx?rlkey=s0kic2a5yqknikc4icek8y7rn&st=dl4x634h&dl=1",destfile = "field_sla.xlsx")
-traits.sla.field <- 
-  read_excel("field_sla.xlsx",col_names = TRUE,col_types = "text")
+#### Investigate trait data, looking in Greenhouse trait folder
 
-rda(traits.gh, scale = TRUE)
+Trait data is identical. Will clean data in
+
+```{r}
+# dropbox.main <- read.csv("https://www.dropbox.com/scl/fi/c8vk31a807xg48jez1j03/GreenhouseTraits.csv?rlkey=ca736ea27k79mo7h8dbn67qiq&st=0h1bs53j&dl=1")
+# 
+# dropbox.gh <- read.csv("https://www.dropbox.com/scl/fi/67aaubdydiy4ixffmwvfe/GreenhouseTraits.csv?rlkey=rm2eqeqome7hgoedhnal0gx6d&st=vkym6evx&dl=1")
+# 
+# all.equal(dropbox.main, dropbox.gh)
+# identical(dropbox.main, dropbox.gh)
+```
+
+```{r}
+traits.cleaned <- read.csv("data/GreenhouseTraits_corrected_20240212.csv") %>%
+  mutate(
+    Fresh.leaf.mass..g. = as.numeric(ifelse(
+      Fresh.leaf.mass..g. == "Skipped accidentally", NA, Fresh.leaf.mass..g.
+    )),
+    Dry.leaf.mass..g. = as.numeric(ifelse(
+      Dry.leaf.mass..g. == "No sample", NA, Dry.leaf.mass..g.
+    )),
+    Root.dry.biomass..g. = as.numeric(ifelse(
+      Root.dry.biomass..g. == "roots lost", NA, Root.dry.biomass..g.
+    )),
+    Root.volume..cm3. = as.numeric(ifelse(
+      Root.volume..cm3. == "not scanned", NA, Root.volume..cm3.
+    ))
+  ) 
 ```
 
 ### Summarize trait data (GH) for each species
@@ -1003,15 +1034,200 @@ rda(traits.gh, scale = TRUE)
 #### means
 
 ```{r}
-traits.gh.means <- traits.gh %>%
-  mutate(across(4:(ncol(traits.gh) - 1), as.numeric)) %>%
-  group_by(ID) %>%
-  summarise(
-    across(4:(ncol(traits.gh) - 1), list(mean = ~mean(.x, na.rm = TRUE)#, 
-                                         # sd = ~sd(.x, na.rm = TRUE)))
-    ))
+# make trait species ID match matrix data (notes shown below) -------
+traits.cleaned <- traits.cleaned %>%
+  mutate(
+    ID = ifelse(
+      ID == "Agoseris", "AGSP", ifelse(
+        ID == "AVEBAR", "AVBA", ifelse(
+          ID == "BRDR", "BRDI", ID
+        )
+      )
+    )
   )
 
+# summary(traits.cleaned)
+traits.means <- traits.cleaned %>%
+  group_by(ID) %>%
+  summarise(
+    across(4:(ncol(traits.gh) - 1), list(mean = ~mean(.x, na.rm = TRUE)
+  )))
+  
+
+# make site by species matrix match traits species
+matrix.names <- data.frame(colnames(matrix.bray)) #species comp (75 count)
+trait.names <- data.frame(traits.means$ID) #trait species (80 count)
+
+intersect.names <- intersect(colnames(matrix.bray), traits.means$ID) # same species (43 count)
+setdiff(colnames(matrix.bray), traits.means$ID)
+setdiff(traits.means$ID, colnames(matrix.bray))
+
+# check matrix codes to see if same species are named different things
+unique.matrix.species <- cover.dat %>%
+  dplyr::select(code4, species) %>%
+  summarise(
+    code4 = unique(code4),
+    species = unique(species)
+  )
+
+unique.trait.species <- traits.cleaned %>%
+  dplyr::select(Taxon, ID) %>%
+  distinct(ID, .keep_all = TRUE)
+  
+```
+
+-   ***change*** Trait name: 'Agoseris' --\> 'Agoseris unknown'; assuming the same as 'AGSP' --\> 'Agoseris sp.' in matrix data (change to matrix name)
+
+-   [What's the difference between:]{.underline}
+
+    -   'ANAR' and 'ANARp' in trait data?
+
+    -   'BRHO' and 'BRHOp' in trait data?
+
+    -   'BRNIf' and 'BRNIp' in trait data? (not in matrix data)
+
+    -   'CLPUf' and 'CLPUp' in trait data? (not in matrix data)
+
+    -   'GITRf' and 'GITRp' in trait data? (not in matrix data)
+
+    -   'LENIf' and 'LENIp' in trait data? (not in matrix data)
+
+    -   'TRHI' and 'TRHIpi' (same sp name) in trait data? (TRHI in matrix data)
+
+    -   'TRWIf' and 'TRWIp' and 'TRWIpi' in trait data? (not in matrix data)
+
+    -   'Crassula' and 'Crassula tillaea' (could they be the same?)
+
+    -   'Sanicula' (unknown) and 'SABI1' or 'SABI2' (could they be the same?)
+
+    -   'MAELf' (trait data) and 'MAD1' (Madia sp. 1 ("tall tarweed")' (could they be the same?)
+
+    -   'MAELp' (trait data) and 'MAD2' (Madia sp. 1 ("small tarweed")' (could they be the same?)
+
+    -   'Trifolium eriocephalum' (TRER) and 'Triphysaria eriantha' (TRER) (could they be the same?)
+
+-   ***change*** 'AVEBAR' (trait data) to 'AVBA' (matrix data)
+
+-   ***change*** BRDR --\> BRDI
+
+## Overlay Trait Vectors onto NMDS
+
+### ALL YEARS -- LOW AND HIGH GRAZING
+
+#### Prepare NMDS and Traits
+
+Stress:
+
+```         
+0.2011127
+```
+
+```{r}
+# subset nmds to match species names
+nmds.comp.trait <- metaMDS(matrix.bray %>%
+                             dplyr::select(intersect.names), 
+                           k=2, trymax = 25)
+nmds.comp.trait # pretty not great stress
+stressplot(nmds.comp.trait)
+plot(nmds.comp.trait, type="t")
+
+nmds1 <- as.data.frame(scores(nmds.comp.trait, choices=c(1), display=c("species")))
+nmds2 <- as.data.frame(scores(nmds.comp.trait, choices=c(2), display=c("species")))
+
+nmds_dat_trait <- cbind(nmds1, nmds2) %>%
+  rownames_to_column(var = "species_id") %>%
+  separate(species_id, into = c("ID"), sep = "_")
+
+
+# subset matrix and trait data to match names
+traits.means.comp <- traits.means %>%
+  filter(ID %in% intersect.names) 
+# traits.means.comp2 <- traits.means.comp %>%
+  # dplyr::select(-ID)
+rownames(traits.means.comp2) <- traits.means.comp$ID
+
+# trait vectors onto the NMDS
+envfit(nmds.comp.trait, traits.means.comp, permutations = 999)
+```
+
+#### Plot 
+
+```{r}
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Nutrient Treatment") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, color = as.factor(yr), fill = as.factor(yr))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Year")
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, fill = as.factor(ppt_trt), color = as.factor(ppt_trt))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Precipitation Treatment") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  fill = as.factor(grazing_hist), color = as.factor(grazing_hist))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Grazing History")
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  color = as.factor(grazing_hist), fill = as.factor(yr))) +
+  geom_point(aes(fill = as.factor(yr)), shape = 21, size = 4, stroke = 1) +
+  stat_ellipse(aes(color = as.factor(yr)), 
+                geom = "polygon",
+               fill = NA,
+               size = 1) +
+  labs(title = "Grouped by Grazing History & Year") +
+  scale_color_manual(
+  values = c(
+    "low" = "cyan",
+    "high" = "brown",
+  "2019" = "salmon",
+  "2020" = "limegreen",
+  "2021" = "cornflowerblue")
+  )
+  
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, color = nut_trt, fill = as.factor(yr))) +
+  geom_point(shape = 21, size = 4, stroke = 1) +
+  stat_ellipse(aes(color = as.factor(nut_trt)),
+             geom = "polygon",
+             fill = NA,  # Makes the ellipse transparent inside
+             size = 1) +
+  labs(title = "Grouped by Nutrient Treatment & Year") +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+```
+
+```{r}
 # setdiff(colnames(matrix.bray), traits.gh.means$ID)
 # setdiff(traits.gh.means$ID, colnames(matrix.bray))
 traits.gh.means2 <- traits.gh.means %>%
@@ -1027,6 +1243,7 @@ stressplot(nmds.comp.2)
 plot(nmds.comp.2, type="t")
 
 envfit(nmds.comp.2, traits.gh.means2, permutations = 999)
-```
 
-)
+
+
+```

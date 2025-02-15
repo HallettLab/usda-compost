@@ -1,0 +1,246 @@
+```{r}
+library(dplyr)
+library(vegan)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+# read in greenhouse trait data
+traits.gh <- read.csv("data/GreenhouseTraits.csv")
+```
+
+Cleaning:
+
+-   make numeric class (
+
+    ```         
+    Fresh.leaf.mass..g. Dry.leaf.mass..g.Root.dry.biomass..g.Root.volume..cm3.
+    ```
+
+```{r}
+traits.gh.cleaned <- traits.gh %>%
+  mutate(
+    Fresh.leaf.mass..g. = as.numeric(ifelse(
+      Fresh.leaf.mass..g. == "Skipped accidentally", NA, Fresh.leaf.mass..g.
+    )),
+    Dry.leaf.mass..g. = as.numeric(ifelse(
+      Dry.leaf.mass..g. == "No sample", NA, Dry.leaf.mass..g.
+    )),
+    Root.dry.biomass..g. = as.numeric(ifelse(
+      Root.dry.biomass..g. == "roots lost", NA, Root.dry.biomass..g.
+    )),
+    Root.volume..cm3. = as.numeric(ifelse(
+      Root.volume..cm3. == "not scanned", NA, Root.volume..cm3.
+    ))
+  ) 
+
+traits.gh.summary <- traits.gh.cleaned %>%
+  group_by(Taxon) %>%
+  summarise(across(
+    .cols = where(is.numeric),  # Apply to all numeric columns
+    .fns = list(
+      min = ~ min(., na.rm = TRUE),
+      max = ~ max(., na.rm = TRUE),
+      mean = ~ mean(., na.rm = TRUE),
+      median = ~ median(., na.rm = TRUE),
+      q1 = ~ quantile(., 0.25, na.rm = TRUE),
+      q3 = ~ quantile(., 0.75, na.rm = TRUE)
+    ),
+    .names = "{.col}_{.fn}"  # Custom column names
+  )) %>%
+  pivot_longer(
+    cols = c(Height..cm._min:Proportion.fine.roots_q3)
+  ) %>%
+  pivot_wider(
+    names_from = Taxon,
+    values_from = value
+  ) %>%
+  mutate(
+    round(traits.gh.summary[,c(2:71)],4),
+    rowname = name
+  )
+
+# write.csv(traits.gh.summary, "data/inspect_ghdat.csv", row.names = FALSE)
+
+summary(traits.gh.cleaned)
+
+hist(traits.gh$Height..cm.)
+summary(traits.gh)
+
+inspect.sd <- traits.gh.cleaned %>%
+  group_by(Taxon) %>%
+  summarise(
+    across(
+      .cols = where(is.numeric),
+      .fns = list(
+        mean = ~ mean(., na.rm = TRUE),
+        sd = ~ sd(., na.rm = TRUE)
+      ),
+    .names = "{.col}_{.fn}"  # Custom column names
+    )
+  )
+
+# write.csv(inspect.sd, "data/inspectSD_ghdat.csv", row.names = FALSE)
+```
+
+Inspect ranges to find any misentered data
+
+[Suspicious Data checking:]{.underline}
+
+<table>
+<colgroup>
+<col style="width: 29%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 17%" />
+<col style="width: 16%" />
+<col style="width: 30%" />
+<col style="width: 18%" />
+<col style="width: 25%" />
+<col style="width: 29%" />
+<col style="width: 24%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><p>Trifolium eriocephalum</p></th>
+<th><p>Crassula unknown</p></th>
+<th><p>Castilleja attenuata</p></th>
+<th><p>Triteleia laxa</p></th>
+<th><p>Vicia villosa</p></th>
+<th><p>Madia elegans</p></th>
+<th><p>Geranium dissectum</p></th>
+<th><p>Rumex pulcher</p></th>
+<th><p>Vicia sativa¬†</p></th>
+<th><p>Filago gallica</p></th>
+<th><p>Avena barbata√</p></th>
+<th><p>Annagalis arvensis√</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><ul>
+<li><p>LDMC</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+<li><p>SLA</p>
+<ul>
+<li><p><strong>rep 2</strong></p></li>
+<li><p>misenterred dry leaf mass√</p></li>
+</ul></li>
+<li><p>Coarse root specific length</p>
+<ul>
+<li><p>rep 2</p></li>
+</ul></li>
+<li><p>Fine root specific length</p>
+<ul>
+<li><p><strong>rep 3</strong></p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Coarse root specific length</p>
+<ul>
+<li><p><strong>rep 3</strong></p></li>
+</ul></li>
+<li><p>Fine root specific length</p>
+<ul>
+<li><p>rep 3</p></li>
+</ul></li>
+</ul>
+<p>Checked data, dry weight is 0 even with microbalance, throwing these values off. √</p></td>
+<td><ul>
+<li><p>Coarse root specific length</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+<li><p>Fine root specific length</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Coarse root specific length</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Shoot dry biomass</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+<li><p>Coarse root length</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Coarse root length</p>
+<ul>
+<li><p>okay</p></li>
+<li><p>note two diff species with same name diff codes</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Length</p>
+<ul>
+<li><p><strong>rep 4</strong></p></li>
+</ul></li>
+<li><p>Fine root length</p>
+<ul>
+<li><p>rep 4</p></li>
+</ul></li>
+</ul>
+<p>Checked verbatim data, looks like the length is just really really long for this one.√</p></td>
+<td><ul>
+<li><p>Leaf Area</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+<li><p>Root dry biomass</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+<li><p>Total biomass</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Shoot dry biomass</p>
+<ul>
+<li><p>okay</p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Fresh leaf mass</p>
+<ul>
+<li><p><strong>duplicates, off by a factor of 1000</strong></p></li>
+</ul></li>
+<li><p>SLA</p>
+<ul>
+<li><p>duplicates, off by a factor of 1000</p></li>
+</ul></li>
+</ul>
+<p>Delete rows, duplicates but off by a factor of 100.</p>
+<p>Cross referenced with raw 2021 greenhouse data√</p></td>
+<td><ul>
+<li><p>Height:</p>
+<ul>
+<li><p>171.700 value AVEBAR <strong>rep 2</strong></p></li>
+</ul></li>
+</ul></td>
+<td><ul>
+<li><p>Height</p>
+<ul>
+<li><p>13.0000 ANARp <strong>rep 4</strong></p></li>
+</ul></li>
+</ul></td>
+</tr>
+</tbody>
+</table>
+
+Cleaned data, new dataframe named: '**GreenhouseTraits_corrected.csv**' (annotations found in 'GreenhouseTraits_corrected_notes.xlsx'
