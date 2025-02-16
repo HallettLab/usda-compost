@@ -89,20 +89,6 @@ Inspect ranges to find any misentered data
 [Suspicious Data checking:]{.underline}
 
 <table>
-<colgroup>
-<col style="width: 29%" />
-<col style="width: 21%" />
-<col style="width: 21%" />
-<col style="width: 17%" />
-<col style="width: 16%" />
-<col style="width: 30%" />
-<col style="width: 18%" />
-<col style="width: 25%" />
-<col style="width: 29%" />
-<col style="width: 24%" />
-<col style="width: 21%" />
-<col style="width: 21%" />
-</colgroup>
 <thead>
 <tr class="header">
 <th><p>Trifolium eriocephalum</p></th>

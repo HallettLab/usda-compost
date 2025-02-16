@@ -1,0 +1,1402 @@
+---
+title: "Overlay Trait Data"
+output: html_notebook
+---
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(httr) # read out Dropbox folders
+library(vegan)
+library(readxl)
+```
+
+## Make species x trait matrix
+
+Greenhouse traits
+
+-   height, leaf dry matter content, specific leaf area, root mass fraction, relative growth rate, coarse root diameter, root density, specific root length of fine roots, specific root length of coarse roots
+
+Field traits
+
+-   height, leaf dry matter content, specific leaf area, seed mass, leaf C, leaf N
+
+["H1:]{.underline} Pairing field results with a greenhouse 15 N experiment will allow us to relate species responses to their ability to uptake organic N"
+
+"In addition, we will conduct a greenhouse experiment to isolate the mechanism (mineralized N vs organic N uptake rates ) by which compost may affect species composition"
+
+Workflow plan:
+
+-   overlay species trait data as vectors on the NMDS
+
+    -   only greenhouse traits available (only sla data from field)
+
+        -   use PC scores as composite trait axes OR
+
+        -   average the traits for each species
+
+## Read in and out matrices from traitOrdination code
+
+```{r}
+# write.csv(matrix.bray, "data/sitebyspecies_matrices/all_years_grazing_sitebyspecies_bray.csv", row.names = TRUE)
+matrix.bray <- read.csv("data/sitebyspecies_matrices/all_years_grazing_sitebyspecies_bray.csv", row.names = 1)
+
+# write.csv(matrix.block.bray, "data/sitebyspecies_matrices/all_years_grazing_sitebyspecies_bray_block.csv", row.names = TRUE)
+matrix.block.bray <- read.csv("data/sitebyspecies_matrices/all_years_grazing_sitebyspecies_bray_block.csv", row.names = 1)
+
+
+# write.csv(matrix.bray.low, "data/sitebyspecies_matrices/all_years_LOWgrazing_sitebyspecies_bray.csv", row.names = TRUE)
+matrix.bray.low <- read.csv("data/sitebyspecies_matrices/all_years_LOWgrazing_sitebyspecies_bray.csv", row.names = 1)
+
+# write.csv(matrix.bray.2021, "data/sitebyspecies_matrices/2021_grazing_sitebyspecies_bray.csv", row.names = TRUE)
+matrix.bray.2021 <- read.csv("data/sitebyspecies_matrices/2021_grazing_sitebyspecies_bray.csv", row.names = 1)
+
+# write.csv(matrix.bray.block.2021, "data/sitebyspecies_matrices/2021_grazing_sitebyspecies_bray_block.csv", row.names = TRUE)
+matrix.bray.block.2021 <- read.csv("data/sitebyspecies_matrices/2021_grazing_sitebyspecies_bray_block.csv", row.names = 1)
+
+# write.csv(matrix.bray.block.2021.low, "data/sitebyspecies_matrices/2021_LOWgrazing_sitebyspecies_bray_block.csv", row.names = TRUE)
+matrix.bray.block.2021.low <- read.csv("data/sitebyspecies_matrices/2021_LOWgrazing_sitebyspecies_bray_block.csv", row.names = 1)
+
+# write.csv(matrix.bray.block.2021.high, "data/sitebyspecies_matrices/2021_HIGHgrazing_sitebyspecies_bray_block.csv", row.names = TRUE)
+matrix.bray.block.2021.high <- read.csv("data/sitebyspecies_matrices/2021_HIGHgrazing_sitebyspecies_bray_block.csv", row.names = 1)
+
+# write.csv(matrix.bray.2019, "data/sitebyspecies_matrices/2019_grazing_sitebyspecies_bray.csv", row.names = TRUE)
+matrix.bray.2019 <- read.csv("data/sitebyspecies_matrices/2019_grazing_sitebyspecies_bray.csv", row.names = 1)
+
+# write.csv(matrix.bray.2020, "data/sitebyspecies_matrices/2020_grazing_sitebyspecies_bray.csv", row.names = TRUE)
+matrix.bray.2020 <- read.csv("data/sitebyspecies_matrices/2020_grazing_sitebyspecies_bray.csv", row.names = 1)
+```
+
+### Read in trait data
+
+```{r}
+# # read in greenhouse trait data
+# traits.gh <- read.csv("https://www.dropbox.com/scl/fi/c8vk31a807xg48jez1j03/GreenhouseTraits.csv?rlkey=ca736ea27k79mo7h8dbn67qiq&st=ya1ck6p7&dl=1")
+# 
+# # read in field trait data
+# # download.file("https://www.dropbox.com/scl/fi/trqrnz54dkjoa9do4tle5/leaf-area-data_NG.xlsx?rlkey=s0kic2a5yqknikc4icek8y7rn&st=dl4x634h&dl=1",destfile = "field_sla.xlsx")
+# traits.sla.field <- 
+#   read_excel("field_sla.xlsx",col_names = TRUE,col_types = "text")
+# 
+# rda(traits.gh, scale = TRUE)
+```
+
+#### Investigate trait data, looking in Greenhouse trait folder
+
+Trait data is identical. Will clean data in
+
+```{r}
+# dropbox.main <- read.csv("https://www.dropbox.com/scl/fi/c8vk31a807xg48jez1j03/GreenhouseTraits.csv?rlkey=ca736ea27k79mo7h8dbn67qiq&st=0h1bs53j&dl=1")
+# 
+# dropbox.gh <- read.csv("https://www.dropbox.com/scl/fi/67aaubdydiy4ixffmwvfe/GreenhouseTraits.csv?rlkey=rm2eqeqome7hgoedhnal0gx6d&st=vkym6evx&dl=1")
+# 
+# all.equal(dropbox.main, dropbox.gh)
+# identical(dropbox.main, dropbox.gh)
+```
+
+```{r}
+traits.cleaned <- read.csv("data/GreenhouseTraits_corrected_20240212.csv") %>%
+  mutate(
+    Fresh.leaf.mass..g. = as.numeric(ifelse(
+      Fresh.leaf.mass..g. == "Skipped accidentally", NA, Fresh.leaf.mass..g.
+    )),
+    Dry.leaf.mass..g. = as.numeric(ifelse(
+      Dry.leaf.mass..g. == "No sample", NA, Dry.leaf.mass..g.
+    )),
+    Root.dry.biomass..g. = as.numeric(ifelse(
+      Root.dry.biomass..g. == "roots lost", NA, Root.dry.biomass..g.
+    )),
+    Root.volume..cm3. = as.numeric(ifelse(
+      Root.volume..cm3. == "not scanned", NA, Root.volume..cm3.
+    ))
+  ) 
+```
+
+### Summarize trait data (GH) for each species
+
+#### means
+
+```{r}
+# make trait species ID match matrix data (notes shown below) -------
+traits.cleaned <- traits.cleaned %>%
+  mutate(
+    ID = ifelse(
+      ID == "Agoseris", "AGSP", ifelse(
+        ID == "AVEBAR", "AVBA", ifelse(
+          ID == "BRDR", "BRDI", ID
+        )
+      )
+    )
+  )
+
+# summary(traits.cleaned)
+traits.means <- traits.cleaned %>%
+  group_by(ID) %>%
+  summarise(
+    across(4:(ncol(traits.gh) - 1), list(mean = ~mean(.x, na.rm = TRUE)
+  ))) %>%
+  rename(
+    Height = Height..cm._mean,
+    FreshLeafMass = Fresh.leaf.mass..g._mean,
+    DryLeafMass = Dry.leaf.mass..g._mean,
+    LDMC = LDMC_mean, # Leaf dry matter content (LDMC, the ratio of leaf dry mass to fresh mass)
+    LeafArea = Leaf.Area..cm2._mean,
+    SLA = SLA..cm2.g._mean,
+    ShootDryBiomass = Shoot.dry.biomass..g._mean,
+    RootDryBiomass = Root.dry.biomass..g._mean,
+    TotalBiomass = Total.biomass..g._mean,
+    RMF = RMF_mean, # Root mass fraction (RMF) is a plant trait that measures the proportion of a plant's dry mass that is in its roots
+    RootVol = Root.volume..cm3._mean,
+    RootDensity = Root.density..g.cm3._mean,
+    CoarseRootDiameter = Coarse.root.diameter..mm._mean,
+    RootLength = Length..mm._mean,
+    FineRootLength = Fine.root.length..mm._mean,
+    CoarseRootLength = Coarse.root.length..mm._mean,
+    CoarseRootSpecLength = Coarse.root.specific.length..cm.g._mean,
+    FineRootSpecLength = Fine.root.specific.length..cm.g._mean,
+    PropFineRoots = Proportion.fine.roots_mean
+  )
+  
+
+# make site by species matrix match traits species
+matrix.names <- data.frame(colnames(matrix.bray)) #species comp (75 count)
+trait.names <- data.frame(traits.means$ID) #trait species (80 count)
+
+intersect.names <- intersect(colnames(matrix.bray), traits.means$ID) # same species (43 count)
+setdiff(colnames(matrix.bray), traits.means$ID)
+setdiff(traits.means$ID, colnames(matrix.bray))
+
+# check matrix codes to see if same species are named different things
+unique.matrix.species <- cover.dat %>%
+  dplyr::select(code4, species) %>%
+  summarise(
+    code4 = unique(code4),
+    species = unique(species)
+  )
+
+unique.trait.species <- traits.cleaned %>%
+  dplyr::select(Taxon, ID) %>%
+  distinct(ID, .keep_all = TRUE)
+  
+
+# write traits.means csv ----
+# write.csv(traits.means, "data/traits/all_sp_trait_means.csv")
+ 
+
+# write.csv(traits.means.comp, "data/traits/field_sp_trait_means.csv")
+```
+
+### <!--#  -->See if I have to match names with traits ever year (ANS: All Same Species)
+
+```{r}
+# # all years -------------
+# # make site by species matrix match traits species
+# matrix.names <- data.frame(colnames(matrix.bray)) #species comp (75 count)
+# trait.names <- data.frame(traits.means$ID) #trait species (80 count)
+# 
+# intersect.names <- intersect(colnames(matrix.bray), traits.means$ID) # same species (43 count)
+# setdiff(colnames(matrix.bray), traits.means$ID)
+# setdiff(traits.means$ID, colnames(matrix.bray))
+# 
+# # check matrix codes to see if same species are named different things
+# unique.matrix.species <- cover.dat %>%
+#   dplyr::select(code4, species) %>%
+#   summarise(
+#     code4 = unique(code4),
+#     species = unique(species)
+#   )
+# 
+# unique.trait.species <- traits.cleaned %>%
+#   dplyr::select(Taxon, ID) %>%
+#   distinct(ID, .keep_all = TRUE)
+#   
+# # 2019 -------------
+# data.frame(colnames(matrix.bray.2019)) #species comp (75 count)
+# data.frame(colnames(matrix.bray.2020)) #species comp (75 count)
+# data.frame(colnames(matrix.bray.2021)) #species comp (75 count)
+```
+
+-   ***change*** Trait name: 'Agoseris' --\> 'Agoseris unknown'; assuming the same as 'AGSP' --\> 'Agoseris sp.' in matrix data (change to matrix name)
+
+-   [What's the difference between:]{.underline}
+
+    -   'ANAR' and 'ANARp' in trait data?
+
+    -   'BRHO' and 'BRHOp' in trait data?
+
+    -   'BRNIf' and 'BRNIp' in trait data? (not in matrix data)
+
+    -   'CLPUf' and 'CLPUp' in trait data? (not in matrix data)
+
+    -   'GITRf' and 'GITRp' in trait data? (not in matrix data)
+
+    -   'LENIf' and 'LENIp' in trait data? (not in matrix data)
+
+    -   'TRHI' and 'TRHIpi' (same sp name) in trait data? (TRHI in matrix data)
+
+    -   'TRWIf' and 'TRWIp' and 'TRWIpi' in trait data? (not in matrix data)
+
+    -   'Crassula' and 'Crassula tillaea' (could they be the same?)
+
+    -   'Sanicula' (unknown) and 'SABI1' or 'SABI2' (could they be the same?)
+
+    -   'MAELf' (trait data) and 'MAD1' (Madia sp. 1 ("tall tarweed")' (could they be the same?)
+
+    -   'MAELp' (trait data) and 'MAD2' (Madia sp. 1 ("small tarweed")' (could they be the same?)
+
+    -   'Trifolium eriocephalum' (TRER) and 'Triphysaria eriantha' (TRER) (could they be the same?)
+
+-   ***change*** 'AVEBAR' (trait data) to 'AVBA' (matrix data)
+
+-   ***change*** BRDR --\> BRDI
+
+## Overlay Trait Vectors onto NMDS
+
+[**Aboveground Traits**]{.underline}
+
+-   Height
+
+-   **Leaf**
+
+    -   FreshLeafMass
+
+    -   DryLeafMass
+
+    -   LDMC
+
+        -   Leaf dry matter content (LDMC, the ratio of leaf dry mass to fresh mass)
+
+    -   LeafArea
+
+    -   SLA
+
+    -   ShootDryBiomass
+
+[**Belowground Traits**]{.underline}
+
+-   RootDryBiomass
+
+-   RMF
+
+    -   Root mass fraction (RMF) is a plant trait that measures the proportion of a plant's dry mass that is in its roots
+
+-   RootVol
+
+-   RootDensity
+
+-   RootLength
+
+-   PropFineRoots
+
+-   **Coarse Roots**
+
+    -   CoarseRootDiameter
+
+    -   CoarseRootLength
+
+    -   CoarseRootSpecLength
+
+-   **Fine Roots**
+
+    -   FineRootLength
+
+    -   FineRootSpecLength
+
+-   TotalBiomass
+
+### ALL YEARS -- LOW AND HIGH GRAZING
+
+#### Prepare NMDS and Traits
+
+Stress:
+
+```         
+0.2011127
+```
+
+```{r}
+# subset nmds to match species names
+nmds.comp.trait <- metaMDS(matrix.bray %>%
+                             dplyr::select(intersect.names), 
+                           k=2, trymax = 25)
+nmds.comp.trait # pretty not great stress
+stressplot(nmds.comp.trait)
+plot(nmds.comp.trait, type="t")
+
+nmds1 <- as.data.frame(scores(nmds.comp.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.comp.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# subset matrix and trait data to match names
+traits.means.comp <- traits.means %>%
+  filter(ID %in% intersect.names) 
+
+# traits.means.comp2 <- traits.means.comp %>%
+# dplyr::select(-ID)
+rownames(traits.means.comp2) <- traits.means.comp$ID
+
+# trait vectors onto the NMDS
+# envfit(nmds.comp.trait, traits.means.comp, permutations = 999)
+# example from stack overflow: envfit(ord ~ var1 + var2 + var3, dune.spec, display="sp"), 'ord' is the nmds model, 'var1' is the trait1 i think?
+
+colnames(traits.means.comp)
+vectors.nmds.comp.trait <- envfit(nmds.comp.trait ~ Height + 
+                                    LeafArea +
+                                    RMF, traits.means.comp, display = "sp") # ONLY Height, Leaf area, and RMF significant
+
+#TEMPLATE: 
+  # envfit(nmds.block.trait ~ Height + 
+  #          FreshLeafMass +
+  #          DryLeafMass +
+  #          LDMC +
+  #          LeafArea +
+  #          SLA +
+  #          ShootDryBiomass +
+  #          RootDryBiomass +
+  #          TotalBiomass +
+  #          RMF +
+  #          RootVol +
+  #          RootDensity +
+  #          CoarseRootDiameter +
+  #          RootLength +
+  #          FineRootLength +
+  #          CoarseRootLength +
+  #          CoarseRootSpecLength +
+  #          FineRootSpecLength +
+  #          PropFineRoots, traits.means.comp, display = "sp", na.rm = TRUE)
+
+# is it different when you only do certain traits (above- vs. below-ground)? or can you just throw everything in there and it will tell you what is significant and you can subset from there?
+
+# Looks like different subsets of traits put in are the same, so I shall proceed with the mega models and verify with Lauren
+
+trait_vectors <- as.data.frame(vectors.nmds.comp.trait$vectors$arrows)
+
+```
+
+NMDS model: only Height, Leaf area, and RMF () found significant.
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Nutrient Treatment") +
+  custom_colors +
+  scale_color_manual(
+    values = c(
+      "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+      "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+      "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+      "wet" = rgb(0, 0, 255, maxColorValue = 255),
+      "dry" = rgb(183, 65, 14, maxColorValue = 255)
+    )
+  ) +
+  geom_segment(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, color = as.factor(yr), fill = as.factor(yr))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) +
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Year")+
+  geom_segment(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, fill = as.factor(ppt_trt), color = as.factor(ppt_trt))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) +
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Precipitation Treatment") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)+
+  geom_segment(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  fill = as.factor(grazing_hist), color = as.factor(grazing_hist))) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) +
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Grazing History") +
+  geom_segment(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+    aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+# ggplot(nmds_dat_trait, aes(NMDS1, NMDS2,  color = as.factor(grazing_hist), fill = as.factor(yr))) +
+#   geom_point(aes(fill = as.factor(yr)), shape = 21, size = 4, stroke = 1) +
+#   stat_ellipse(aes(color = as.factor(yr)),
+#                 geom = "polygon",
+#                fill = NA,
+#                size = 1) +
+#   labs(title = "Grouped by Grazing History & Year") +
+#   scale_color_manual(
+#   values = c(
+#     "low" = "cyan",
+#     "high" = "brown",
+#   "2019" = "salmon",
+#   "2020" = "limegreen",
+#   "2021" = "cornflowerblue")
+#   ) +
+#   geom_segment(
+#     data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+#     aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+#     inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+#     arrow = arrow(length = unit(0.2, "cm")), 
+#     color = "red", 
+#     size = 1
+#   ) +
+#   geom_text(
+#     data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+#     aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+#     inherit.aes = FALSE,  # Avoids unwanted inheritance
+#     hjust = -0.2, 
+#     vjust = -0.2, 
+#     color = "red",
+#     size = 5
+#   )
+#   
+# ggplot(nmds_dat_trait, aes(NMDS1, NMDS2, color = nut_trt, fill = as.factor(yr))) +
+#   geom_point(shape = 21, size = 4, stroke = 1) +
+#   stat_ellipse(aes(color = as.factor(nut_trt)),
+#              geom = "polygon",
+#              fill = NA,  # Makes the ellipse transparent inside
+#              size = 1) +
+#   labs(title = "Grouped by Nutrient Treatment & Year") +
+#   scale_color_manual(
+#   values = c(
+#     "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+#     "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+#     "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+#     "wet" = rgb(0, 0, 255, maxColorValue = 255),
+#     "dry" = rgb(183, 65, 14, maxColorValue = 255)
+#   )
+# ) +
+#   geom_segment(
+#     data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+#     aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+#     inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+#     arrow = arrow(length = unit(0.2, "cm")), 
+#     color = "red", 
+#     size = 1
+#   ) +
+#   geom_text(
+#     data = as.data.frame(vectors.nmds.comp.trait$vectors$arrows), 
+#     aes(x = NMDS1, y = NMDS2, label = rownames(vectors.nmds.comp.trait$vectors$arrows)), 
+#     inherit.aes = FALSE,  # Avoids unwanted inheritance
+#     hjust = -0.2, 
+#     vjust = -0.2, 
+#     color = "red",
+#     size = 5
+#   )
+```
+
+### ALL YEARS -- LOW AND HIGH GRAZING (Blocks)
+
+Stress:
+
+```         
+0.2353937
+```
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.block.trait <- metaMDS(matrix.block.bray %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.block.trait # pretty not great stress
+
+nmds1 <- as.data.frame(scores(nmds.block.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.block.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_block_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data
+traits.means.comp 
+
+# trait vectors onto the NMDS
+vectors.nmds.block.trait <-
+  envfit(nmds.block.trait ~ Height + 
+           DryLeafMass +
+           LeafArea +
+           RootDryBiomass +
+           RMF +
+           RootDensity, traits.means.comp, display = "sp")
+# ONLY Height, DryLeafMass, LeafArea, RMF significant (RootDryBiomass, RootDensity marginal)
+
+trait_vectors <- as.data.frame(vectors.nmds.block.trait$vectors$arrows)
+
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_block_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Nutrient Treatment - Blocks w Traits") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_block_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  labs(title = "Grouped by Precipitation Treatment - Blocks w Traits") +
+  custom_colors +
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+
+
+
+```
+
+### **All years - LOW GRAZING ONLY**
+
+#### Prepare NMDS and Traits
+
+Stress:
+
+```         
+0.1879671
+```
+
+```{r}
+# subset nmds to match species names
+nmds.low.trait <- metaMDS(matrix.bray.low %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.low.trait 
+
+nmds1 <- as.data.frame(scores(nmds.low.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.low.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_low_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+# trait vectors onto the NMDS
+vectors.nmds.low.trait <-
+  envfit(nmds.low.trait ~ FreshLeafMass +
+           RMF, traits.means.comp, display = "sp", na.rm = TRUE)
+# ONLY FreshLeafMass (RMF marginal)
+
+trait_vectors <- as.data.frame(vectors.nmds.low.trait$vectors$arrows)
+
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_low_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  labs(title = "2019-2021 (LOW) w Traits - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  custom_colors + 
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_low_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  labs(title = "2019-2021 (LOW) w Traits - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  custom_colors + 
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2019
+
+Stress:
+
+```         
+0.06290431
+```
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.2019.trait <- metaMDS(matrix.bray.2019 %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2019.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2019.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2019.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2019_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2019.trait <-
+  envfit(nmds.2019.trait ~ Height + 
+           DryLeafMass +
+           LeafArea +
+           RMF +
+           RootDensity +
+           CoarseRootDiameter, traits.means.comp, display = "sp", na.rm = TRUE)
+
+vectors.nmds.2019.trait
+# ONLY Height, LeafArea (DryLeafMass, RMF, RootDensity, CoarseRootDiameter marginal)
+
+trait_vectors <- as.data.frame(vectors.nmds.2019.trait$vectors$arrows)
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_2019_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2019 w Traits - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_2019_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2019 w Traits - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2020
+
+Stress:
+
+```         
+0.1512864
+```
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.2020.trait <- metaMDS(matrix.bray.2020 %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2020.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2020.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2020.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2020_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2020.trait <-
+  envfit(nmds.2020.trait ~ FreshLeafMass +
+           LeafArea, traits.means.comp, display = "sp", na.rm = TRUE)
+
+# ONLY FreshLeafMass, LeafArea
+
+trait_vectors <- as.data.frame(vectors.nmds.2020.trait$vectors$arrows)
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_2020_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2020 w Traits - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_2020_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2020 w Traits - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2021
+
+#### Prepare NMDS and Traits
+
+Stress:
+
+```         
+0.123061
+```
+
+```{r}
+# subset nmds to match species names
+nmds.2021.trait <- metaMDS(matrix.bray.2021 %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2021.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2021.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2021.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2021_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+rownames(traits.means.comp) <- traits.means.comp$ID
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2021.trait <-
+  envfit(nmds.2021.trait ~ Height + 
+           FreshLeafMass +
+           LeafArea, na.omit(traits.means.comp), display = "sp", na.rm = TRUE)
+
+# (Height, FreshLeafMass, LeafArea marginal)
+
+trait_vectors <- as.data.frame(vectors.nmds.2021.trait$vectors$arrows)
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_2021_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 w Traits - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_2021_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 w Traits - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2021 -- Blocks
+
+Stress:
+
+```         
+0.170799
+```
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.2021.block.trait <- metaMDS(matrix.bray.block.2021 %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2021.block.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2021.block.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2021.block.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2021_block_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2021.block.trait <-
+  envfit(nmds.2021.block.trait ~ DryLeafMass +
+           LeafArea, traits.means.comp, display = "sp", na.rm = TRUE)
+
+# ONLY DryLeafMass, LeafArea
+
+trait_vectors <- as.data.frame(vectors.nmds.2021.block.trait$vectors$arrows)
+
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_2021_block_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block) w Traits - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_2021_block_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block) w Traits - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2021 -- Blocks (LOW)
+
+Stress:
+
+```         
+0.1299711
+```
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.2021.block.low.trait <- metaMDS(matrix.bray.block.2021.low %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2021.block.low.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2021.block.low.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2021.block.low.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2021_block_low_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2021.block.low.trait <-
+  envfit(nmds.2021.block.low.trait ~ FreshLeafMass, traits.means.comp, display = "sp", na.rm = TRUE)
+
+# ONLY FreshLeafMass
+
+trait_vectors <- as.data.frame(vectors.nmds.2021.block.low.trait$vectors$arrows)
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_dat_2021_block_low_trait, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block; LOW) w Trait - Grouping by Nutrient Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+
+ggplot(nmds_dat_2021_block_low_trait, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block; LOW) w Trait - Grouping by Precipitation Treatment") + 
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+) +
+  geom_segment(
+    data = trait_vectors, 
+    aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), 
+    inherit.aes = FALSE,  # 🚀 Prevents it from looking for 'nut_trt'
+    arrow = arrow(length = unit(0.2, "cm")), 
+    color = "red", 
+    size = 1
+  ) +
+  geom_text(
+    data = trait_vectors, 
+    aes(x = NMDS1, y = NMDS2, label = rownames(trait_vectors)), 
+    inherit.aes = FALSE,  # Avoids unwanted inheritance
+    hjust = -0.2, 
+    vjust = -0.2, 
+    color = "red",
+    size = 5
+  )
+```
+
+### 2021 -- Blocks (HIGH)
+
+#### Prepare NMDS and Traits
+
+```{r}
+# subset nmds to match species names
+nmds.2021.block.high.trait <- metaMDS(matrix.bray.block.2021.high %>%
+                             dplyr::select(intersect.names), , k=2, trymax = 25)
+nmds.2021.block.high.trait 
+
+nmds1 <- as.data.frame(scores(nmds.2021.block.high.trait, choices=c(1), display=c("sites")))
+nmds2 <- as.data.frame(scores(nmds.2021.block.high.trait, choices=c(2), display=c("sites")))
+
+nmds_dat_2021_block_high_trait <- cbind(nmds1, nmds2) %>%
+  as.data.frame() %>%  # Ensure it's a data frame
+  rownames_to_column(var = "site_id") %>%  # Move row names into a new column
+  separate(site_id, into = c("nut_trt", "ppt_trt", "yr", "grazing_hist"), sep = "_")
+
+
+# trait data: traits.means.comp 
+
+
+# trait vectors onto the NMDS
+vectors.nmds.2021.block.high.trait <-
+  envfit(nmds.2021.block.high.trait ~ Height + 
+           FreshLeafMass +
+           DryLeafMass +
+           LDMC +
+           LeafArea +
+           SLA +
+           ShootDryBiomass +
+           RootDryBiomass +
+           TotalBiomass +
+           RMF +
+           RootVol +
+           RootDensity +
+           CoarseRootDiameter +
+           RootLength +
+           FineRootLength +
+           CoarseRootLength +
+           CoarseRootSpecLength +
+           FineRootSpecLength +
+           PropFineRoots, traits.means.comp, display = "sp", na.rm = TRUE)
+
+# None
+
+trait_vectors <- as.data.frame(vectors.nmds.2021.block.high.trait$vectors$arrows)
+```
+
+#### Plot
+
+```{r}
+ggplot(nmds_2021_dat.block.high, aes(NMDS1, NMDS2,  fill = nut_trt, color = nut_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block; HIGH) - Grouping by Nutrient Treatment") +
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+
+ggplot(nmds_2021_dat.block.high, aes(NMDS1, NMDS2,  fill = ppt_trt, color = ppt_trt)) +
+  geom_point(shape = 21, size = 4, stroke = 0.5) + 
+  custom_colors + 
+  labs(title = "2021 (Block; HIGH) - Grouping by Precipitation Treatment") +
+  stat_ellipse(type = "norm", size = 1, alpha = 0.5) + # Ellipses for each group
+  scale_color_manual(
+  values = c(
+    "control" = rgb(220, 220, 220, maxColorValue = 255),      # Lighter Gray
+    "+N fertilizer" = rgb(140, 40, 150, maxColorValue = 255), # Vibrant Purple
+    "+compost" = rgb(220, 180, 60, maxColorValue = 255),       # Bright Golden Yellow
+    "wet" = rgb(0, 0, 255, maxColorValue = 255),
+    "dry" = rgb(183, 65, 14, maxColorValue = 255)
+  )
+)
+```
