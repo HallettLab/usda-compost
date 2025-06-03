@@ -226,6 +226,11 @@ summary(lm(trend ~ date, data = subset(temptrends, temp == "tmax"& date >= as.Da
 1.588e-04 * 365 *10  # tmean increase at 0.579 C per decade
 1.541e-04 * 365 *10  # tmax increase at 0.562 C per decade
 
+# se on estimates
+4.275e-06 * 365 # tmin se is 0.0015 C per decade
+5.358e-06 * 365 # tmean is 0.0019 C per decade
+6.594e-06 * 365 # tmax se 0.002 C per decade
+
 with(subset(temptrends, !is.na(trend)), range(date))
 temptrends_datespres <- subset(temptrends, !is.na(trend))
 max(temptrends_datespres$date) - min(temptrends_datespres$date)

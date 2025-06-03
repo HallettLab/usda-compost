@@ -21,6 +21,9 @@
 source("Native-analysis/native_prep_traits.R", print.eval = F, echo = F)
 # ^note: warning message about NA coercion is okay. just converting notes about no sample avail
 
+# ctw path out to chp figs
+figpath <- "~/Documents/suding_lab/SFREC/Compost/natdiv/chapter/figs/"
+
 # load needed libraries
 library(glmmTMB)
 library(DHARMa)
@@ -108,32 +111,38 @@ plot_grid(
     geom_vline(aes(xintercept = 0.1)) +
     geom_hline(aes(yintercept = 3)) +
     geom_jitter(aes(size = maxcov, shape = code4 %in% nats), width = 0.02, height = 0.1) +
-    ggtitle("species distribution in all plots (n = 141)") +
+    labs(title = "Species distribution in all plots (n = 141)",
+         y= "Distinct cover values (count)", x= "Proportional presence") +
     scale_color_manual(values = plantcols) +
     scale_shape_manual(name = "Seeded", values = c(1,19)) +
     scale_size_continuous(name = "Max cover", breaks = c(0, 10, 25,50, 75)) +
     guides(color = guide_legend(override.aes = list(size = 3)),
            shape = guide_legend(override.aes = list(size = 3))) +
     scale_y_continuous(limit = c(-.1,max(ydat_summary$uniquecov_all)+2)) +
-    #theme_bw() +
-    theme(legend.position = "none") +
-    theme_ctw(),
+    theme_ctw() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 11.5)),
   
   ggplot(ydat_summary, aes(prop_seedpres, uniquecov_seeded, col = grp)) +
     geom_vline(aes(xintercept = 0.1)) +
     geom_hline(aes(yintercept = 3)) +
     geom_jitter(aes(size = maxcov_seeded, shape = code4 %in% nats), width = 0.02, height = 0.1) +
-    ggtitle("species distribution in seeded plots (n = 70)") +
-    scale_color_manual(values = plantcols) +
+    labs(title = "Species distribution in seeded plots (n = 70)",
+         y= NULL, x= "Proportional presence") +
+    scale_color_manual(name = "Functional\ngroup", values = plantcols) +
     scale_shape_manual(name = "Seeded", values = c(1,19)) +
     scale_size_continuous(name = "Max cover", breaks = c(0, 10, 25,50, 75)) +
     guides(color = guide_legend(override.aes = list(size = 3)),
            shape = guide_legend(override.aes = list(size = 3))) +
     scale_y_continuous(limits = c(-.1,max(ydat_summary$uniquecov_all)+2)) +
     #theme_bw() +
-    theme_ctw(),
+    theme_ctw() +
+    theme(plot.title = element_text(size = 11.5)),
   rel_widths = c(1,1.4)
 )
+
+ggsave(paste0(figpath, "sppdist.png"), scale = 1.25,
+       dpi = 600, width = 6.5, height = 4)
 
 # check presence by group
 with(ydat_summary, lapply(split(prop_allpres, grp), function(x) table(x > 0.05)))
@@ -786,28 +795,34 @@ nats_best_anova <- data.frame(car::Anova(nb_nats_seeded_mod1nb2)) %>%
   mutate(term = rownames(.)) %>%
   rename_all(function(x) gsub("[.]", "", x))
 
-
-natfig
-# manually add anova stats for now
-grid::grid.text(label = "Type II Wald Chisq\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide **\n spp:soil trt ***\n spp:precip trt ***", 
-                x = unit(0.8, "npc"), y = unit(0.65, "npc"), just = "left")
-# brca
-grid::grid.text(label = "herb. **\nsoil ***\nppt ***", 
-                x = unit(0.07, "npc"), y = unit(0.9, "npc"), just = "left")
-# esca
-grid::grid.text(label = "herb. n.s.\nsoil n.s.\nppt n.s.", 
-                x = unit(0.07, "npc"), y = unit(0.68, "npc"), just = "left")
-# femi
-grid::grid.text(label = "herb. ***\nsoil *\nppt n.s.", 
-                x = unit(0.07, "npc"), y = unit(0.46, "npc"), just = "left")
-# nema
-grid::grid.text(label = "herb. n.s.\nsoil *\nppt ***", 
-                x = unit(0.07, "npc"), y = unit(0.24, "npc"), just = "left")
-
 # add significant terms to each spp row
 cld(mod_means, adjust = "sidak", Letters = letters, alpha = 0.05, by = "spp")
 summary(glht(nb_nats_seeded_mod1nb2))
 summary(nb_nats_seeded_mod1nb2)
+
+# save higher res version of fig
+png(paste0(figpath, "natseeded_glmm_means.png"), 
+    res = 600, width = 10, height = 7.25, units = "in")
+
+natfig
+# manually add anova stats for now
+grid::grid.text(label = "Type II Wald Chisq\n spp ***\n herbicide ***\n soil trt n.s.\n precip trt ***\n spp:herbicide **\n spp:soil trt ***\n spp:precip trt ***", 
+                x = unit(0.8, "npc"), y = unit(0.6, "npc"), just = "left")
+# brca
+grid::grid.text(label = "herb. **\nsoil ***\nppt ***", 
+                x = unit(0.07, "npc"), y = unit(0.88, "npc"), just = "left")
+# esca
+grid::grid.text(label = "herb. n.s.\nsoil n.s.\nppt n.s.", 
+                x = unit(0.07, "npc"), y = unit(0.67, "npc"), just = "left")
+# femi
+grid::grid.text(label = "herb. ***\nsoil *\nppt n.s.", 
+                x = unit(0.07, "npc"), y = unit(0.45, "npc"), just = "left")
+# nema
+grid::grid.text(label = "herb. n.s.\nsoil *\nppt ***", 
+                x = unit(0.07, "npc"), y = unit(0.24, "npc"), just = "left")
+
+dev.off()
+
 
 
 # 1c) nat seed tables, contrasts ------
@@ -1206,6 +1221,7 @@ exofig <- fxnltarget_long %>%
   facet_grid(spp ~ herbicide + seedtrt, scales = "free_y") +
   theme_ctw() +
   theme(legend.justification.right = "top",
+        #axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
         plot.margin = unit(c(1, 6, 1, 1), "lines")) +
   labs(x = "Soil x precipitation treatment", y = "Abundance")
 
@@ -1215,6 +1231,9 @@ exo_best_anova <- data.frame(car::Anova(exo_allplots_mod5genp)) %>%
   rename_all(function(x) gsub("[.]", "", x))
 
 joint_tests(exo_allplots_mod5genp, by = "spp")
+
+png(paste0(figpath, "bg_glmm_means.png"), 
+    units = "in", res = 600, width = 12.25, height = 8)
 
 exofig
 # manually add anova stats for now
@@ -1237,6 +1256,7 @@ grid::grid.text(label = "seed ***\nherb. n.s.\nsoil **",
 grid::grid.text(label = "ppt ***\nherb:soil n.s.\nherb:ppt n.s.", 
                 x = unit(0.13, "npc"), y = unit(0.3, "npc"), just = "left")
 
+dev.off()
 
 # 2c) background tables, contrasts ------
 exo_bestcoeffs <- getmod_effects(exo_allplots_mod5genp, "background fxnl glmmTMB")
@@ -2194,6 +2214,8 @@ ggplot(modvp0_exp, aes(spp, varexp, fill = vari)) +
         strip.text = element_text(size = 12, face = "bold")) +
   labs(x = NULL, y = "Proportion variance explained")
 
+ggsave(paste0(figpath, "gllvm_varpar_add600.png"), scale = 1.6,
+       width = 6.5, height = 4.25, units = "in")
 
 # -- coeff plot -----
 # plots gllvm_seeded_mod2.lv2 but also grab info from others models to compare
@@ -2347,7 +2369,7 @@ ggplot(data = subset(coefs_mod0seed.2lv, term != "intercept"), aes(spp, estimate
   labs(y = "Mean effect (log scale), with 95% CI when p<0.05", x = NULL) +
   scale_color_manual(name = "Functional group", values = c("purple1", "mediumpurple1", "seagreen2", "orchid1", "orange","chartreuse3")) +
   #scale_size_discrete(range = c(3,5)) +
-  scale_shape_manual(values = c(1,19)) +
+  scale_shape_manual(name = "p < 0.05", values = c(1,19)) +
   coord_flip() +
   facet_wrap(~term, nrow = 2, scales = "free_x") +
   theme_ctw() +
@@ -2360,6 +2382,7 @@ ggplot(data = subset(coefs_mod0seed.2lv, term != "intercept"), aes(spp, estimate
         legend.position = "inside",
         legend.justification.inside = c("right", "bottom"))
 
+ggsave(paste0(figpath, "gllvm_coeffs_add600.png"), scale = 1.6, dpi = 600, width = 5.8, height = 5.8)
 
 # for quick comparison
 par(mfrow = c(3,1))
@@ -2434,8 +2457,6 @@ plot_grid(
           legend.text = element_text(size = 14)),
   align = "vh", axis = "top", nrow = 2
 )
-
-
 
 
 # alternate point plot
@@ -2572,6 +2593,9 @@ plot_grid(
   align = "vh", axis = "top", nrow = 2
 )
 
+ggsave(paste0(figpath, "mod02lv_resids_600.png"), dpi = 600, height = 6.5, width = 3.5, units = "in",
+       scale = 1.5)
+
 modrescor0 <- getResidualCor(gllvm_seeded_mod0.2lv)
 modrescor0 <- modrescor0[rownames(modrescor0) %in% nats,!colnames(modrescor0) %in% nats]
 
@@ -2594,20 +2618,26 @@ row_ha0 <- rowAnnotation(border = T, simple_anno_size = unit(1, "cm"),
                         Group = labeltest0, 
                         col = list(Group = c("Non-native Forb" = "orchid1", "Non-native N-fixer" = "orange", "Non-native Grass" = "chartreuse3", "Native Grass" = "seagreen1", "Native Forb"= "purple2"))
 )
+png(paste0(figpath, "correl_heatmap.png"), 
+    units = "in", width = 6, height = 9, res = 600)
 Heatmap(t(modrescor0), row_dend_width = unit(2, "cm"), name = "Residual correlation", left_annotation = row_ha0,
         border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 1,
         heatmap_legend_param = list(direction = "horizontal", 
                                     title_gp = gpar(fontsize = 14),
                                     labels_gp = gpar(fontsize = 12)))
 
+dev.off()
+
 # repeat for covariance
+png(paste0(figpath, "covar_heatmap.png"), 
+    units = "in", width = 6, height = 9, res = 600)
 Heatmap(t(modrescov0), row_dend_width = unit(2, "cm"), name = "Residual covariance", left_annotation = row_ha0, 
         border = T, row_title = "Neighbors", column_title = "Native seeded", row_km = 2, column_km = 1, 
         heatmap_legend_param = list(direction = "horizontal",
                                     title_gp = gpar(fontsize = 14),
                                     labels_gp = gpar(fontsize = 12)))
 
-
+dev.off()
 
 # -- unconstrained ordination pretty plot -----
 unconstrained_seeded_loading <- get_loadings(gllvm_seeded_unconstrained) 
@@ -2649,6 +2679,8 @@ uncon_site <- unconstrained_seeded_loading$sites %>%
   facet_grid(nut_trt ~ ppt_trt)
 
 plot_grid(uncon_site, uncon_spp, align = "v", axis = "t", labels = "AUTO", label_size = 24)
+ggsave(paste0(figpath, "unconstrained_sppord_gllvm600.png"), scale = 1.8,
+       dpi = 600, width = 6.5, height = 3.25, units = "in")
 
 # best informed mod is additive only (just like best predictive model, and 4 LVs)
 informed_ord <- get_loadings(gllvm_seeded_c.lv4_mod0)
